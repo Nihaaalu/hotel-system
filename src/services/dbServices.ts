@@ -39,6 +39,8 @@ export const BookingService = {
     bookingDetails: {
       checkInDate: string;
       checkOutDate: string;
+      totalAmount?: number;
+      advancePaid?: number;
       remarks?: string;
       bookingGroupId?: string;
     }

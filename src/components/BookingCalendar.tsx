@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Room, Booking } from '../types';
-import { RoomService, BookingService } from '../services/dbServices';
+import { Booking } from '../types';
+import { useHotelData } from '../context/HotelContext';
 import { formatDateHuman } from '../utils/formatters';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, X, RefreshCw, AlertCircle } from 'lucide-react';
 
 interface BookingCalendarProps {
   onSelectCell: (roomNumber: number, date: string) => void;
   onSelectBooking: (bookingId: string) => void;
-  refreshTrigger: number;
+  refreshTrigger?: number;
 }
 
 const COL_WIDTH = 52; // width in px for each day column on desktop
@@ -16,18 +16,14 @@ const ROOM_COL_WIDTH = 176; // width in px for room label column on desktop
 export default function BookingCalendar({
   onSelectCell,
   onSelectBooking,
-  refreshTrigger,
 }: BookingCalendarProps) {
+  const { rooms, bookings: bookingList, isLoading, error: errorMsg, refreshData: loadCalendarData } = useHotelData();
+
   // Selected month (first day of month)
   const [currentMonth, setCurrentMonth] = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
-
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [bookingList, setBookingList] = useState<Booking[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
@@ -65,27 +61,6 @@ export default function BookingCalendar({
     dateYMD: string;
   } | null>(null);
 
-  // Load rooms & bookings directly from Supabase
-  const loadCalendarData = async () => {
-    setIsLoading(true);
-    setErrorMsg(null);
-    try {
-      const [fetchedRooms, fetchedBookings] = await Promise.all([
-        RoomService.getRooms(),
-        BookingService.getBookings(),
-      ]);
-      setRooms(fetchedRooms);
-      setBookingList(fetchedBookings);
-    } catch (err: any) {
-      console.warn('Note loading calendar data:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadCalendarData();
-  }, [refreshTrigger]);
 
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth(); // 0-indexed
@@ -309,16 +284,16 @@ export default function BookingCalendar({
             onScroll={handleHeaderScroll}
             className="overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden bg-slate-100 text-slate-800 border-t border-slate-700"
           >
-            <div className="flex min-w-max h-[28px]">
-              <div className="sticky left-0 z-20 bg-slate-200 p-1 text-center font-black text-slate-700 border-r border-slate-300 min-w-[54px] max-w-[54px] text-[10px] flex items-center justify-center shadow-2xs">
+            <div className="flex min-w-max h-[38px]">
+              <div className="sticky left-0 z-20 bg-slate-200 p-1 text-center font-black text-slate-700 border-r border-slate-300 min-w-[64px] max-w-[64px] text-[11px] flex items-center justify-center shadow-2xs">
                 Date
               </div>
               {rooms.map((room) => (
                 <div
                   key={room.number}
-                  className="p-1 text-center font-extrabold text-slate-800 border-r border-slate-300 min-w-[52px] max-w-[52px] bg-slate-100 flex items-center justify-center"
+                  className="p-1 text-center font-extrabold text-slate-800 border-r border-slate-300 min-w-[64px] max-w-[64px] bg-slate-100 flex items-center justify-center"
                 >
-                  <span className="text-[11px] font-black text-slate-900 leading-none">{room.number}</span>
+                  <span className="text-xs font-black text-slate-900 leading-none">{room.number}</span>
                 </div>
               ))}
             </div>
@@ -329,43 +304,44 @@ export default function BookingCalendar({
         <div
           ref={mobileBodyRoomScrollRef}
           onScroll={handleBodyScroll}
-          className="overflow-x-auto w-full"
+          className="overflow-x-auto w-full touch-pan-x touch-pan-y"
         >
           <div className="min-w-max">
             {monthDays.map((day) => (
               <div
                 key={day.ymd}
-                className="flex border-b border-slate-200 h-[26px]"
+                className="flex border-b border-slate-200/90 h-[48px]"
               >
                 {/* Sticky Left Date Label */}
-                <div className={`sticky left-0 z-10 p-0.5 border-r border-slate-300 text-[10px] font-bold text-center flex items-center justify-center min-w-[54px] max-w-[54px] ${
-                  day.isToday ? 'bg-purple-600 text-white font-black' : 'bg-slate-100 text-slate-800'
+                <div className={`sticky left-0 z-10 p-1 border-r border-slate-300 text-[11px] font-bold text-center flex flex-col items-center justify-center min-w-[64px] max-w-[64px] shadow-2xs ${
+                  day.isToday ? 'bg-indigo-600 text-white font-black' : 'bg-slate-100 text-slate-800'
                 }`}>
-                  {day.dayNum} {day.dayOfWeek}
+                  <span className="font-extrabold leading-tight">{day.dayNum}</span>
+                  <span className="text-[9.5px] uppercase font-mono tracking-tighter opacity-80">{day.dayOfWeek}</span>
                 </div>
 
                 {/* Room Columns */}
                 {rooms.map((room) => {
                   const booking = getBookingForRoomAndDate(room.number, day.ymd);
 
-                  let bgClass = 'bg-emerald-50 hover:bg-emerald-100/80 border-emerald-200/60';
+                  let bgClass = 'bg-emerald-50 hover:bg-emerald-100/80 border-emerald-200/60 text-emerald-950';
 
                   if (booking) {
                     if (booking.status === 'checked-in') {
                       if (booking.checkOutDate === todayYMD) {
-                        bgClass = 'bg-rose-600 border-rose-700 text-white';
+                        bgClass = 'bg-rose-600 border-rose-700 text-white font-bold';
                       } else {
-                        bgClass = 'bg-blue-600 border-blue-700 text-white';
+                        bgClass = 'bg-blue-600 border-blue-700 text-white font-bold';
                       }
                     } else {
-                      bgClass = 'bg-amber-500 border-amber-600 text-white';
+                      bgClass = 'bg-amber-500 border-amber-600 text-white font-bold';
                     }
                   }
 
                   return (
                     <div
                       key={`${room.number}_${day.ymd}`}
-                      className="p-[1px] border-r border-slate-200 text-center flex items-center justify-center min-w-[52px] max-w-[52px]"
+                      className="p-[2px] border-r border-slate-200/90 text-center flex items-center justify-center min-w-[64px] max-w-[64px] h-[48px] active:scale-95 transition-transform cursor-pointer"
                       onClick={() => {
                         if (booking) {
                           setSelectedMobileCellBooking({
@@ -379,12 +355,12 @@ export default function BookingCalendar({
                       }}
                     >
                       {booking ? (
-                        <div className={`w-full h-[22px] px-1 rounded text-white font-semibold text-[9px] leading-tight flex items-center justify-center overflow-hidden border shadow-2xs ${bgClass}`}>
-                          <span className="truncate w-full text-center tracking-tight font-sans">{booking.guestName}</span>
+                        <div className={`w-full h-[42px] px-1 rounded-lg text-white font-bold text-[10px] leading-tight flex items-center justify-center overflow-hidden border shadow-2xs ${bgClass}`}>
+                          <span className="truncate w-full text-center tracking-tight font-sans block">{booking.guestName}</span>
                         </div>
                       ) : (
-                        <div className="w-full h-[22px] rounded bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/60 text-emerald-800 text-[9px] flex items-center justify-center transition">
-                          <span className="text-slate-400/40 font-mono text-[8.5px] font-normal select-none">{room.number}</span>
+                        <div className="w-full h-[42px] rounded-lg bg-emerald-50/70 hover:bg-emerald-100/90 border border-emerald-200/60 text-emerald-800 text-[10px] flex items-center justify-center transition">
+                          <span className="text-slate-400/50 font-mono text-[9px] font-semibold select-none">{room.number}</span>
                         </div>
                       )}
                     </div>

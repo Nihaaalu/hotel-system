@@ -25,6 +25,7 @@ export interface Booking {
   status: 'booked' | 'checked-in' | 'checked-out' | 'cancelled';
   totalAmount: number;
   advancePaid: number;
+  paymentStatus?: 'paid' | 'pending';
   remarks: string;
   createdAt: string;
   updatedAt: string;
@@ -40,11 +41,28 @@ export interface Payment {
   id: string; // local payment uuid
   bookingId: string;
   amount: number;
+  totalAmount?: number;
+  advancePaid?: number;
+  paymentStatus?: 'paid' | 'pending';
   paymentDate: string; // ISO String
   paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking';
   remarks: string;
   createdAt: string;
   _synced?: boolean; // flag for firebase sync status
+}
+
+export type ExpenseCategory = 'Meat' | 'Groceries' | 'Cleaning' | 'Miscellaneous';
+
+export interface Expense {
+  id: string;
+  expenseDate: string; // YYYY-MM-DD
+  category: ExpenseCategory;
+  itemName: string;
+  quantity: number;
+  unit: string;
+  amount: number;
+  remarks: string;
+  createdAt: string;
 }
 
 export interface DashboardStats {
@@ -56,4 +74,11 @@ export interface DashboardStats {
   currentStayingCount: number;
   todayCollection: number;
   totalPendingBalance: number;
+  // Financial totals
+  totalBookingAmount?: number;
+  totalAdvancePaid?: number;
+  totalBalance?: number;
+  // Expense totals
+  todayExpenses?: number;
+  monthExpenses?: number;
 }

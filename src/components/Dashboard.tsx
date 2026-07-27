@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { Booking, DashboardStats, Room } from '../types';
-import { RoomService, BookingService, PaymentService } from '../services/dbServices';
+import { useHotelData } from '../context/HotelContext';
 import {
   BedSingle,
   DoorOpen,
@@ -18,7 +18,7 @@ interface DashboardProps {
   onSelectBooking: (id: string) => void;
   onSelectCell: (roomNumber: number, date: string) => void;
   onNavigateToCalendar: () => void;
-  refreshTrigger: number;
+  refreshTrigger?: number;
 }
 
 interface RoomStatusMapping {
@@ -33,135 +33,112 @@ export default function Dashboard({
   onSelectBooking,
   onSelectCell,
   onNavigateToCalendar,
-  refreshTrigger,
 }: DashboardProps) {
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { rooms, bookings, payments, expenses, isLoading, error: errorMsg, refreshData: loadDashboardStats } = useHotelData();
 
-  const [stats, setStats] = useState<DashboardStats>({
-    availableRoomsCount: 0,
-    occupiedRoomsCount: 0,
-    futureBookingsCount: 0,
-    todayCheckinsCount: 0,
-    todayCheckoutsCount: 0,
-    currentStayingCount: 0,
-    todayCollection: 0,
-    totalPendingBalance: 0,
-  });
+  const { stats, roomStatuses } = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const currentYearMonth = todayStr.substring(0, 7);
 
-  const [roomStatuses, setRoomStatuses] = useState<RoomStatusMapping[]>([]);
+    // Calculations
+    const future = bookings.filter((b) => b.status === 'booked' && b.checkInDate > todayStr);
+    const checkinsToday = bookings.filter((b) => b.status === 'checked-in' && b.checkInDate === todayStr);
+    const checkoutsToday = bookings.filter((b) => b.checkOutDate === todayStr && (b.status === 'checked-in' || b.status === 'checked-out'));
+    const staying = bookings.filter((b) => b.status === 'checked-in');
 
-  const loadDashboardStats = async () => {
-    setIsLoading(true);
-    setErrorMsg(null);
-    try {
-      const [fetchedRooms, bookings, payments] = await Promise.all([
-        RoomService.getRooms(),
-        BookingService.getBookings(),
-        PaymentService.getAllPayments(),
-      ]);
+    const activeBookings = bookings.filter((b) => b.status !== 'cancelled');
+    const totalAmountSum = activeBookings.reduce((sum, b) => sum + Number(b.totalAmount || 0), 0);
+    const advancePaidSum = activeBookings.reduce((sum, b) => sum + Number(b.advancePaid || 0), 0);
+    const balanceSum = totalAmountSum - advancePaidSum;
 
-      setRooms(fetchedRooms);
+    const todayColl = payments
+      .filter((p) => p.paymentDate.split('T')[0] === todayStr)
+      .reduce((sum, p) => sum + Number(p.amount || p.advancePaid || 0), 0);
 
-      const todayStr = new Date().toISOString().split('T')[0];
+    const todayExp = (expenses || [])
+      .filter((e) => e.expenseDate === todayStr)
+      .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
-      // Calculations
-      const future = bookings.filter((b) => b.status === 'booked' && b.checkInDate > todayStr);
-      const checkinsToday = bookings.filter((b) => b.checkInDate === todayStr && (b.status === 'booked' || b.status === 'checked-in'));
-      const checkoutsToday = bookings.filter((b) => b.checkOutDate === todayStr && (b.status === 'checked-in' || b.status === 'checked-out'));
+    const monthExp = (expenses || [])
+      .filter((e) => e.expenseDate && e.expenseDate.startsWith(currentYearMonth))
+      .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
-      const staying = bookings.filter((b) => b.status === 'checked-in');
+    // Build room statuses based on cached Supabase rooms
+    const statuses: RoomStatusMapping[] = rooms.map((room) => {
+      const activeRoomBookings = bookings.filter(
+        (b) => b.roomNumber === room.number && b.status !== 'checked-out' && b.status !== 'cancelled'
+      );
 
-      const todayColl = payments
-        .filter((p) => p.paymentDate.split('T')[0] === todayStr)
-        .reduce((sum, p) => sum + Number(p.amount), 0);
+      // 1. Checked-in booking
+      const checkedInBooking = activeRoomBookings.find(
+        (b) => b.status === 'checked-in'
+      );
 
-      const pendingBalance = bookings
-        .filter((b) => b.status !== 'checked-out' && b.status !== 'cancelled')
-        .reduce((sum, b) => sum + (Number(b.totalAmount) - Number(b.advancePaid)), 0);
-
-      // Build room statuses based on fetched Supabase rooms
-      const statuses: RoomStatusMapping[] = fetchedRooms.map((room) => {
-        const activeBookings = bookings.filter(
-          (b) => b.roomNumber === room.number && b.status !== 'checked-out' && b.status !== 'cancelled'
-        );
-
-        // 1. Checked-in booking
-        const checkedInBooking = activeBookings.find(
-          (b) => b.status === 'checked-in'
-        );
-
-        if (checkedInBooking) {
-          if (checkedInBooking.checkOutDate === todayStr) {
-            return {
-              room,
-              status: 'CHECKOUT_TODAY',
-              booking: checkedInBooking,
-              colorClass: 'border-red-500 bg-red-50/10 hover:bg-red-50/20 text-red-950',
-              badgeClass: 'bg-red-100 text-red-800 border-red-200',
-            };
-          }
+      if (checkedInBooking) {
+        if (checkedInBooking.checkOutDate === todayStr) {
           return {
             room,
-            status: 'OCCUPIED',
+            status: 'CHECKOUT_TODAY',
             booking: checkedInBooking,
-            colorClass: 'border-blue-500 bg-blue-50/5 hover:bg-blue-50/15 text-blue-900',
-            badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+            colorClass: 'border-red-500 bg-red-50/10 hover:bg-red-50/20 text-red-950',
+            badgeClass: 'bg-red-100 text-red-800 border-red-200',
           };
         }
-
-        // 2. Arriving today / Reserved reservation
-        const bookedBooking = activeBookings.find(
-          (b) => b.status === 'booked'
-        );
-
-        if (bookedBooking) {
-          return {
-            room,
-            status: 'CHECKIN_TODAY',
-            booking: bookedBooking,
-            colorClass: 'border-orange-500 bg-orange-50/10 hover:bg-orange-50/20 text-orange-950',
-            badgeClass: 'bg-orange-100 text-orange-850 border-orange-200',
-          };
-        }
-
-        // 3. Otherwise available
         return {
           room,
-          status: 'AVAILABLE',
-          booking: null,
-          colorClass: 'border-emerald-500 bg-emerald-50/5 hover:bg-emerald-50/15 text-emerald-900',
-          badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+          status: 'OCCUPIED',
+          booking: checkedInBooking,
+          colorClass: 'border-blue-500 bg-blue-50/5 hover:bg-blue-50/15 text-blue-900',
+          badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
         };
-      });
+      }
 
-      const availableCount = statuses.filter((s) => s.status === 'AVAILABLE').length;
-      const occupiedCount = statuses.filter((s) => s.status === 'OCCUPIED' || s.status === 'CHECKOUT_TODAY').length;
+      // 2. Arriving today / Reserved reservation
+      const bookedBooking = activeRoomBookings.find(
+        (b) => b.status === 'booked'
+      );
 
-      setStats({
-        availableRoomsCount: availableCount,
-        occupiedRoomsCount: occupiedCount,
-        futureBookingsCount: future.length,
-        todayCheckinsCount: checkinsToday.length,
-        todayCheckoutsCount: checkoutsToday.length,
-        currentStayingCount: staying.length,
-        todayCollection: todayColl,
-        totalPendingBalance: pendingBalance,
-      });
+      if (bookedBooking) {
+        return {
+          room,
+          status: 'CHECKIN_TODAY',
+          booking: bookedBooking,
+          colorClass: 'border-orange-500 bg-orange-50/10 hover:bg-orange-50/20 text-orange-950',
+          badgeClass: 'bg-orange-100 text-orange-850 border-orange-200',
+        };
+      }
 
-      setRoomStatuses(statuses);
-    } catch (err: any) {
-      console.warn('Note loading dashboard:', err);
-      // Fallback stats gracefully
-    } finally {
-      setIsLoading(false);
-    }
-  };
+      // 3. Otherwise available
+      return {
+        room,
+        status: 'AVAILABLE',
+        booking: null,
+        colorClass: 'border-emerald-500 bg-emerald-50/5 hover:bg-emerald-50/15 text-emerald-900',
+        badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      };
+    });
 
-  useEffect(() => {
-    loadDashboardStats();
-  }, [refreshTrigger]);
+    const availableCount = statuses.filter((s) => s.status === 'AVAILABLE').length;
+    const occupiedCount = statuses.filter((s) => s.status === 'OCCUPIED' || s.status === 'CHECKOUT_TODAY').length;
+
+    const computedStats: DashboardStats = {
+      availableRoomsCount: availableCount,
+      occupiedRoomsCount: occupiedCount,
+      futureBookingsCount: future.length,
+      todayCheckinsCount: checkinsToday.length,
+      todayCheckoutsCount: checkoutsToday.length,
+      currentStayingCount: staying.length,
+      todayCollection: todayColl,
+      totalPendingBalance: balanceSum,
+      totalBookingAmount: totalAmountSum,
+      totalAdvancePaid: advancePaidSum,
+      todayExpenses: todayExp,
+      monthExpenses: monthExp,
+    };
+
+    return { stats: computedStats, roomStatuses: statuses };
+  }, [rooms, bookings, payments, expenses]);
+
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -214,59 +191,97 @@ export default function Dashboard({
       )}
 
       {/* SECTION 1: COMPACT KPI CARDS */}
-      <section 
-        className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3"
-        id="dashboard_top_summary"
-      >
-        {/* Available Rooms */}
-        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-emerald-300">
-          <div>
-            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Available</span>
-            <span className="text-base sm:text-lg font-black text-emerald-700 font-mono leading-none">
-              {stats.availableRoomsCount} / {rooms.length}
-            </span>
+      <div className="space-y-2 sm:space-y-3">
+        {/* Room Status Cards */}
+        <section 
+          className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3"
+          id="dashboard_top_summary"
+        >
+          {/* Available Rooms */}
+          <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-emerald-300">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Available</span>
+              <span className="text-base sm:text-lg font-black text-emerald-700 font-mono leading-none">
+                {stats.availableRoomsCount} / {rooms.length}
+              </span>
+            </div>
+            <BedSingle className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500 shrink-0" />
           </div>
-          <BedSingle className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500 shrink-0" />
-        </div>
 
-        {/* Occupied Rooms */}
-        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-blue-300">
-          <div>
-            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Occupied</span>
-            <span className="text-base sm:text-lg font-black text-blue-700 font-mono leading-none">
-              {stats.occupiedRoomsCount} / {rooms.length}
-            </span>
+          {/* Occupied Rooms */}
+          <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-blue-300">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Occupied</span>
+              <span className="text-base sm:text-lg font-black text-blue-700 font-mono leading-none">
+                {stats.occupiedRoomsCount} / {rooms.length}
+              </span>
+            </div>
+            <DoorOpen className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500 shrink-0" />
           </div>
-          <DoorOpen className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500 shrink-0" />
-        </div>
 
-        {/* Today's Checkins */}
-        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-orange-300">
-          <div>
-            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Check-in</span>
-            <span className="text-base sm:text-lg font-black text-orange-700 font-mono leading-none">{stats.todayCheckinsCount}</span>
+          {/* Today's Checkins */}
+          <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-orange-300">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Check-in</span>
+              <span className="text-base sm:text-lg font-black text-orange-700 font-mono leading-none">{stats.todayCheckinsCount}</span>
+            </div>
+            <LogIn className="w-4 h-4 sm:w-5 sm:h-5 text-orange-500 shrink-0" />
           </div>
-          <LogIn className="w-4 h-4 sm:w-5 sm:h-5 text-orange-500 shrink-0" />
-        </div>
 
-        {/* Today's Checkouts */}
-        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-red-300">
-          <div>
-            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Check-out</span>
-            <span className="text-base sm:text-lg font-black text-red-700 font-mono leading-none">{stats.todayCheckoutsCount}</span>
+          {/* Today's Checkouts */}
+          <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-red-300">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Check-out</span>
+              <span className="text-base sm:text-lg font-black text-red-700 font-mono leading-none">{stats.todayCheckoutsCount}</span>
+            </div>
+            <LogOut className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 shrink-0" />
           </div>
-          <LogOut className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 shrink-0" />
-        </div>
+        </section>
 
-        {/* Pending Balance */}
-        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] col-span-2 lg:col-span-1 transition hover:border-red-300">
-          <div>
-            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Pending</span>
-            <span className="text-base sm:text-lg font-black text-red-700 font-mono leading-none">₹{stats.totalPendingBalance.toLocaleString()}</span>
+        {/* Financial & Expenses KPI Cards */}
+        <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+          {/* Total Booking Amount */}
+          <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px]">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Total Amount</span>
+              <span className="text-sm sm:text-base font-black text-gray-900 font-mono leading-none">₹{(stats.totalBookingAmount || 0).toLocaleString()}</span>
+            </div>
           </div>
-          <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 shrink-0" />
-        </div>
-      </section>
+
+          {/* Advance Paid */}
+          <div className="py-2 px-3 sm:px-4 bg-emerald-50/30 border border-emerald-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px]">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-emerald-700 font-bold uppercase tracking-wider block">Advance Paid</span>
+              <span className="text-sm sm:text-base font-black text-emerald-700 font-mono leading-none">₹{(stats.totalAdvancePaid || 0).toLocaleString()}</span>
+            </div>
+          </div>
+
+          {/* Balance Pending */}
+          <div className="py-2 px-3 sm:px-4 bg-rose-50/30 border border-rose-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px]">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-rose-700 font-bold uppercase tracking-wider block">Balance</span>
+              <span className="text-sm sm:text-base font-black text-rose-700 font-mono leading-none">₹{(stats.totalPendingBalance || 0).toLocaleString()}</span>
+            </div>
+            <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+          </div>
+
+          {/* Today's Expenses */}
+          <div className="py-2 px-3 sm:px-4 bg-amber-50/30 border border-amber-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px]">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-amber-800 font-bold uppercase tracking-wider block">Today's Expense</span>
+              <span className="text-sm sm:text-base font-black text-amber-800 font-mono leading-none">₹{(stats.todayExpenses || 0).toLocaleString()}</span>
+            </div>
+          </div>
+
+          {/* This Month Expenses */}
+          <div className="py-2 px-3 sm:px-4 bg-purple-50/30 border border-purple-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] col-span-2 sm:col-span-1">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-purple-800 font-bold uppercase tracking-wider block">Month Expenses</span>
+              <span className="text-sm sm:text-base font-black text-purple-800 font-mono leading-none">₹{(stats.monthExpenses || 0).toLocaleString()}</span>
+            </div>
+          </div>
+        </section>
+      </div>
 
       {/* SECTION 2: REAL-TIME ROOM BOARD */}
       <section className="bg-white border border-gray-200 rounded-2xl p-3 sm:p-5 shadow-2xs flex-1" id="pms_realtime_status">

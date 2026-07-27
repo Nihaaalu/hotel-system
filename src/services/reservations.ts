@@ -191,6 +191,8 @@ export const ReservationService = {
     bookingDetails: {
       checkInDate: string;
       checkOutDate: string;
+      totalAmount?: number;
+      advancePaid?: number;
       remarks?: string;
       bookingGroupId?: string;
     }
@@ -258,7 +260,33 @@ export const ReservationService = {
       throw roomsError;
     }
 
-    // 3. Upsert guest profile in 'profiles' optional table if provided
+    // 3. Insert payment record storing: reservation_id, total_amount, advance_paid, payment_status
+    const totalAmt = Number(bookingDetails.totalAmount || 0);
+    const advPaid = Number(bookingDetails.advancePaid || 0);
+    const paymentStatus = advPaid >= totalAmt ? 'paid' : 'pending';
+
+    const paymentPayload = {
+      reservation_id: resId,
+      total_amount: totalAmt,
+      advance_paid: advPaid,
+      payment_status: paymentStatus,
+      amount: advPaid,
+      payment_method: 'cash',
+      remarks: bookingDetails.remarks ? `Initial booking: ${bookingDetails.remarks}` : 'Initial booking payment',
+    };
+
+    logQuery('payments', 'INSERT', 'N/A', paymentPayload);
+    const { data: payData, error: payErr } = await supabase
+      .from('payments')
+      .insert(paymentPayload)
+      .select();
+    logResponse(payData, payErr);
+
+    if (payErr) {
+      console.warn('Payment insert warning:', payErr);
+    }
+
+    // 4. Upsert guest profile in 'profiles' optional table if provided
     if (guestData.name) {
       const profilePayload = {
         name: guestData.name,
@@ -291,6 +319,8 @@ export const ReservationService = {
       {
         checkInDate: bookingData.checkInDate,
         checkOutDate: bookingData.checkOutDate,
+        totalAmount: bookingData.totalAmount,
+        advancePaid: bookingData.advancePaid,
         remarks: bookingData.remarks,
         bookingGroupId: bookingData.bookingGroupId,
       }
@@ -403,6 +433,39 @@ export const ReservationService = {
     if (resErr) {
       console.error('Failed to update reservations status to checked_in:', resErr);
       throw resErr;
+    }
+
+    // 3. Automatically update payment_status = "paid" if pending. Do NOT modify advance_paid or total_amount.
+    try {
+      logQuery('payments', 'SELECT', `reservation_id = ${reservationId}`);
+      const { data: payRows } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('reservation_id', reservationId);
+
+      if (payRows && payRows.length > 0) {
+        for (const p of payRows) {
+          if (p.payment_status === 'pending' || p.status === 'pending') {
+            logQuery('payments', 'UPDATE', `id = ${p.id}`, { payment_status: 'paid' });
+            await supabase
+              .from('payments')
+              .update({ payment_status: 'paid' })
+              .eq('id', p.id);
+          }
+        }
+      } else {
+        // Create paid payment row if none exists
+        const payPayload = {
+          reservation_id: reservationId,
+          payment_status: 'paid',
+          payment_method: 'cash',
+          remarks: 'Payment settled automatically at Check-In',
+        };
+        logQuery('payments', 'INSERT', 'N/A', payPayload);
+        await supabase.from('payments').insert(payPayload);
+      }
+    } catch (payErr) {
+      console.warn('Note updating payment_status at check-in:', payErr);
     }
   },
 
