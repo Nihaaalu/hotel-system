@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Booking, DashboardStats, Room } from '../types';
 import { RoomService, BookingService, PaymentService } from '../services/dbServices';
-const { FIXED_ROOMS } = RoomService;
 import {
   BedSingle,
   DoorOpen,
@@ -10,7 +9,9 @@ import {
   AlertTriangle,
   Plus,
   Calendar,
-  LayoutDashboard
+  LayoutDashboard,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -34,8 +35,12 @@ export default function Dashboard({
   onNavigateToCalendar,
   refreshTrigger,
 }: DashboardProps) {
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   const [stats, setStats] = useState<DashboardStats>({
-    availableRoomsCount: 13,
+    availableRoomsCount: 0,
     occupiedRoomsCount: 0,
     futureBookingsCount: 0,
     todayCheckinsCount: 0,
@@ -47,10 +52,18 @@ export default function Dashboard({
 
   const [roomStatuses, setRoomStatuses] = useState<RoomStatusMapping[]>([]);
 
-  useEffect(() => {
-    async function loadDashboardStats() {
-      const bookings = await BookingService.getBookings();
-      const payments = await PaymentService.getAllPayments();
+  const loadDashboardStats = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    try {
+      const [fetchedRooms, bookings, payments] = await Promise.all([
+        RoomService.getRooms(),
+        BookingService.getBookings(),
+        PaymentService.getAllPayments(),
+      ]);
+
+      setRooms(fetchedRooms);
+
       const todayStr = new Date().toISOString().split('T')[0];
 
       // Calculations
@@ -68,8 +81,8 @@ export default function Dashboard({
         .filter((b) => b.status !== 'checked-out' && b.status !== 'cancelled')
         .reduce((sum, b) => sum + (Number(b.totalAmount) - Number(b.advancePaid)), 0);
 
-      // Build room statuses
-      const statuses: RoomStatusMapping[] = FIXED_ROOMS.map((room) => {
+      // Build room statuses based on fetched Supabase rooms
+      const statuses: RoomStatusMapping[] = fetchedRooms.map((room) => {
         const activeBookings = bookings.filter(
           (b) => b.roomNumber === room.number && b.status !== 'checked-out' && b.status !== 'cancelled'
         );
@@ -98,9 +111,9 @@ export default function Dashboard({
           };
         }
 
-        // 3. Arriving today reservation
+        // 2. Arriving today / Reserved reservation
         const bookedBooking = activeBookings.find(
-          (b) => b.status === 'booked' && b.checkInDate === todayStr
+          (b) => b.status === 'booked'
         );
 
         if (bookedBooking) {
@@ -113,7 +126,7 @@ export default function Dashboard({
           };
         }
 
-        // 4. Otherwise available
+        // 3. Otherwise available
         return {
           room,
           status: 'AVAILABLE',
@@ -138,8 +151,15 @@ export default function Dashboard({
       });
 
       setRoomStatuses(statuses);
+    } catch (err: any) {
+      console.warn('Note loading dashboard:', err);
+      // Fallback stats gracefully
+    } finally {
+      setIsLoading(false);
     }
+  };
 
+  useEffect(() => {
     loadDashboardStats();
   }, [refreshTrigger]);
 
@@ -163,14 +183,36 @@ export default function Dashboard({
     if (mapping.booking) {
       onSelectBooking(mapping.booking.id);
     } else {
-      // Available room: open card pre-filled with this room & today's date
+      // Available room: open modal pre-filled with this room & today's date
       onSelectCell(mapping.room.number, todayStr);
     }
   };
 
   return (
     <div className="space-y-3 sm:space-y-6 pb-24" id="pms_dashboard_panel">
-      
+      {/* Top Notification Banner for Loading / Error */}
+      {errorMsg && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs font-semibold flex items-center justify-between px-4">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+            <span>{errorMsg}</span>
+          </div>
+          <button
+            onClick={loadDashboardStats}
+            className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg text-2xs font-bold transition flex items-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" /> Retry
+          </button>
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl text-indigo-700 text-xs font-medium flex items-center justify-center gap-2">
+          <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
+          <span>Fetching live status from Supabase...</span>
+        </div>
+      )}
+
       {/* SECTION 1: COMPACT KPI CARDS */}
       <section 
         className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3"
@@ -180,7 +222,9 @@ export default function Dashboard({
         <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-emerald-300">
           <div>
             <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Available</span>
-            <span className="text-base sm:text-lg font-black text-emerald-700 font-mono leading-none">{stats.availableRoomsCount} / 13</span>
+            <span className="text-base sm:text-lg font-black text-emerald-700 font-mono leading-none">
+              {stats.availableRoomsCount} / {rooms.length}
+            </span>
           </div>
           <BedSingle className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500 shrink-0" />
         </div>
@@ -189,7 +233,9 @@ export default function Dashboard({
         <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-blue-300">
           <div>
             <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Occupied</span>
-            <span className="text-base sm:text-lg font-black text-blue-700 font-mono leading-none">{stats.occupiedRoomsCount} / 13</span>
+            <span className="text-base sm:text-lg font-black text-blue-700 font-mono leading-none">
+              {stats.occupiedRoomsCount} / {rooms.length}
+            </span>
           </div>
           <DoorOpen className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500 shrink-0" />
         </div>
@@ -229,17 +275,16 @@ export default function Dashboard({
             <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
             Real-Time Room Board
           </h2>
-          <span className="text-3xs font-mono text-gray-400 uppercase">13 Total Rooms</span>
+          <span className="text-3xs font-mono text-gray-400 uppercase">{rooms.length} Total Rooms</span>
         </div>
 
-        {/* 2 COLUMNS ON MOBILE, 4 COLUMNS ON DESKTOP (~95px height on mobile) */}
+        {/* 2 COLUMNS ON MOBILE, 4 COLUMNS ON DESKTOP */}
         <div 
           className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3" 
           id="realtime_room_grid"
         >
           {roomStatuses.map((mapping) => {
             const hasBooking = !!mapping.booking;
-            const balanceDue = hasBooking ? mapping.booking!.totalAmount - mapping.booking!.advancePaid : 0;
 
             if (mapping.status === 'AVAILABLE') {
               return (
@@ -283,7 +328,7 @@ export default function Dashboard({
                 id={`room_card_${mapping.room.number}`}
               >
                 <div className="flex items-start justify-between">
-                  <span className="text-lg sm:text-2xl font-black text-gray-900 leading-none">10{mapping.room.number % 100}</span>
+                  <span className="text-lg sm:text-2xl font-black text-gray-900 leading-none">Room {mapping.room.number}</span>
                   <span className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${tagColor}`}>{statusLabel}</span>
                 </div>
                 
@@ -323,7 +368,7 @@ export default function Dashboard({
         </button>
 
         <button
-          onClick={() => onSelectCell(101, todayStr)}
+          onClick={() => onSelectCell(rooms[0]?.number || 0, todayStr)}
           className="px-2.5 py-1.5 min-h-[44px] bg-emerald-600 hover:bg-emerald-500 rounded-full flex items-center gap-1 text-white text-[11px] font-extrabold transition cursor-pointer shadow-xs"
         >
           <Plus className="w-3.5 h-3.5 stroke-[3]" />

@@ -1,12 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import BookingCalendar from './components/BookingCalendar';
 import BookingModal from './components/BookingModal';
+import { SupabaseRoomService } from './services/dbServices';
 import { ShieldCheck } from 'lucide-react';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<'dashboard' | 'calendar'>('dashboard');
+
+  useEffect(() => {
+    SupabaseRoomService.seedRoomsIfEmpty();
+  }, []);
   
   // Modal controllers
   const [isModalOpen, setIsModalOpen] = useState(false);

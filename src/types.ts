@@ -1,4 +1,5 @@
 export interface Room {
+  id: string | number;
   number: number;
   floor: number;
   type: string;

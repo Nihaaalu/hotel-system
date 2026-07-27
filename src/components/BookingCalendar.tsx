@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Room, Booking } from '../types';
 import { RoomService, BookingService } from '../services/dbServices';
 import { formatDateHuman } from '../utils/formatters';
-const { FIXED_ROOMS } = RoomService;
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, X, User } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, X, RefreshCw, AlertCircle } from 'lucide-react';
 
 interface BookingCalendarProps {
   onSelectCell: (roomNumber: number, date: string) => void;
@@ -25,7 +24,11 @@ export default function BookingCalendar({
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
+  const [rooms, setRooms] = useState<Room[]>([]);
   const [bookingList, setBookingList] = useState<Booking[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
   // Mobile synchronized scroll refs for room columns
@@ -62,13 +65,26 @@ export default function BookingCalendar({
     dateYMD: string;
   } | null>(null);
 
-  // Load bookings
-  useEffect(() => {
-    async function load() {
-      const data = await BookingService.getBookings();
-      setBookingList(data);
+  // Load rooms & bookings directly from Supabase
+  const loadCalendarData = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    try {
+      const [fetchedRooms, fetchedBookings] = await Promise.all([
+        RoomService.getRooms(),
+        BookingService.getBookings(),
+      ]);
+      setRooms(fetchedRooms);
+      setBookingList(fetchedBookings);
+    } catch (err: any) {
+      console.warn('Note loading calendar data:', err);
+    } finally {
+      setIsLoading(false);
     }
-    load();
+  };
+
+  useEffect(() => {
+    loadCalendarData();
   }, [refreshTrigger]);
 
   const year = currentMonth.getFullYear();
@@ -196,19 +212,16 @@ export default function BookingCalendar({
           if (b.checkOutDate === todayYMD) {
             colorClass = 'bg-rose-600 hover:bg-rose-700 text-white border-rose-700 font-black animate-pulse';
             statusLabel = 'Departure Day';
-          } else if (b.checkInDate === todayYMD) {
-            colorClass = 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 font-bold';
-            statusLabel = 'Arrival Day';
           } else {
             colorClass = 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 font-bold';
-            statusLabel = 'Occupied';
+            statusLabel = 'Checked In';
           }
         } else if (b.status === 'checked-out') {
           colorClass = 'bg-slate-600 hover:bg-slate-700 text-white border-slate-700';
           statusLabel = 'Checked Out';
         } else if (b.status === 'booked') {
           colorClass = 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 font-bold';
-          statusLabel = 'Booked';
+          statusLabel = b.checkInDate === todayYMD ? 'Arrival Day' : 'Reserved';
         }
 
         return {
@@ -225,12 +238,34 @@ export default function BookingCalendar({
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" id="booking_calendar_panel">
-      
+      {/* Top Banner for Error/Loading State */}
+      {errorMsg && (
+        <div className="p-3 bg-red-50 border-b border-red-200 text-red-700 text-xs font-semibold flex items-center justify-between px-4">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+            <span>{errorMsg}</span>
+          </div>
+          <button
+            onClick={loadCalendarData}
+            className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg text-2xs font-bold transition flex items-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" /> Retry
+          </button>
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="p-4 bg-indigo-50/50 border-b border-indigo-100 text-indigo-700 text-xs font-medium flex items-center justify-center gap-2">
+          <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
+          <span>Syncing rooms and reservations from Supabase...</span>
+        </div>
+      )}
+
       {/* ========================================================= */}
       {/* 1. MOBILE TOUCH-FIRST CALENDAR (Shown strictly on sm:hidden) */}
       {/* ========================================================= */}
       <div className="block sm:hidden select-none" id="mobile_pms_calendar">
-        {/* Sticky Top Header Container (Groups Month Nav, Legend, & Room Numbers) */}
+        {/* Sticky Top Header Container */}
         <div className="sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-300 shadow-xs">
           {/* Section 1: Top Month Switcher */}
           <div className="p-2 flex items-center justify-between gap-1 h-8">
@@ -268,7 +303,7 @@ export default function BookingCalendar({
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-xs bg-rose-600 inline-block"></span>Checkout</span>
           </div>
 
-          {/* Section 3: Room Header (Independent Component outside calendar grid) */}
+          {/* Section 3: Room Header */}
           <div
             ref={mobileHeaderRoomScrollRef}
             onScroll={handleHeaderScroll}
@@ -278,7 +313,7 @@ export default function BookingCalendar({
               <div className="sticky left-0 z-20 bg-slate-200 p-1 text-center font-black text-slate-700 border-r border-slate-300 min-w-[54px] max-w-[54px] text-[10px] flex items-center justify-center shadow-2xs">
                 Date
               </div>
-              {FIXED_ROOMS.map((room) => (
+              {rooms.map((room) => (
                 <div
                   key={room.number}
                   className="p-1 text-center font-extrabold text-slate-800 border-r border-slate-300 min-w-[52px] max-w-[52px] bg-slate-100 flex items-center justify-center"
@@ -290,7 +325,7 @@ export default function BookingCalendar({
           </div>
         </div>
 
-        {/* Section 4: Scrollable Calendar Body (Contains ONLY the date rows) */}
+        {/* Section 4: Scrollable Calendar Body */}
         <div
           ref={mobileBodyRoomScrollRef}
           onScroll={handleBodyScroll}
@@ -310,7 +345,7 @@ export default function BookingCalendar({
                 </div>
 
                 {/* Room Columns */}
-                {FIXED_ROOMS.map((room) => {
+                {rooms.map((room) => {
                   const booking = getBookingForRoomAndDate(room.number, day.ymd);
 
                   let bgClass = 'bg-emerald-50 hover:bg-emerald-100/80 border-emerald-200/60';
@@ -484,7 +519,7 @@ export default function BookingCalendar({
                 className="shrink-0 py-3 px-3 font-extrabold text-xs text-slate-700 uppercase tracking-wider sticky left-0 z-40 bg-slate-100 border-r border-slate-300 shadow-[2px_0_5px_rgba(0,0,0,0.04)] flex items-center justify-between"
               >
                 <span>Room</span>
-                <span className="text-[10px] text-slate-400 font-normal lowercase">13 total</span>
+                <span className="text-[10px] text-slate-400 font-normal lowercase">{rooms.length} total</span>
               </div>
 
               {/* Day Columns */}
@@ -514,7 +549,7 @@ export default function BookingCalendar({
 
             {/* Room Rows */}
             <div className="divide-y divide-slate-300 text-xs text-slate-700">
-              {FIXED_ROOMS.map((room) => {
+              {rooms.map((room) => {
                 const bars = getRoomBookingsForMonth(room.number);
 
                 return (
@@ -622,11 +657,10 @@ export default function BookingCalendar({
           </div>
 
           <div className="text-[11px] font-mono font-bold text-slate-400">
-            13 ROOMS • MONTHLY SPREADSHEET
+            {rooms.length} ROOMS • SUPABASE SPREADSHEET
           </div>
         </div>
       </div>
     </div>
   );
 }
-

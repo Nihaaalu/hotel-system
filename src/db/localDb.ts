@@ -3,21 +3,7 @@ import { Guest, Booking, Payment, Room } from '../types';
 const DB_NAME = 'HotelManagementDB';
 const DB_VERSION = 1;
 
-export const FIXED_ROOMS: Room[] = [
-  { number: 101, floor: 1, type: '4 Sharing' },
-  { number: 102, floor: 1, type: '4 Sharing' },
-  { number: 103, floor: 1, type: '6 Bed' },
-  { number: 104, floor: 1, type: '6 Bed' },
-  { number: 105, floor: 1, type: '2 Bed King' },
-  { number: 106, floor: 1, type: '2 Bed King' },
-  { number: 107, floor: 1, type: '3 Bed King' },
-  { number: 108, floor: 1, type: '3 Bed King' },
-  { number: 201, floor: 2, type: '2 Bed King' },
-  { number: 202, floor: 2, type: '2 Bed King' },
-  { number: 203, floor: 2, type: '3 Bed King' },
-  { number: 204, floor: 2, type: '3 Bed King' },
-  { number: 205, floor: 2, type: '4 Bed King' },
-];
+export const FIXED_ROOMS: Room[] = [];
 
 /**
  * SQLite Schema Reference for Tauri Desktop Port

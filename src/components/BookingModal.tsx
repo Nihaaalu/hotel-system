@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Booking, Guest, Payment } from '../types';
+import { Booking, Guest, Payment, Room } from '../types';
 import { RoomService, BookingService, PaymentService } from '../services/dbServices';
 import { formatDateHuman } from '../utils/formatters';
-const { FIXED_ROOMS } = RoomService;
 import { X, Calendar, User, Check, ChevronDown, Receipt, Clock, Trash2, ArrowUpRight } from 'lucide-react';
 
 interface BookingModalProps {
@@ -23,6 +22,7 @@ export default function BookingModal({
   onSuccess,
 }: BookingModalProps) {
   const [groupBookingsSameGroup, setGroupBookingsSameGroup] = useState<Booking[]>([]);
+  const [roomsList, setRoomsList] = useState<Room[]>([]);
   const isEditing = !!bookingId;
 
   // Form State for Guest
@@ -45,15 +45,15 @@ export default function BookingModal({
   const [isNameDropdownOpen, setIsNameDropdownOpen] = useState(false);
 
   // Form State for Booking
-  const [selectedRoomNumbers, setSelectedRoomNumbers] = useState<number[]>([]);
-  const [roomNumber, setRoomNumber] = useState<number>(101);
+  const [selectedRoomNumbers, setSelectedRoomNumbers] = useState<number[]>(
+    initialRoomNumber ? [initialRoomNumber] : []
+  );
+  const [roomNumber, setRoomNumber] = useState<number>(initialRoomNumber || 0);
   const [checkInDate, setCheckInDate] = useState('');
   const [checkOutDate, setCheckOutDate] = useState('');
   const [totalAmount, setTotalAmount] = useState<number | ''>('');
   const [advancePaid, setAdvancePaid] = useState<number | ''>('');
   const [remarks, setRemarks] = useState('');
-  const [roomSearch, setRoomSearch] = useState('');
-  const [isRoomDropdownOpen, setIsRoomDropdownOpen] = useState(false);
   const [roomAvailability, setRoomAvailability] = useState<Record<number, boolean>>({});
 
   // Custom Date Picker calendar states
@@ -98,19 +98,6 @@ export default function BookingModal({
     return `${y}-${m}-${d}`;
   };
 
-  const formatDateReadable = (dateStr: string) => {
-    if (!dateStr) return '';
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const parts = dateStr.split('-');
-    if (parts.length === 3) {
-      const year = parts[0];
-      const month = months[parseInt(parts[1], 10) - 1];
-      const day = parseInt(parts[2], 10);
-      return `${day} ${month} ${year}`;
-    }
-    return dateStr;
-  };
-
   const handleDaySelect = (dayObj: Date) => {
     const clickedStr = toYYYYMMDD(dayObj);
 
@@ -136,22 +123,8 @@ export default function BookingModal({
   };
 
   const getRoomConfig = (roomNo: number): string => {
-    switch (roomNo) {
-      case 101: return '4 Sharing';
-      case 102: return '4 Sharing';
-      case 103: return '6 Bed';
-      case 104: return '6 Bed';
-      case 105: return '2 Bed King';
-      case 106: return '2 Bed King';
-      case 107: return '3 Bed King';
-      case 108: return '3 Bed King';
-      case 201: return '2 Bed King';
-      case 202: return '2 Bed King';
-      case 203: return '3 Bed King';
-      case 204: return '3 Bed King';
-      case 205: return '4 Bed King';
-      default: return '2 Bed King';
-    }
+    const matched = roomsList.find((r) => r.number === roomNo);
+    return matched ? matched.type : 'Standard';
   };
 
   // Loaded Booking State for View Mode
@@ -168,15 +141,27 @@ export default function BookingModal({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Auto calculate Balance
-  const computedBalanceStr = totalAmount === '' ? '—' : `₹${Math.max(0, Number(totalAmount) - (Number(advancePaid) || 0)).toLocaleString()}`;
+  // Load Rooms from Supabase
+  useEffect(() => {
+    async function fetchRooms() {
+      try {
+        const fetched = await RoomService.getRooms();
+        setRoomsList(fetched);
+      } catch (err) {
+        console.warn('Note fetching rooms in modal:', err);
+      }
+    }
+    fetchRooms();
+  }, []);
 
   useEffect(() => {
     if (!isEditing) {
       if (initialRoomNumber) {
         setSelectedRoomNumbers([initialRoomNumber]);
+      } else if (roomsList.length > 0) {
+        setSelectedRoomNumbers([roomsList[0].number]);
       } else {
-        setSelectedRoomNumbers([101]);
+        setSelectedRoomNumbers([]);
       }
 
       if (initialCheckInDate) {
@@ -240,13 +225,13 @@ export default function BookingModal({
   // Auto check room availability based on check-in and check-out dates
   useEffect(() => {
     let isMounted = true;
-    if (checkInDate && checkOutDate) {
+    if (checkInDate && checkOutDate && roomsList.length > 0) {
       const start = new Date(checkInDate).getTime();
       const end = new Date(checkOutDate).getTime();
       if (!isNaN(start) && !isNaN(end) && end > start) {
         async function fetchAvailability() {
           const availabilityMap: Record<number, boolean> = {};
-          for (const room of FIXED_ROOMS) {
+          for (const room of roomsList) {
             const isOverlapping = await BookingService.checkOverlappingBooking(
               room.number,
               checkInDate,
@@ -269,7 +254,7 @@ export default function BookingModal({
     return () => {
       isMounted = false;
     };
-  }, [checkInDate, checkOutDate, bookingId]);
+  }, [checkInDate, checkOutDate, bookingId, roomsList]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -295,7 +280,7 @@ export default function BookingModal({
 
     setIsSubmitting(true);
     try {
-      // 1. Check overlap for all selected rooms first to prevent double bookings
+      // 1. Check overlap for all selected rooms first
       for (const num of selectedRoomNumbers) {
         const isOverlapping = await BookingService.checkOverlappingBooking(num, checkInDate, checkOutDate);
         if (isOverlapping) {
@@ -317,34 +302,16 @@ export default function BookingModal({
         }
       }
 
-      // Generate a shared booking Group ID if multiple rooms are selected
-      let sharedGroupId: string | undefined = undefined;
-      if (selectedRoomNumbers.length > 1) {
-        sharedGroupId = await BookingService.getNextBookingGroupId();
-      }
-
-      // 2. Loop to create individual room reservations with 0 pricing (billing managed later)
-      for (let i = 0; i < selectedRoomNumbers.length; i++) {
-        const num = selectedRoomNumbers[i];
-
-        await BookingService.createBooking(
-          {
-            name: trimmedName,
-            phone: '',
-            address: '',
-            idProof: '',
-          },
-          {
-            roomNumber: num,
-            checkInDate,
-            checkOutDate,
-            totalAmount: 0,
-            advancePaid: 0,
-            remarks: remarks.trim() + (selectedRoomNumbers.length > 1 ? ` (Group Booking: Rooms ${selectedRoomNumbers.join(', ')})` : ''),
-            bookingGroupId: sharedGroupId,
-          } as any
-        );
-      }
+      // Create booking via service (inserts into reservations & reservation_rooms)
+      await BookingService.createMultiRoomBooking(
+        { name: trimmedName },
+        selectedRoomNumbers,
+        {
+          checkInDate,
+          checkOutDate,
+          remarks: remarks.trim(),
+        }
+      );
 
       onSuccess();
       onClose();
@@ -355,69 +322,47 @@ export default function BookingModal({
     }
   };
 
-  const handleStatusTransition = async (newStatus: 'checked-in' | 'checked-out') => {
+  const handleCheckInGuest = async () => {
     if (!loadedBooking) return;
     setErrorMsg(null);
 
     try {
       setIsSubmitting(true);
       if (loadedBooking.bookingGroupId && groupBookingsSameGroup.length > 1) {
-        // One click only: immediately check-in/out ALL eligible rooms in this reservation group
-        const targetBookings = groupBookingsSameGroup.filter(b => {
-          if (newStatus === 'checked-in') {
-            return b.status === 'booked';
-          } else {
-            return b.status === 'checked-in';
-          }
-        });
-
-        // Ensure current is updated too
-        const toUpdate = targetBookings.map(b => b.id);
-        if (!toUpdate.includes(loadedBooking.id)) {
-          if ((newStatus === 'checked-in' && loadedBooking.status === 'booked') ||
-              (newStatus === 'checked-out' && loadedBooking.status === 'checked-in')) {
-            toUpdate.push(loadedBooking.id);
-          }
+        const targetBookings = groupBookingsSameGroup.filter((b) => b.status === 'booked');
+        const toUpdate = targetBookings.map((b) => b.id);
+        if (!toUpdate.includes(loadedBooking.id) && loadedBooking.status === 'booked') {
+          toUpdate.push(loadedBooking.id);
         }
-
         for (const bid of toUpdate) {
-          await BookingService.updateBookingStatus(bid, newStatus);
+          await BookingService.checkInGuest(bid, loadedBooking.remarks);
         }
       } else {
-        await BookingService.updateBookingStatus(loadedBooking.id, newStatus);
+        await BookingService.checkInGuest(loadedBooking.id, loadedBooking.remarks);
       }
       onSuccess();
       onClose();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error updating status');
+      setErrorMsg(err.message || 'Error checking in guest');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleCancelBooking = async (entireGroup: boolean) => {
+  const handleReleaseRoom = async (entireGroup: boolean = false) => {
     if (!loadedBooking) return;
     try {
       setIsSubmitting(true);
       setErrorMsg(null);
       if (entireGroup && loadedBooking.bookingGroupId) {
-        // Multi-room cancel: Cancel all bookings belonging to this reservation group
-        const targetBookings = groupBookingsSameGroup.filter(b => b.status !== 'cancelled' && b.status !== 'checked-out');
-        const toUpdate = targetBookings.map(b => b.id);
-        if (!toUpdate.includes(loadedBooking.id)) {
-          toUpdate.push(loadedBooking.id);
-        }
-        for (const bid of toUpdate) {
-          await BookingService.updateBookingStatus(bid, 'cancelled');
-        }
+        await BookingService.cancelEntireReservation(loadedBooking.bookingGroupId);
       } else {
-        // Single-room cancel
-        await BookingService.updateBookingStatus(loadedBooking.id, 'cancelled');
+        await BookingService.releaseRoom(loadedBooking.id);
       }
       onSuccess();
       onClose();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error cancelling booking');
+      setErrorMsg(err.message || 'Error releasing room');
     } finally {
       setIsSubmitting(false);
     }
@@ -426,7 +371,7 @@ export default function BookingModal({
   const handleDeleteBooking = async () => {
     if (!loadedBooking) return;
     const confirmDelete = window.confirm(
-      `CRITICAL ACTION: Are you sure you want to PERMANENTLY DELETE booking for room ${loadedBooking.roomNumber} (${loadedBooking.guestName})?\nThis action cannot be undone and will erase all transaction records.`
+      `CRITICAL ACTION: Are you sure you want to PERMANENTLY DELETE booking for room ${loadedBooking.roomNumber} (${loadedBooking.guestName})?\nThis action cannot be undone.`
     );
     if (!confirmDelete) return;
 
@@ -453,10 +398,6 @@ export default function BookingModal({
       setErrorMsg('Payment amount must be greater than zero');
       return;
     }
-    if (extraPaymentAmount > maxAllowed) {
-      setErrorMsg(`Amount cannot exceed the pending balance of ₹${maxAllowed}`);
-      return;
-    }
 
     try {
       setIsSubmitting(true);
@@ -467,7 +408,7 @@ export default function BookingModal({
         extraPaymentRemarks || 'Extra payment logged dynamically'
       );
 
-      // Reload lists
+      // Reload
       const b = await BookingService.getBookingById(loadedBooking.id);
       if (b) {
         setLoadedBooking(b);
@@ -482,7 +423,7 @@ export default function BookingModal({
       
       onSuccess();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed log payment');
+      setErrorMsg(err.message || 'Failed to log payment');
     } finally {
       setIsSubmitting(false);
     }
@@ -498,7 +439,7 @@ export default function BookingModal({
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100 bg-gray-50/50">
           <div>
             <h3 className="text-lg font-bold text-gray-900">
-              {isEditing ? `Room Reservation - ${loadedBooking?.roomNumber}` : 'New Booking'}
+              {isEditing ? `Room Reservation - Room ${loadedBooking?.roomNumber}` : 'New Booking'}
             </h3>
             {isEditing && (
               <p className="text-xs text-gray-400 mt-1 uppercase font-mono tracking-wider">
@@ -569,9 +510,9 @@ export default function BookingModal({
                   {loadedBooking.status === 'booked' && (
                     <button
                       type="button"
-                      onClick={() => handleStatusTransition('checked-in')}
+                      onClick={() => handleCheckInGuest()}
                       disabled={isSubmitting}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
                       id="btn_checkin_guest"
                     >
                       <Check className="w-4 h-4" />
@@ -582,7 +523,7 @@ export default function BookingModal({
                   {loadedBooking.status === 'checked-in' && (
                     <button
                       type="button"
-                      onClick={() => handleStatusTransition('checked-out')}
+                      onClick={() => handleReleaseRoom(false)}
                       disabled={isSubmitting}
                       className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-black text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
                       id="btn_checkout_guest"
@@ -592,12 +533,12 @@ export default function BookingModal({
                     </button>
                   )}
 
-                  {/* Cancellation / Release options: Release This Room, Release All Rooms */}
+                  {/* Release Options */}
                   {(loadedBooking.status === 'booked' || loadedBooking.status === 'checked-in') && (
                     <>
                       <button
                         type="button"
-                        onClick={() => handleCancelBooking(false)}
+                        onClick={() => handleReleaseRoom(false)}
                         disabled={isSubmitting}
                         className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-red-200 text-red-650 hover:bg-red-50 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
                         id="btn_release_this_room"
@@ -609,7 +550,7 @@ export default function BookingModal({
                       {groupBookingsSameGroup.length > 1 && loadedBooking.bookingGroupId && (
                         <button
                           type="button"
-                          onClick={() => handleCancelBooking(true)}
+                          onClick={() => handleReleaseRoom(true)}
                           disabled={isSubmitting}
                           className="inline-flex items-center gap-2 px-5 py-2.5 bg-red-50 border border-red-250 text-red-700 hover:bg-red-100 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
                           id="btn_release_all_rooms"
@@ -676,7 +617,7 @@ export default function BookingModal({
                   </div>
                 </div>
 
-                {/* Stay Stay details */}
+                {/* Stay details */}
                 <div className="p-4 border border-gray-100 rounded-2xl flex flex-col gap-3">
                   <h4 className="font-semibold text-gray-900 border-b border-gray-50 pb-2 flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-gray-400" />
@@ -993,7 +934,7 @@ export default function BookingModal({
                   </div>
                 ) : (
                   <div className="grid grid-cols-3 sm:grid-cols-7 gap-2" id="available_rooms_grid">
-                    {FIXED_ROOMS.map((room) => {
+                    {roomsList.map((room) => {
                       const num = room.number;
                       const isSelected = selectedRoomNumbers.includes(num);
                       const isAvailable = roomAvailability[num] !== false;
@@ -1005,7 +946,6 @@ export default function BookingModal({
                           disabled={!isAvailable}
                           onClick={() => {
                             if (isSelected) {
-                              // Every room toggles off cleanly!
                               setSelectedRoomNumbers(selectedRoomNumbers.filter(n => n !== num));
                             } else {
                               setSelectedRoomNumbers([...selectedRoomNumbers, num]);
