@@ -3,6 +3,20 @@ import { Room, Booking, Payment, Guest, Expense } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ExpenseService } from '../services/expenses';
 
+function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advancePaid: number; cleanRemarks: string } {
+  if (!remarksStr) return { totalAmount: 0, advancePaid: 0, cleanRemarks: '' };
+  
+  const match = remarksStr.match(/\[PAYMENT:total=([\d.]+),advance=([\d.]+)\]/);
+  if (match) {
+    const totalAmount = Number(match[1]) || 0;
+    const advancePaid = Number(match[2]) || 0;
+    const cleanRemarks = remarksStr.replace(/\[PAYMENT:total=[\d.]+,advance=[\d.]+\]\s*/, '').trim();
+    return { totalAmount, advancePaid, cleanRemarks };
+  }
+  
+  return { totalAmount: 0, advancePaid: 0, cleanRemarks: remarksStr };
+}
+
 interface HotelContextType {
   rooms: Room[];
   bookings: Booking[];
@@ -154,11 +168,16 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             roomIdToNumMap.get(String(rr.room_id)) ??
             Number(rr.room_id || 0);
 
+          const { totalAmount: parsedTotal, advancePaid: parsedAdvance, cleanRemarks } = parsePaymentMetadata(String(parentRes.remarks || rr.remarks || ''));
+
           const payInfo = paymentByResId.get(String(parentRes.id)) || {
-            totalAmount: Number(parentRes.total_amount || 0),
-            advancePaid: Number(parentRes.advance_paid || 0),
+            totalAmount: Number(parentRes.total_amount || parsedTotal || 0),
+            advancePaid: Number(parentRes.advance_paid || parsedAdvance || 0),
             paymentStatus: 'pending',
           };
+
+          if (payInfo.totalAmount === 0 && parsedTotal > 0) payInfo.totalAmount = parsedTotal;
+          if (payInfo.advancePaid === 0 && parsedAdvance > 0) payInfo.advancePaid = parsedAdvance;
 
           const effectivePaymentStatus: 'paid' | 'pending' =
             mappedStatus === 'checked-in' ||
@@ -182,7 +201,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             totalAmount: payInfo.totalAmount,
             advancePaid: payInfo.advancePaid,
             paymentStatus: effectivePaymentStatus,
-            remarks: String(rr.remarks || parentRes.remarks || ''),
+            remarks: cleanRemarks,
             createdAt: String(rr.created_at || parentRes.created_at || new Date().toISOString()),
             updatedAt: String(rr.created_at || parentRes.created_at || new Date().toISOString()),
           });
@@ -244,25 +263,40 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const addExpense = useCallback(
     async (expense: Omit<Expense, 'id' | 'createdAt'>) => {
-      const created = await ExpenseService.addExpense(expense);
-      await refreshData();
-      return created;
+      try {
+        const created = await ExpenseService.addExpense(expense);
+        await refreshData();
+        return created;
+      } catch (err) {
+        console.error('Error adding expense:', err);
+        throw err;
+      }
     },
     [refreshData]
   );
 
   const updateExpense = useCallback(
     async (id: string, expense: Partial<Omit<Expense, 'id' | 'createdAt'>>) => {
-      await ExpenseService.updateExpense(id, expense);
-      await refreshData();
+      try {
+        await ExpenseService.updateExpense(id, expense);
+        await refreshData();
+      } catch (err) {
+        console.error('Error updating expense:', err);
+        throw err;
+      }
     },
     [refreshData]
   );
 
   const deleteExpense = useCallback(
     async (id: string) => {
-      await ExpenseService.deleteExpense(id);
-      await refreshData();
+      try {
+        await ExpenseService.deleteExpense(id);
+        await refreshData();
+      } catch (err) {
+        console.error('Error deleting expense:', err);
+        throw err;
+      }
     },
     [refreshData]
   );

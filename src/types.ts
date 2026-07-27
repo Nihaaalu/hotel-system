@@ -57,9 +57,6 @@ export interface Expense {
   id: string;
   expenseDate: string; // YYYY-MM-DD
   category: ExpenseCategory;
-  itemName: string;
-  quantity: number;
-  unit: string;
   amount: number;
   remarks: string;
   createdAt: string;

@@ -1,7 +1,15 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const rawUrl = ((import.meta as any).env?.VITE_SUPABASE_URL || '').trim();
-const rawKey = ((import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '').trim();
+const rawUrl = (
+  (import.meta as any).env?.VITE_SUPABASE_URL || 
+  (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_URL : '') || 
+  ''
+).trim();
+const rawKey = (
+  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 
+  (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_ANON_KEY : '') || 
+  ''
+).trim();
 
 /**
  * Clean Supabase URL by stripping /rest/v1 or trailing slashes

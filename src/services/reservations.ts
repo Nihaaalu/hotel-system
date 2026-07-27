@@ -11,6 +11,20 @@ function logResponse(data: any, error: any) {
   console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
 }
 
+function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advancePaid: number; cleanRemarks: string } {
+  if (!remarksStr) return { totalAmount: 0, advancePaid: 0, cleanRemarks: '' };
+  
+  const match = remarksStr.match(/\[PAYMENT:total=([\d.]+),advance=([\d.]+)\]/);
+  if (match) {
+    const totalAmount = Number(match[1]) || 0;
+    const advancePaid = Number(match[2]) || 0;
+    const cleanRemarks = remarksStr.replace(/\[PAYMENT:total=[\d.]+,advance=[\d.]+\]\s*/, '').trim();
+    return { totalAmount, advancePaid, cleanRemarks };
+  }
+  
+  return { totalAmount: 0, advancePaid: 0, cleanRemarks: remarksStr };
+}
+
 /**
  * Service for managing reservations and reservation_rooms in Supabase.
  * Supabase is the single source of truth for all booking operations.
@@ -105,6 +119,8 @@ export const ReservationService = {
           const checkOut = String(parentRes.check_out_date || '');
           const name = String(parentRes.booking_name || 'Guest');
 
+          const { totalAmount: parsedTotal, advancePaid: parsedAdvance, cleanRemarks } = parsePaymentMetadata(String(parentRes.remarks || rr.remarks || ''));
+
           bookings.push({
             id: String(rr.id || `${rr.reservation_id}_${roomNum}`),
             bookingGroupId: String(parentRes.id),
@@ -116,9 +132,9 @@ export const ReservationService = {
             checkInDate: checkIn,
             checkOutDate: checkOut,
             status: mappedStatus,
-            totalAmount: 0,
-            advancePaid: 0,
-            remarks: String(parentRes.remarks || ''),
+            totalAmount: parsedTotal,
+            advancePaid: parsedAdvance,
+            remarks: cleanRemarks,
             createdAt: String(parentRes.created_at || rr.created_at || new Date().toISOString()),
             updatedAt: String(parentRes.created_at || rr.created_at || new Date().toISOString()),
           });
@@ -143,6 +159,8 @@ export const ReservationService = {
             ? 'cancelled'
             : 'booked';
 
+        const { totalAmount: parsedTotal, advancePaid: parsedAdvance, cleanRemarks } = parsePaymentMetadata(String(res.remarks || ''));
+
         return {
           id: String(res.id),
           bookingGroupId: String(res.id),
@@ -154,9 +172,9 @@ export const ReservationService = {
           checkInDate: String(res.check_in_date || ''),
           checkOutDate: String(res.check_out_date || ''),
           status: mappedStatus,
-          totalAmount: 0,
-          advancePaid: 0,
-          remarks: String(res.remarks || ''),
+          totalAmount: parsedTotal,
+          advancePaid: parsedAdvance,
+          remarks: cleanRemarks,
           createdAt: String(res.created_at || new Date().toISOString()),
           updatedAt: String(res.created_at || new Date().toISOString()),
         };
@@ -209,9 +227,15 @@ export const ReservationService = {
     });
 
     // 1. Insert 1 record into 'reservations'
+    const totalAmt = Number(bookingDetails.totalAmount || 0);
+    const advPaid = Number(bookingDetails.advancePaid || 0);
+    const rawRemarks = bookingDetails.remarks || '';
+    const metadataPrefix = totalAmt > 0 || advPaid > 0 ? `[PAYMENT:total=${totalAmt},advance=${advPaid}]` : '';
+    const remarksPayload = `${metadataPrefix} ${rawRemarks}`.trim();
+
     const reservationPayload = {
       booking_name: guestData.name,
-      remarks: bookingDetails.remarks || '',
+      remarks: remarksPayload,
       check_in_date: bookingDetails.checkInDate,
       check_out_date: bookingDetails.checkOutDate,
       status: 'reserved',
@@ -261,8 +285,6 @@ export const ReservationService = {
     }
 
     // 3. Insert payment record storing: reservation_id, total_amount, advance_paid, payment_status
-    const totalAmt = Number(bookingDetails.totalAmount || 0);
-    const advPaid = Number(bookingDetails.advancePaid || 0);
     const paymentStatus = advPaid >= totalAmt ? 'paid' : 'pending';
 
     const paymentPayload = {

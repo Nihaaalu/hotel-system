@@ -23,7 +23,7 @@ export const ExpenseService = {
       logQuery('inventory_expenses', 'SELECT', 'ALL');
       const { data, error } = await supabase
         .from('inventory_expenses')
-        .select('*')
+        .select('id, expense_date, category, amount, remarks, created_at')
         .order('expense_date', { ascending: false });
       logResponse(data, error);
 
@@ -38,9 +38,6 @@ export const ExpenseService = {
         id: String(item.id || `exp_${Date.now()}_${Math.random()}`),
         expenseDate: String(item.expense_date || item.date || new Date().toISOString().split('T')[0]),
         category: (item.category || 'Miscellaneous') as ExpenseCategory,
-        itemName: String(item.item_name || item.item || item.name || ''),
-        quantity: Number(item.quantity || item.qty || 1),
-        unit: String(item.unit || 'pcs'),
         amount: Number(item.amount || item.cost || item.price || 0),
         remarks: String(item.remarks || item.notes || ''),
         createdAt: String(item.created_at || new Date().toISOString()),
@@ -64,35 +61,39 @@ export const ExpenseService = {
       createdAt: nowIso,
     };
 
-    localExpenses.unshift(newExpense);
+    // Always add to local memory list so UI stays instantly responsive
+    const existingIdx = localExpenses.findIndex((e) => e.id === id);
+    if (existingIdx === -1) {
+      localExpenses.unshift(newExpense);
+    }
 
     if (isSupabaseConfigured) {
-      try {
-        const payload = {
-          expense_date: expenseData.expenseDate,
-          category: expenseData.category,
-          item_name: expenseData.itemName,
-          quantity: expenseData.quantity,
-          unit: expenseData.unit,
-          amount: expenseData.amount,
-          remarks: expenseData.remarks,
-        };
+      // Strictly insert only expense_date, category, amount, remarks
+      const payload = {
+        expense_date: expenseData.expenseDate,
+        category: expenseData.category,
+        amount: Number(expenseData.amount || 0),
+        remarks: expenseData.remarks || '',
+      };
 
-        logQuery('inventory_expenses', 'INSERT', 'N/A', payload);
-        const { data, error } = await supabase
-          .from('inventory_expenses')
-          .insert(payload)
-          .select()
-          .single();
-        logResponse(data, error);
+      logQuery('inventory_expenses', 'INSERT', 'N/A', payload);
+      const { data, error } = await supabase
+        .from('inventory_expenses')
+        .insert(payload)
+        .select()
+        .single();
+      logResponse(data, error);
 
-        if (error) {
-          console.warn('Error inserting inventory_expenses:', error.message || error);
-        } else if (data) {
-          newExpense.id = String(data.id || id);
+      if (error) {
+        console.error('Supabase inventory_expenses INSERT returned error:', error);
+        // If DB has conflicting check constraints (23514), warn clearly but do not crash the app UI
+        if (error.code === '23514') {
+          console.warn('Supabase table inventory_expenses has conflicting check constraints on category column.');
+        } else {
+          throw new Error(error.message || 'Failed to insert expense into Supabase');
         }
-      } catch (err) {
-        console.warn('Exception inserting inventory_expense:', err);
+      } else if (data && data.id) {
+        newExpense.id = String(data.id);
       }
     }
 
@@ -108,29 +109,27 @@ export const ExpenseService = {
     );
 
     if (isSupabaseConfigured) {
-      try {
-        const payload: Record<string, any> = {};
-        if (expenseData.expenseDate !== undefined) payload.expense_date = expenseData.expenseDate;
-        if (expenseData.category !== undefined) payload.category = expenseData.category;
-        if (expenseData.itemName !== undefined) payload.item_name = expenseData.itemName;
-        if (expenseData.quantity !== undefined) payload.quantity = expenseData.quantity;
-        if (expenseData.unit !== undefined) payload.unit = expenseData.unit;
-        if (expenseData.amount !== undefined) payload.amount = expenseData.amount;
-        if (expenseData.remarks !== undefined) payload.remarks = expenseData.remarks;
+      const payload: Record<string, any> = {};
+      if (expenseData.expenseDate !== undefined) payload.expense_date = expenseData.expenseDate;
+      if (expenseData.category !== undefined) payload.category = expenseData.category;
+      if (expenseData.amount !== undefined) payload.amount = Number(expenseData.amount);
+      if (expenseData.remarks !== undefined) payload.remarks = expenseData.remarks;
 
-        logQuery('inventory_expenses', 'UPDATE', `id = ${id}`, payload);
-        const { data, error } = await supabase
-          .from('inventory_expenses')
-          .update(payload)
-          .eq('id', id)
-          .select();
-        logResponse(data, error);
+      logQuery('inventory_expenses', 'UPDATE', `id = ${id}`, payload);
+      const { data, error } = await supabase
+        .from('inventory_expenses')
+        .update(payload)
+        .eq('id', id)
+        .select();
+      logResponse(data, error);
 
-        if (error) {
-          console.warn('Error updating inventory_expenses:', error.message || error);
+      if (error) {
+        console.error('Supabase inventory_expenses UPDATE failed:', error);
+        if (error.code === '23514') {
+          console.warn('Supabase table inventory_expenses has conflicting check constraints on category column.');
+        } else {
+          throw new Error(error.message || 'Failed to update expense in Supabase');
         }
-      } catch (err) {
-        console.warn('Exception updating inventory_expense:', err);
       }
     }
   },
@@ -139,20 +138,17 @@ export const ExpenseService = {
     localExpenses = localExpenses.filter((exp) => exp.id !== id);
 
     if (isSupabaseConfigured) {
-      try {
-        logQuery('inventory_expenses', 'DELETE', `id = ${id}`);
-        const { data, error } = await supabase
-          .from('inventory_expenses')
-          .delete()
-          .eq('id', id)
-          .select();
-        logResponse(data, error);
+      logQuery('inventory_expenses', 'DELETE', `id = ${id}`);
+      const { data, error } = await supabase
+        .from('inventory_expenses')
+        .delete()
+        .eq('id', id)
+        .select();
+      logResponse(data, error);
 
-        if (error) {
-          console.warn('Error deleting inventory_expense:', error.message || error);
-        }
-      } catch (err) {
-        console.warn('Exception deleting inventory_expense:', err);
+      if (error) {
+        console.error('Supabase inventory_expenses DELETE failed:', error);
+        throw new Error(error.message || 'Failed to delete expense from Supabase');
       }
     }
   },

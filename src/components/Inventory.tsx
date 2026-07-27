@@ -5,22 +5,16 @@ import {
   Package,
   Plus,
   Search,
-  Filter,
   Trash2,
   Edit2,
-  Calendar,
-  DollarSign,
-  Tag,
-  FileText,
   X,
-  Check,
-  ChevronDown,
+  CheckCircle2,
 } from 'lucide-react';
 
 const CATEGORIES: ExpenseCategory[] = ['Meat', 'Groceries', 'Cleaning', 'Miscellaneous'];
 
 export default function Inventory() {
-  const { expenses, addExpense, updateExpense, deleteExpense, isLoading } = useHotelData();
+  const { expenses, addExpense, updateExpense, deleteExpense } = useHotelData();
 
   // Search, Filter & Sort states
   const [searchQuery, setSearchQuery] = useState('');
@@ -33,20 +27,27 @@ export default function Inventory() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
-  // Form Fields
+  // Simplified Form Fields: ONLY Expense Date, Category, Amount, Notes
   const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [category, setCategory] = useState<ExpenseCategory>('Groceries');
-  const [itemName, setItemName] = useState('');
-  const [quantity, setQuantity] = useState<number | ''>(1);
-  const [unit, setUnit] = useState('kg');
   const [amount, setAmount] = useState<number | ''>('');
   const [remarks, setRemarks] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Success Toast state
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   const todayStr = new Date().toISOString().split('T')[0];
   const currentMonthStr = todayStr.substring(0, 7);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
+  };
 
   // Computed Summaries
   const { todayTotal, monthTotal, categoryTotals } = useMemo(() => {
@@ -85,12 +86,12 @@ export default function Inventory() {
   const filteredExpenses = useMemo(() => {
     return expenses
       .filter((exp) => {
-        // Search filter
+        // Search filter (only category and remarks)
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
-          const matchName = exp.itemName.toLowerCase().includes(q);
-          const matchRemarks = exp.remarks.toLowerCase().includes(q);
-          if (!matchName && !matchRemarks) return false;
+          const matchRemarks = (exp.remarks || '').toLowerCase().includes(q);
+          const matchCategory = exp.category.toLowerCase().includes(q);
+          if (!matchRemarks && !matchCategory) return false;
         }
         // Category filter
         if (selectedCategory !== 'ALL' && exp.category !== selectedCategory) {
@@ -115,9 +116,6 @@ export default function Inventory() {
     setEditingExpense(null);
     setExpenseDate(todayStr);
     setCategory('Groceries');
-    setItemName('');
-    setQuantity(1);
-    setUnit('kg');
     setAmount('');
     setRemarks('');
     setErrorMsg(null);
@@ -126,12 +124,9 @@ export default function Inventory() {
 
   const handleOpenEditModal = (exp: Expense) => {
     setEditingExpense(exp);
-    setExpenseDate(exp.expenseDate);
-    setCategory(exp.category);
-    setItemName(exp.itemName);
-    setQuantity(exp.quantity);
-    setUnit(exp.unit);
-    setAmount(exp.amount);
+    setExpenseDate(exp.expenseDate || todayStr);
+    setCategory(exp.category || 'Groceries');
+    setAmount(exp.amount || '');
     setRemarks(exp.remarks || '');
     setErrorMsg(null);
     setIsModalOpen(true);
@@ -139,12 +134,8 @@ export default function Inventory() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!itemName.trim()) {
-      setErrorMsg('Item Name is required');
-      return;
-    }
-    if (amount === '' || Number(amount) < 0) {
-      setErrorMsg('Please enter a valid amount');
+    if (amount === '' || Number(amount) <= 0 || isNaN(Number(amount))) {
+      setErrorMsg('Please enter a valid amount (₹)');
       return;
     }
 
@@ -156,51 +147,56 @@ export default function Inventory() {
         await updateExpense(editingExpense.id, {
           expenseDate,
           category,
-          itemName: itemName.trim(),
-          quantity: Number(quantity || 1),
-          unit: unit.trim() || 'pcs',
           amount: Number(amount),
           remarks: remarks.trim(),
         });
+        showToast('✓ Expense updated successfully!');
       } else {
         await addExpense({
           expenseDate,
           category,
-          itemName: itemName.trim(),
-          quantity: Number(quantity || 1),
-          unit: unit.trim() || 'pcs',
           amount: Number(amount),
           remarks: remarks.trim(),
         });
+        showToast('✓ Expense saved successfully!');
       }
       setIsModalOpen(false);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to save expense entry');
+      setErrorMsg(err.message || 'Failed to save expense record');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to delete expense "${name}"?`)) {
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this expense record?')) {
       try {
         await deleteExpense(id);
+        showToast('✓ Expense deleted successfully!');
       } catch (err: any) {
-        alert('Failed to delete expense');
+        alert('Failed to delete expense record');
       }
     }
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-24" id="pms_inventory_panel">
+    <div className="space-y-4 sm:space-y-6 pb-24 relative" id="pms_inventory_panel">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-4 right-4 z-50 bg-emerald-800 text-white px-4 py-3 rounded-xl shadow-xl flex items-center gap-2 text-xs font-bold animate-bounce">
+          <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* Top Banner & Quick Add */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 border border-gray-200 rounded-2xl shadow-2xs">
         <div>
           <h2 className="text-base sm:text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
             <Package className="w-5 h-5 text-indigo-600" />
-            Inventory & Expenses
+            Expenses Tracker
           </h2>
-          <p className="text-xs text-gray-500">Track kitchen, grocery, and operational expenses in real-time</p>
+          <p className="text-xs text-gray-500">Log bill payments, groceries, and hotel operational costs</p>
         </div>
         <button
           onClick={handleOpenAddModal}
@@ -245,7 +241,7 @@ export default function Inventory() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search item name or remarks..."
+              placeholder="Search notes or categories..."
               className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[42px]"
             />
           </div>
@@ -305,7 +301,7 @@ export default function Inventory() {
         {filteredExpenses.length === 0 ? (
           <div className="p-8 text-center text-gray-400">
             <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
-            <p className="text-xs font-semibold">No expense records found matching criteria.</p>
+            <p className="text-xs font-semibold">No expense records found.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -314,10 +310,8 @@ export default function Inventory() {
                 <tr>
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Item Name</th>
-                  <th className="py-3 px-4">Qty / Unit</th>
-                  <th className="py-3 px-4 text-right">Amount</th>
-                  <th className="py-3 px-4">Remarks</th>
+                  <th className="py-3 px-4 text-right">Amount (₹)</th>
+                  <th className="py-3 px-4">Notes</th>
                   <th className="py-3 px-4 text-center">Actions</th>
                 </tr>
               </thead>
@@ -335,22 +329,20 @@ export default function Inventory() {
                         {exp.category}
                       </span>
                     </td>
-                    <td className="py-3 px-4 font-bold text-gray-900">{exp.itemName}</td>
-                    <td className="py-3 px-4 font-mono text-gray-600">{exp.quantity} {exp.unit}</td>
                     <td className="py-3 px-4 text-right font-black font-mono text-gray-900">₹{exp.amount.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-gray-500 italic truncate max-w-[180px]">{exp.remarks || '-'}</td>
+                    <td className="py-3 px-4 text-gray-700 font-medium">{exp.remarks || '-'}</td>
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       <div className="flex items-center justify-center gap-1.5">
                         <button
                           onClick={() => handleOpenEditModal(exp)}
-                          className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition cursor-pointer"
+                          className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                           title="Edit Expense"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => handleDelete(exp.id, exp.itemName)}
-                          className="p-1.5 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                          onClick={() => handleDelete(exp.id)}
+                          className="p-1.5 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                           title="Delete Expense"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -365,33 +357,33 @@ export default function Inventory() {
         )}
       </div>
 
-      {/* EXPENSE FORM MODAL */}
+      {/* COMPACT & MOBILE TOUCH-FRIENDLY ADD / EDIT EXPENSE MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden">
-            <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-sm sm:max-w-md my-auto overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
               <h3 className="font-extrabold text-sm text-gray-900 flex items-center gap-2">
                 <Package className="w-4 h-4 text-indigo-600" />
-                {editingExpense ? 'Edit Expense Record' : 'Add New Expense'}
+                {editingExpense ? 'Edit Expense Record' : 'Add Expense'}
               </h3>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="p-1 text-gray-400 hover:text-gray-700 rounded-lg cursor-pointer transition"
+                className="p-1.5 text-gray-400 hover:text-gray-700 rounded-lg cursor-pointer transition min-h-[40px] min-w-[40px] flex items-center justify-center"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-4 space-y-3.5">
+            <form onSubmit={handleSubmit} className="p-4 space-y-3">
               {errorMsg && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold">
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold">
                   {errorMsg}
                 </div>
               )}
 
-              {/* Expense Date */}
+              {/* 1. Expense Date */}
               <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
+                <label className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
                   Expense Date <span className="text-rose-500">*</span>
                 </label>
                 <input
@@ -399,20 +391,20 @@ export default function Inventory() {
                   required
                   value={expenseDate}
                   onChange={(e) => setExpenseDate(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
 
-              {/* Category Dropdown (STRICTLY ONLY Meat, Groceries, Cleaning, Miscellaneous) */}
+              {/* 2. Category Dropdown */}
               <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
+                <label className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
                   Category <span className="text-rose-500">*</span>
                 </label>
                 <select
                   required
                   value={category}
                   onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-                  className="w-full rounded-xl border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px] cursor-pointer"
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px] cursor-pointer"
                 >
                   {CATEGORIES.map((cat) => (
                     <option key={cat} value={cat}>{cat}</option>
@@ -420,49 +412,9 @@ export default function Inventory() {
                 </select>
               </div>
 
-              {/* Item Name */}
+              {/* 3. Amount (₹) */}
               <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
-                  Item Name <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={itemName}
-                  onChange={(e) => setItemName(e.target.value)}
-                  placeholder="e.g. Chicken, Rice, Detergent, Bulbs"
-                  className="w-full rounded-xl border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
-                />
-              </div>
-
-              {/* Quantity & Unit */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Quantity</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={quantity === '' ? '' : quantity}
-                    onChange={(e) => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
-                    className="w-full rounded-xl border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Unit</label>
-                  <input
-                    type="text"
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
-                    placeholder="kg, ltr, pcs, packet"
-                    className="w-full rounded-xl border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
-                  />
-                </div>
-              </div>
-
-              {/* Amount */}
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
+                <label className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
                   Amount (₹) <span className="text-rose-500">*</span>
                 </label>
                 <input
@@ -473,24 +425,26 @@ export default function Inventory() {
                   value={amount === '' ? '' : amount}
                   onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
                   placeholder="0"
-                  className="w-full rounded-xl border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
 
-              {/* Remarks */}
+              {/* 4. Notes (Multi-line Textarea) */}
               <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Remarks (Optional)</label>
-                <input
-                  type="text"
+                <label className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
+                  Notes <span className="text-gray-400 font-normal lowercase">(optional)</span>
+                </label>
+                <textarea
+                  rows={2}
                   value={remarks}
                   onChange={(e) => setRemarks(e.target.value)}
-                  placeholder="e.g. Purchased from local market"
-                  className="w-full rounded-xl border border-gray-200 bg-white p-2.5 text-xs font-medium text-gray-900 focus:ring-2 focus:ring-indigo-500"
+                  placeholder='e.g. "Weekly vegetables", "Cleaning chemicals", "Chicken from local market", "Electrician"'
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-gray-900 focus:ring-2 focus:ring-indigo-500 resize-none"
                 />
               </div>
 
-              {/* Actions */}
-              <div className="flex gap-2.5 pt-2">
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
