@@ -283,7 +283,7 @@ export default function BookingCalendar({
                   key={room.number}
                   className="p-1 text-center font-extrabold text-slate-800 border-r border-slate-300 min-w-[52px] max-w-[52px] bg-slate-100 flex items-center justify-center"
                 >
-                  <span className="text-[11px] font-black text-slate-900 leading-none">10{room.number % 100}</span>
+                  <span className="text-[11px] font-black text-slate-900 leading-none">{room.number}</span>
                 </div>
               ))}
             </div>
@@ -349,7 +349,7 @@ export default function BookingCalendar({
                         </div>
                       ) : (
                         <div className="w-full h-[22px] rounded bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/60 text-emerald-800 text-[9px] flex items-center justify-center transition">
-                          <span className="text-slate-400/40 font-mono text-[8.5px] font-normal select-none">10{room.number % 100}</span>
+                          <span className="text-slate-400/40 font-mono text-[8.5px] font-normal select-none">{room.number}</span>
                         </div>
                       )}
                     </div>

@@ -303,20 +303,20 @@ export default function Dashboard({
 
       {/* FLOATING COMPACT QUICK NAVIGATION BAR */}
       <div 
-        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-slate-900 border border-slate-800 text-white rounded-2xl shadow-xl px-2 py-1.5 flex items-center gap-1.5"
+        className="fixed bottom-2.5 left-1/2 -translate-x-1/2 z-40 bg-slate-950/95 backdrop-blur-md border border-slate-800 text-white rounded-full shadow-2xl p-1 flex items-center gap-1"
         id="floating_quick_actions"
       >
         <button
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl flex items-center gap-1.5 text-slate-200 text-2xs sm:text-xs font-bold transition cursor-pointer"
+          className="px-2.5 py-1.5 min-h-[44px] bg-slate-800/90 hover:bg-slate-700 rounded-full flex items-center gap-1 text-slate-200 text-[11px] font-extrabold transition cursor-pointer"
         >
-          <LayoutDashboard className="w-3.5 h-3.5" />
+          <LayoutDashboard className="w-3.5 h-3.5 text-indigo-400" />
           <span>Dashboard</span>
         </button>
 
         <button
           onClick={onNavigateToCalendar}
-          className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl flex items-center gap-1.5 text-white text-2xs sm:text-xs font-bold transition cursor-pointer shadow-xs"
+          className="px-2.5 py-1.5 min-h-[44px] bg-indigo-600 hover:bg-indigo-500 rounded-full flex items-center gap-1 text-white text-[11px] font-extrabold transition cursor-pointer shadow-xs"
         >
           <Calendar className="w-3.5 h-3.5" />
           <span>Calendar</span>
@@ -324,7 +324,7 @@ export default function Dashboard({
 
         <button
           onClick={() => onSelectCell(101, todayStr)}
-          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl flex items-center gap-1.5 text-white text-2xs sm:text-xs font-bold transition cursor-pointer shadow-xs"
+          className="px-2.5 py-1.5 min-h-[44px] bg-emerald-600 hover:bg-emerald-500 rounded-full flex items-center gap-1 text-white text-[11px] font-extrabold transition cursor-pointer shadow-xs"
         >
           <Plus className="w-3.5 h-3.5 stroke-[3]" />
           <span>New Booking</span>
