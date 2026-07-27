@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Calendar, Users, FolderOpen, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Calendar, Menu, X } from 'lucide-react';
 
 interface SidebarProps {
-  currentTab: 'dashboard' | 'calendar' | 'onsite' | 'crm';
-  onTabChange: (tab: 'dashboard' | 'calendar' | 'onsite' | 'crm') => void;
+  currentTab: 'dashboard' | 'calendar';
+  onTabChange: (tab: 'dashboard' | 'calendar') => void;
 }
 
 export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
@@ -12,22 +12,20 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'calendar', label: 'Booking Calendar', icon: Calendar },
-    { id: 'onsite', label: 'Onsite Guests', icon: Users },
-    { id: 'crm', label: 'Guest Ledger', icon: FolderOpen },
   ] as const;
 
-  const handleSelectTab = (tab: 'dashboard' | 'calendar' | 'onsite' | 'crm') => {
+  const handleSelectTab = (tab: 'dashboard' | 'calendar') => {
     onTabChange(tab);
     setIsMobileDrawerOpen(false);
   };
 
   return (
     <>
-      {/* Mobile Floating Hamburger Menu Button */}
-      <div className="sm:hidden fixed top-3 left-3 z-40">
+      {/* Mobile Hamburger Menu Button */}
+      <div className="sm:hidden fixed top-2.5 left-2.5 z-40">
         <button
           onClick={() => setIsMobileDrawerOpen(true)}
-          className="p-2.5 bg-slate-900 text-slate-100 rounded-xl shadow-lg border border-slate-800 flex items-center justify-center cursor-pointer active:scale-95 transition"
+          className="p-2 bg-slate-900 text-slate-100 rounded-lg shadow-md border border-slate-800 flex items-center justify-center cursor-pointer active:scale-95 transition"
           aria-label="Open Navigation Menu"
         >
           <Menu className="w-5 h-5 text-indigo-400" />
@@ -44,24 +42,24 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
           />
 
           {/* Drawer Sheet */}
-          <div className="relative w-72 bg-slate-900 text-slate-100 min-h-full flex flex-col justify-between shadow-2xl z-10 p-5 animate-slide-in">
+          <div className="relative w-64 bg-slate-900 text-slate-100 min-h-full flex flex-col justify-between shadow-2xl z-10 p-5 animate-slide-in">
             <div className="flex flex-col">
               {/* Brand Header with Close Button */}
-              <div className="pb-5 border-b border-slate-800 flex items-center justify-between select-none">
+              <div className="pb-4 border-b border-slate-800 flex items-center justify-between select-none">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 font-sans"></span>
                   <span className="font-sans font-black tracking-wider text-sm uppercase text-slate-100">Hotel PMS</span>
                 </div>
                 <button
                   onClick={() => setIsMobileDrawerOpen(false)}
-                  className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
               {/* Navigation Elements */}
-              <div className="space-y-2 mt-6">
+              <div className="space-y-2 mt-5">
                 {menuItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = currentTab === item.id;
@@ -69,7 +67,7 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
                     <button
                       key={item.id}
                       onClick={() => handleSelectTab(item.id)}
-                      className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-xs font-bold transition duration-150 cursor-pointer ${
+                      className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-xs font-bold transition duration-150 cursor-pointer ${
                         isActive
                           ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20'
                           : 'text-slate-200 hover:bg-slate-800 hover:text-white'
@@ -84,7 +82,7 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
             </div>
 
             <div className="pt-4 border-t border-slate-800 text-3xs text-slate-500 font-mono uppercase tracking-wider text-center">
-              Mobile Core Version 2.0
+              Mobile Core
             </div>
           </div>
         </div>
@@ -97,9 +95,9 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
           <div className="p-6 border-b border-slate-800 flex flex-col gap-1 select-none">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 font-sans"></span>
-              <span className="font-sans font-black tracking-wider text-sm uppercase text-slate-100">Hotel PMS Client</span>
+              <span className="font-sans font-black tracking-wider text-sm uppercase text-slate-100">Hotel PMS</span>
             </div>
-            <span className="text-3xs text-slate-400 font-mono uppercase tracking-widest mt-0.5">Desktop Core client</span>
+            <span className="text-3xs text-slate-400 font-mono uppercase tracking-widest mt-0.5">Desktop Core</span>
           </div>
 
           {/* Navigation Elements */}
@@ -128,5 +126,6 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     </>
   );
 }
+
 
 

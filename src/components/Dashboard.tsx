@@ -1,31 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { Booking, Payment, DashboardStats, Room } from '../types';
+import { Booking, DashboardStats, Room } from '../types';
 import { RoomService, BookingService, PaymentService } from '../services/dbServices';
 const { FIXED_ROOMS } = RoomService;
 import {
   BedSingle,
   DoorOpen,
-  CalendarCheck,
   LogIn,
   LogOut,
-  UserCheck,
-  TrendingUp,
   AlertTriangle,
-  Receipt,
-  Users,
-  BellRing,
   Plus,
-  Search,
   Calendar,
-  CreditCard,
-  User
+  LayoutDashboard
 } from 'lucide-react';
 
 interface DashboardProps {
   onSelectBooking: (id: string) => void;
   onSelectCell: (roomNumber: number, date: string) => void;
   onNavigateToCalendar: () => void;
-  onNavigateToGuests: () => void;
   refreshTrigger: number;
 }
 
@@ -41,7 +32,6 @@ export default function Dashboard({
   onSelectBooking,
   onSelectCell,
   onNavigateToCalendar,
-  onNavigateToGuests,
   refreshTrigger,
 }: DashboardProps) {
   const [stats, setStats] = useState<DashboardStats>({
@@ -55,17 +45,13 @@ export default function Dashboard({
     totalPendingBalance: 0,
   });
 
-  const [bookingsList, setBookingsList] = useState<Booking[]>([]);
   const [roomStatuses, setRoomStatuses] = useState<RoomStatusMapping[]>([]);
-  const [showPaymentSelection, setShowPaymentSelection] = useState(false);
 
   useEffect(() => {
     async function loadDashboardStats() {
       const bookings = await BookingService.getBookings();
       const payments = await PaymentService.getAllPayments();
       const todayStr = new Date().toISOString().split('T')[0];
-
-      setBookingsList(bookings);
 
       // Calculations
       const future = bookings.filter((b) => b.status === 'booked' && b.checkInDate > todayStr);
@@ -132,8 +118,8 @@ export default function Dashboard({
           room,
           status: 'AVAILABLE',
           booking: null,
-          colorClass: 'border-green-500 bg-green-50/5 hover:bg-green-50/15 text-green-900',
-          badgeClass: 'bg-green-100 text-green-800 border-green-200',
+          colorClass: 'border-emerald-500 bg-emerald-50/5 hover:bg-emerald-50/15 text-emerald-900',
+          badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
         };
       });
 
@@ -173,120 +159,82 @@ export default function Dashboard({
     return dateStr;
   };
 
-  const getRoomConfig = (roomNumber: number): string => {
-    switch (roomNumber) {
-      case 101: return '4 Sharing';
-      case 102: return '4 Sharing';
-      case 103: return '6 Bed';
-      case 104: return '6 Bed';
-      case 105: return '2 Bed King';
-      case 106: return '2 Bed King';
-      case 107: return '3 Bed King';
-      case 108: return '3 Bed King';
-      case 201: return '2 Bed King';
-      case 202: return '2 Bed King';
-      case 203: return '3 Bed King';
-      case 204: return '3 Bed King';
-      case 205: return '4 Bed King';
-      default: return '2 Bed King';
-    }
-  };
-
-  // Filters for Operations List
-  const checkinsToday = bookingsList.filter((b) => b.checkInDate === todayStr && b.status === 'booked');
-  const checkoutsToday = bookingsList.filter((b) => b.checkOutDate === todayStr && b.status === 'checked-in');
-  const pendingPayments = bookingsList.filter(
-    (b) => b.status !== 'checked-out' && b.status !== 'cancelled' && b.totalAmount - b.advancePaid > 0
-  );
-
-  // Filter staying guests (currently checked-in)
-  const currentlyStaying = bookingsList.filter((b) => b.status === 'checked-in');
-
   const handleRoomClick = (mapping: RoomStatusMapping) => {
     if (mapping.booking) {
       onSelectBooking(mapping.booking.id);
     } else {
-      // Available room: open card pre-filled with this room & today's date so receptionist can book immediately
+      // Available room: open card pre-filled with this room & today's date
       onSelectCell(mapping.room.number, todayStr);
     }
   };
 
   return (
-    <div className="space-y-6 pb-28" id="pms_dashboard_panel">
+    <div className="space-y-3 sm:space-y-6 pb-24" id="pms_dashboard_panel">
       
-      {/* SECTION 1: TOP SUMMARY BAR (Max height 100px on desktop, compact cards) */}
+      {/* SECTION 1: COMPACT KPI CARDS */}
       <section 
-        className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 shrink-0"
-        style={{ minHeight: '60px' }}
+        className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3"
         id="dashboard_top_summary"
       >
         {/* Available Rooms */}
-        <div className="py-2.5 px-4 bg-white border border-gray-150 rounded-xl flex items-center gap-3 shadow-2xs h-[72px] transition hover:border-green-300">
-          <div className="p-2 bg-green-50 text-green-600 rounded-lg shrink-0">
-            <BedSingle className="w-5 h-5" />
-          </div>
+        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-emerald-300">
           <div>
-            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Available</span>
-            <span className="text-lg font-black text-gray-950 font-mono leading-none">{stats.availableRoomsCount} / 13</span>
+            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Available</span>
+            <span className="text-base sm:text-lg font-black text-emerald-700 font-mono leading-none">{stats.availableRoomsCount} / 13</span>
           </div>
+          <BedSingle className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500 shrink-0" />
         </div>
 
         {/* Occupied Rooms */}
-        <div className="py-2.5 px-4 bg-white border border-gray-150 rounded-xl flex items-center gap-3 shadow-2xs h-[72px] transition hover:border-blue-300">
-          <div className="p-2 bg-blue-50 text-blue-600 rounded-lg shrink-0">
-            <DoorOpen className="w-5 h-5" />
-          </div>
+        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-blue-300">
           <div>
-            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Occupied</span>
-            <span className="text-lg font-black text-gray-950 font-mono leading-none">{stats.occupiedRoomsCount} / 13</span>
+            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Occupied</span>
+            <span className="text-base sm:text-lg font-black text-blue-700 font-mono leading-none">{stats.occupiedRoomsCount} / 13</span>
           </div>
+          <DoorOpen className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500 shrink-0" />
         </div>
 
         {/* Today's Checkins */}
-        <div className="py-2.5 px-4 bg-white border border-gray-150 rounded-xl flex items-center gap-3 shadow-2xs h-[72px] transition hover:border-orange-300">
-          <div className="p-2 bg-orange-50 text-orange-600 rounded-lg shrink-0">
-            <LogIn className="w-5 h-5" />
-          </div>
+        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-orange-300">
           <div>
-            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Check-ins Today</span>
-            <span className="text-lg font-black text-gray-950 font-mono leading-none">{stats.todayCheckinsCount}</span>
+            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Check-in</span>
+            <span className="text-base sm:text-lg font-black text-orange-700 font-mono leading-none">{stats.todayCheckinsCount}</span>
           </div>
+          <LogIn className="w-4 h-4 sm:w-5 sm:h-5 text-orange-500 shrink-0" />
         </div>
 
         {/* Today's Checkouts */}
-        <div className="py-2.5 px-4 bg-white border border-gray-150 rounded-xl flex items-center gap-3 shadow-2xs h-[72px] transition hover:border-red-300">
-          <div className="p-2 bg-red-50 text-red-600 rounded-lg shrink-0">
-            <LogOut className="w-5 h-5" />
-          </div>
+        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] transition hover:border-red-300">
           <div>
-            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Check-outs Today</span>
-            <span className="text-lg font-black text-gray-950 font-mono leading-none">{stats.todayCheckoutsCount}</span>
+            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Check-out</span>
+            <span className="text-base sm:text-lg font-black text-red-700 font-mono leading-none">{stats.todayCheckoutsCount}</span>
           </div>
+          <LogOut className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 shrink-0" />
         </div>
 
         {/* Pending Balance */}
-        <div className="py-2.5 px-4 bg-white border border-gray-150 rounded-xl flex items-center gap-3 shadow-2xs h-[72px] col-span-2 lg:col-span-1 transition hover:border-red-300">
-          <div className="p-2 bg-red-50 text-red-650 rounded-lg shrink-0">
-            <AlertTriangle className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Pending Balance</span>
-            <span className="text-base font-black text-red-700 font-mono leading-none truncate block">₹{stats.totalPendingBalance.toLocaleString()}</span>
-          </div>
-        </div>
-      </section>      {/* SECTION 2: REAL-TIME ROOM STATUS (DOMINATES THE DASHBOARD) */}
-      <section className="bg-white border border-gray-200 rounded-2xl p-6 shadow-xs flex-1" id="pms_realtime_status">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4 mb-4 select-none">
+        <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] col-span-2 lg:col-span-1 transition hover:border-red-300">
           <div>
-            <h2 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-pulse"></span>
-              Real-Time Room Board
-            </h2>
-            <p className="text-xs text-gray-400">Manage bookings, check-in, check-out, and billing directly from the room status cards.</p>
+            <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Pending</span>
+            <span className="text-base sm:text-lg font-black text-red-700 font-mono leading-none">₹{stats.totalPendingBalance.toLocaleString()}</span>
           </div>
-        </div>        {/* GRID OF 13 ROOMS - Wider, cleaner, 4 cards per row */}
+          <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 shrink-0" />
+        </div>
+      </section>
+
+      {/* SECTION 2: REAL-TIME ROOM BOARD */}
+      <section className="bg-white border border-gray-200 rounded-2xl p-3 sm:p-5 shadow-2xs flex-1" id="pms_realtime_status">
+        <div className="flex items-center justify-between border-b border-gray-100 pb-2.5 mb-3 select-none">
+          <h2 className="text-xs sm:text-sm font-extrabold text-gray-900 tracking-tight flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+            Real-Time Room Board
+          </h2>
+          <span className="text-3xs font-mono text-gray-400 uppercase">13 Total Rooms</span>
+        </div>
+
+        {/* 2 COLUMNS ON MOBILE, 4 COLUMNS ON DESKTOP (~95px height on mobile) */}
         <div 
-          className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4" 
+          className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3" 
           id="realtime_room_grid"
         >
           {roomStatuses.map((mapping) => {
@@ -298,45 +246,54 @@ export default function Dashboard({
                 <div
                   key={mapping.room.number}
                   onClick={() => handleRoomClick(mapping)}
-                  className="h-[144px] p-4 flex flex-col justify-between rounded-xl border-2 border-green-500 bg-white hover:border-green-600 hover:bg-green-50/5 cursor-pointer shadow-xs transition-all duration-200 select-none animate-[fadeIn_0.3s_ease-out]"
+                  className="h-[95px] sm:h-[120px] p-2.5 sm:p-3.5 flex flex-col justify-between rounded-xl border-2 border-emerald-500 bg-white hover:border-emerald-600 hover:bg-emerald-50/10 cursor-pointer shadow-2xs transition-all duration-150 select-none"
                   id={`room_card_${mapping.room.number}`}
                 >
-                  <div className="leading-none">
-                    <span className="text-3xl font-black tracking-tight text-gray-950 font-sans block">Room {mapping.room.number}</span>
-                    <span className="text-[11px] font-extrabold text-gray-650 mt-1.5 block uppercase tracking-tight whitespace-nowrap truncate">{getRoomConfig(mapping.room.number)}</span>
+                  <div className="flex items-start justify-between">
+                    <span className="text-lg sm:text-2xl font-black text-gray-900 leading-none">Room {mapping.room.number}</span>
+                    <span className="text-[9px] sm:text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded uppercase">Available</span>
                   </div>
+                  <div className="text-2xs text-gray-400 font-medium">Tap to book</div>
                 </div>
               );
             }
 
             const borderClass = 
-              mapping.status === 'CHECKIN_TODAY' ? 'border-orange-500 hover:border-orange-600' :
-              mapping.status === 'CHECKOUT_TODAY' ? 'border-red-500 hover:border-red-655' :
-              'border-blue-500 hover:border-blue-600';
+              mapping.status === 'CHECKIN_TODAY' ? 'border-orange-500 bg-orange-50/10' :
+              mapping.status === 'CHECKOUT_TODAY' ? 'border-red-500 bg-red-50/10' :
+              'border-blue-500 bg-blue-50/10';
 
-            const outText = mapping.status === 'CHECKOUT_TODAY' ? 'Today' : formatDateShort(mapping.booking!.checkOutDate);
+            const tagColor = 
+              mapping.status === 'CHECKIN_TODAY' ? 'bg-orange-100 text-orange-800' :
+              mapping.status === 'CHECKOUT_TODAY' ? 'bg-red-100 text-red-800' :
+              'bg-blue-100 text-blue-800';
+
+            const statusLabel = 
+              mapping.status === 'CHECKIN_TODAY' ? 'Arriving' :
+              mapping.status === 'CHECKOUT_TODAY' ? 'Checkout' :
+              'Occupied';
+
+            const outText = formatDateShort(mapping.booking!.checkOutDate);
 
             return (
               <div
                 key={mapping.room.number}
                 onClick={() => handleRoomClick(mapping)}
-                className={`h-[144px] p-4 flex flex-col justify-between rounded-xl border-2 ${borderClass} bg-white hover:bg-slate-50/10 cursor-pointer shadow-xs transition-all duration-150 select-none animate-[fadeIn_0.3s_ease-out]`}
+                className={`h-[95px] sm:h-[120px] p-2.5 sm:p-3.5 flex flex-col justify-between rounded-xl border-2 ${borderClass} hover:shadow-xs cursor-pointer transition-all duration-150 select-none`}
                 id={`room_card_${mapping.room.number}`}
               >
-                <div className="leading-none">
-                  <span className="text-3xl font-black tracking-tight text-gray-950 font-sans block">Room {mapping.room.number}</span>
-                  <span className="text-[11px] font-extrabold text-gray-650 mt-1.5 block uppercase tracking-tight whitespace-nowrap truncate">{getRoomConfig(mapping.room.number)}</span>
+                <div className="flex items-start justify-between">
+                  <span className="text-lg sm:text-2xl font-black text-gray-900 leading-none">10{mapping.room.number % 100}</span>
+                  <span className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${tagColor}`}>{statusLabel}</span>
                 </div>
+                
                 <div className="min-w-0">
-                  <span className="text-sm font-black text-gray-950 truncate block leading-none">{mapping.booking!.guestName}</span>
+                  <span className="text-xs sm:text-sm font-extrabold text-gray-900 truncate block leading-tight">{mapping.booking!.guestName}</span>
                 </div>
-                <div className="text-xs space-y-0.5 leading-none">
-                  <div className="text-[11px] text-gray-700 font-bold">
-                    Balance: <span className="font-black text-indigo-950">₹{balanceDue.toLocaleString()}</span>
-                  </div>
-                  <div className="text-[11px] text-gray-700 font-bold">
-                    Out: <span className="font-black text-gray-950">{outText}</span>
-                  </div>
+
+                <div className="flex items-center justify-between text-[10px] sm:text-xs text-gray-600 font-medium leading-none">
+                  <span>Out {outText}</span>
+                  <span className="font-bold text-gray-900">₹{mapping.booking!.totalAmount}</span>
                 </div>
               </div>
             );
@@ -344,78 +301,34 @@ export default function Dashboard({
         </div>
       </section>
 
-      {/* FLOATING COMPACT QUICK ACTIONS CONTAINER */}
+      {/* FLOATING COMPACT QUICK NAVIGATION BAR */}
       <div 
-        className="fixed bottom-6 right-6 z-40 bg-slate-900 border border-slate-950 text-white rounded-2xl shadow-2xl p-3 flex flex-row items-center gap-2.5 animate-fadeIn"
+        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-slate-900 border border-slate-800 text-white rounded-2xl shadow-xl px-2 py-1.5 flex items-center gap-1.5"
         id="floating_quick_actions"
       >
-        {/* New Booking */}
         <button
-          onClick={() => onSelectCell(101, todayStr)}
-          className="p-2 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg flex items-center gap-1.5 transition text-white outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer text-xs font-extrabold tracking-tight"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl flex items-center gap-1.5 text-slate-200 text-2xs sm:text-xs font-bold transition cursor-pointer"
         >
-          <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>New Booking</span>
+          <LayoutDashboard className="w-3.5 h-3.5" />
+          <span>Dashboard</span>
         </button>
 
-        {/* View Calendar */}
         <button
           onClick={onNavigateToCalendar}
-          className="p-2 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg flex items-center gap-1.5 transition text-white outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer text-xs font-extrabold tracking-tight"
+          className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl flex items-center gap-1.5 text-white text-2xs sm:text-xs font-bold transition cursor-pointer shadow-xs"
         >
-          <Calendar className="w-4 h-4" />
+          <Calendar className="w-3.5 h-3.5" />
           <span>Calendar</span>
         </button>
 
-        {/* Search Guest */}
         <button
-          onClick={onNavigateToGuests}
-          className="p-2 py-1.5 bg-sky-600 hover:bg-sky-500 rounded-lg flex items-center gap-1.5 transition text-white outline-none focus:ring-2 focus:ring-sky-450 cursor-pointer text-xs font-extrabold tracking-tight"
+          onClick={() => onSelectCell(101, todayStr)}
+          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl flex items-center gap-1.5 text-white text-2xs sm:text-xs font-bold transition cursor-pointer shadow-xs"
         >
-          <Search className="w-4 h-4" />
-          <span>Guests</span>
+          <Plus className="w-3.5 h-3.5 stroke-[3]" />
+          <span>New Booking</span>
         </button>
-
-        {/* Add Payment */}
-        <div className="relative">
-          <button
-            onClick={() => setShowPaymentSelection(!showPaymentSelection)}
-            className="p-2 py-1.5 bg-slate-800 hover:bg-slate-750 border border-slate-700 rounded-lg flex items-center gap-1.5 transition text-white outline-none focus:ring-2 focus:ring-slate-400 cursor-pointer text-xs font-extrabold tracking-tight"
-          >
-            <CreditCard className="w-4 h-4" />
-            <span>Add Payment</span>
-          </button>
-
-          {/* Collapsible Popover to pick staying guest to add payment to */}
-          {showPaymentSelection && (
-            <div className="absolute right-0 bottom-full mb-3 w-56 bg-white border border-gray-200 text-gray-900 rounded-xl shadow-xl p-2.5 z-50 space-y-1.5 animate-fadeIn">
-              <div className="text-3xs font-extrabold text-gray-400 uppercase font-mono tracking-widest px-1.5 py-0.5 border-b border-gray-50">
-                Stayers with Balance
-              </div>
-              {currentlyStaying.filter(b => b.totalAmount - b.advancePaid > 0).length === 0 ? (
-                <p className="text-[10px] text-gray-400 italic px-2 py-1 select-none">No active stayers have pending balance</p>
-              ) : (
-                <div className="max-h-[160px] overflow-y-auto space-y-1">
-                  {currentlyStaying
-                    .filter(b => b.totalAmount - b.advancePaid > 0)
-                    .map((b) => (
-                      <button
-                        key={b.id}
-                        onClick={() => {
-                          onSelectBooking(b.id);
-                          setShowPaymentSelection(false);
-                        }}
-                        className="w-full text-left p-1.5 rounded-lg hover:bg-gray-50 flex items-center justify-between text-2xs transition"
-                      >
-                        <span className="font-bold text-gray-800 truncate max-w-[100px]">{b.guestName}</span>
-                        <span className="font-mono text-indigo-700 bg-indigo-50 font-extrabold px-1.5 py-0.5 rounded-sm">RM {b.roomNumber}</span>
-                      </button>
-                    ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

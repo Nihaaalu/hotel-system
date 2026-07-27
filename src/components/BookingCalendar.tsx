@@ -3,7 +3,7 @@ import { Room, Booking } from '../types';
 import { RoomService, BookingService } from '../services/dbServices';
 import { formatDateHuman } from '../utils/formatters';
 const { FIXED_ROOMS } = RoomService;
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, User, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, X, User } from 'lucide-react';
 
 interface BookingCalendarProps {
   onSelectCell: (roomNumber: number, date: string) => void;
@@ -11,8 +11,8 @@ interface BookingCalendarProps {
   refreshTrigger: number;
 }
 
-const COL_WIDTH = 52; // width in px for each day column
-const ROOM_COL_WIDTH = 176; // width in px for room label column (w-44)
+const COL_WIDTH = 52; // width in px for each day column on desktop
+const ROOM_COL_WIDTH = 176; // width in px for room label column on desktop
 
 export default function BookingCalendar({
   onSelectCell,
@@ -27,6 +27,13 @@ export default function BookingCalendar({
 
   const [bookingList, setBookingList] = useState<Booking[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Selected mobile cell popup state
+  const [selectedMobileCellBooking, setSelectedMobileCellBooking] = useState<{
+    booking: Booking;
+    roomNumber: number;
+    dateYMD: string;
+  } | null>(null);
 
   // Load bookings
   useEffect(() => {
@@ -83,7 +90,18 @@ export default function BookingCalendar({
     setCurrentMonth(new Date(now.getFullYear(), now.getMonth(), 1));
   };
 
-  // Auto-scroll to today if current month is selected
+  // Helper to find booking for a room on a specific YYYY-MM-DD date
+  const getBookingForRoomAndDate = (roomNumber: number, dateYMD: string): Booking | null => {
+    return (
+      bookingList.find((b) => {
+        if (b.roomNumber !== roomNumber) return false;
+        if (b.status === 'cancelled') return false;
+        return dateYMD >= b.checkInDate && dateYMD < b.checkOutDate;
+      }) || null
+    );
+  };
+
+  // Auto-scroll to today if current month is selected (Desktop)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (
@@ -103,7 +121,7 @@ export default function BookingCalendar({
     return () => clearTimeout(timer);
   }, [currentMonth, year, month]);
 
-  // Compute booking bar placement for a room in this month
+  // Compute booking bar placement for desktop
   const getRoomBookingsForMonth = (roomNumber: number) => {
     const monthStartStr = formatYMD(year, month, 1);
     const monthEndStr = formatYMD(year, month, daysInMonth);
@@ -112,7 +130,6 @@ export default function BookingCalendar({
       .filter((b) => {
         if (b.roomNumber !== roomNumber) return false;
         if (b.status === 'cancelled') return false;
-        // Check overlap with month
         return b.checkInDate <= monthEndStr && b.checkOutDate >= monthStartStr;
       })
       .map((b) => {
@@ -129,17 +146,15 @@ export default function BookingCalendar({
         let endDay = daysInMonth;
         let extendsRight = false;
 
-        // If checkOutDate is in or after next month
         const checkOutParts = b.checkOutDate.split('-').map(Number);
         const checkOutYear = checkOutParts[0];
-        const checkOutMonth = checkOutParts[1] - 1; // 0-indexed
+        const checkOutMonth = checkOutParts[1] - 1;
         const checkOutDayNum = checkOutParts[2];
 
         if (checkOutYear > year || (checkOutYear === year && checkOutMonth > month)) {
           endDay = daysInMonth;
           extendsRight = true;
         } else if (checkOutYear === year && checkOutMonth === month) {
-          // Check-out day morning: night stops at checkOutDayNum - 1 (or at least checkInDay if 0 night stay)
           endDay = Math.max(startDay, checkOutDayNum - 1);
         }
 
@@ -147,11 +162,6 @@ export default function BookingCalendar({
         const leftPx = (startDay - 1) * COL_WIDTH;
         const widthPx = spanCols * COL_WIDTH;
 
-        // Determine color theme based on requirements:
-        // Green = Available
-        // Blue = Checked In / Occupied
-        // Orange = Arrival Day / Booked
-        // Red = Departure Day / Checked Out
         let colorClass = 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600';
         let statusLabel = 'Reserved';
 
@@ -188,218 +198,406 @@ export default function BookingCalendar({
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" id="booking_calendar_panel">
-      {/* 1. Header Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:p-5 border-b border-gray-100 gap-4 bg-white select-none">
-        <div>
-          <h2 className="text-lg font-black text-gray-950 flex items-center gap-2 tracking-tight">
-            <CalendarIcon className="w-5 h-5 text-indigo-600" />
-            Booking Calendar
-          </h2>
-          <p className="text-xs text-gray-500 font-medium mt-0.5">
-            Monthly occupancy chart for resort rooms & reservations
-          </p>
-        </div>
-
-        {/* Month Navigation & Today */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div 
-            className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1 shadow-2xs select-none"
-            onTouchStart={(e) => {
-              (window as any)._calendarTouchStartX = e.touches[0].clientX;
-            }}
-            onTouchEnd={(e) => {
-              const startX = (window as any)._calendarTouchStartX;
-              if (startX !== undefined) {
-                const diffX = e.changedTouches[0].clientX - startX;
-                if (diffX > 50) goToPrevMonth();
-                else if (diffX < -50) goToNextMonth();
-              }
-            }}
-          >
-            <button
-              onClick={goToPrevMonth}
-              className="px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] hover:bg-white hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
-              title={`Go to ${prevMonthName}`}
-            >
-              <ChevronLeft className="w-5 h-5 sm:w-4 sm:h-4" />
-              <span className="hidden sm:inline">{prevMonthName}</span>
-            </button>
-
-            <span className="px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-black text-slate-900 min-w-[110px] sm:min-w-[130px] text-center tracking-tight">
-              {currentMonthTitle}
-            </span>
+      
+      {/* ========================================================= */}
+      {/* 1. MOBILE TOUCH-FIRST CALENDAR (Shown strictly on sm:hidden) */}
+      {/* ========================================================= */}
+      <div className="block sm:hidden select-none" id="mobile_pms_calendar">
+        {/* Sticky Top Header with Controls & Legend */}
+        <div className="sticky top-0 z-30 bg-slate-900 text-white p-3 border-b border-slate-800 shadow-md">
+          {/* Top Month Switcher */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={goToPrevMonth}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-base font-black tracking-tight text-white min-w-[120px] text-center font-sans">
+                {currentMonthTitle}
+              </span>
+              <button
+                onClick={goToNextMonth}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
 
             <button
-              onClick={goToNextMonth}
-              className="px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] hover:bg-white hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
-              title={`Go to ${nextMonthName}`}
+              onClick={goToToday}
+              className="px-2.5 py-1 bg-indigo-600 text-white text-xs font-bold rounded-lg active:scale-95 transition"
             >
-              <span className="hidden sm:inline">{nextMonthName}</span>
-              <ChevronRight className="w-5 h-5 sm:w-4 sm:h-4" />
+              Today
             </button>
           </div>
 
-          <button
-            onClick={goToToday}
-            className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs min-h-[44px] flex items-center justify-center"
-          >
-            Today
-          </button>
-        </div>
-      </div>
-
-      {/* 2. Grid Viewport (Scrollable horizontally) */}
-      <div ref={scrollContainerRef} className="overflow-x-auto w-full relative">
-        <div style={{ width: `${ROOM_COL_WIDTH + daysInMonth * COL_WIDTH}px` }} className="min-w-full">
-          {/* Header Row: Days of Month */}
-          <div className="flex border-b border-slate-300 bg-slate-50 sticky top-0 z-30 select-none">
-            {/* Room Column Label */}
-            <div
-              style={{ width: `${ROOM_COL_WIDTH}px` }}
-              className="shrink-0 py-3 px-3 font-extrabold text-xs text-slate-700 uppercase tracking-wider sticky left-0 z-40 bg-slate-100 border-r border-slate-300 shadow-[2px_0_5px_rgba(0,0,0,0.04)] flex items-center justify-between"
-            >
-              <span>Room</span>
-              <span className="text-[10px] text-slate-400 font-normal lowercase">13 total</span>
-            </div>
-
-            {/* Day Columns */}
-            <div className="flex">
-              {monthDays.map((day) => (
-                <div
-                  key={day.ymd}
-                  style={{ width: `${COL_WIDTH}px` }}
-                  className={`shrink-0 py-2 text-center border-r border-slate-300 flex flex-col justify-center ${
-                    day.isToday
-                      ? 'bg-purple-600 text-white font-black shadow-xs ring-2 ring-purple-600 z-10'
-                      : day.isPast
-                      ? 'bg-slate-100 text-slate-400 font-medium'
-                      : 'bg-slate-50 text-slate-700 font-semibold'
-                  }`}
-                >
-                  <span className="text-[10px] uppercase font-bold tracking-tight opacity-80 leading-none">
-                    {day.dayOfWeek}
-                  </span>
-                  <span className="text-xs font-black mt-1 leading-none">
-                    {day.dayNum}
-                  </span>
-                </div>
-              ))}
-            </div>
+          {/* Color Legend (Compact) */}
+          <div className="flex items-center justify-between text-[10px] font-bold mt-2.5 pt-2 border-t border-slate-800 text-slate-300">
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-emerald-500 inline-block"></span>Avail</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-amber-500 inline-block"></span>Reserved</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-blue-600 inline-block"></span>Checked In</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-rose-600 inline-block"></span>Checkout</span>
           </div>
+        </div>
 
-          {/* Room Rows */}
-          <div className="divide-y divide-slate-300 text-xs text-slate-700">
-            {FIXED_ROOMS.map((room) => {
-              const bars = getRoomBookingsForMonth(room.number);
-
-              return (
-                <div key={room.number} className="flex h-14 group hover:bg-slate-50/40 relative">
-                  {/* Sticky Left Room Number */}
-                  <div
-                    style={{ width: `${ROOM_COL_WIDTH}px` }}
-                    className="shrink-0 px-3 font-semibold sticky left-0 z-30 bg-white group-hover:bg-slate-50 border-r border-slate-300 flex flex-col justify-center shadow-[2px_0_5px_rgba(0,0,0,0.04)] select-none"
+        {/* Rotated Grid Container: Dates vertical, Rooms horizontal */}
+        <div className="overflow-x-auto w-full">
+          <table className="w-full border-collapse text-xs">
+            {/* Sticky Room Numbers Header */}
+            <thead>
+              <tr className="bg-slate-100 border-b border-slate-300 sticky top-[77px] z-20 shadow-2xs">
+                <th className="sticky left-0 bg-slate-200 z-30 p-2 text-left font-black text-slate-700 border-r border-slate-300 min-w-[64px]">
+                  Date
+                </th>
+                {FIXED_ROOMS.map((room) => (
+                  <th
+                    key={room.number}
+                    className="p-2 text-center font-extrabold text-slate-800 border-r border-slate-300 min-w-[42px] max-w-[42px]"
                   >
-                    <span className="text-xs sm:text-sm font-black text-slate-900 leading-tight">Room {room.number}</span>
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight mt-0.5">
-                      Fl {room.floor} • {room.type}
-                    </span>
-                  </div>
+                    10{room.number % 100}
+                  </th>
+                ))}
+              </tr>
+            </thead>
 
-                  {/* Days Timeline Relative Container */}
-                  <div
-                    style={{ width: `${daysInMonth * COL_WIDTH}px` }}
-                    className="relative flex shrink-0 h-14"
+            {/* Vertical Dates Body */}
+            <tbody>
+              {monthDays.map((day) => {
+                return (
+                  <tr
+                    key={day.ymd}
+                    className={`border-b border-slate-200 ${
+                      day.isToday ? 'bg-purple-50/70 font-bold' : 'hover:bg-slate-50'
+                    }`}
                   >
-                    {/* Background Day Cells */}
-                    {monthDays.map((day) => (
-                      <div
-                        key={day.ymd}
-                        style={{ width: `${COL_WIDTH}px` }}
-                        onClick={() => onSelectCell(room.number, day.ymd)}
-                        title={`Book Room ${room.number} on ${day.ymd}`}
-                        className={`shrink-0 h-14 border-r border-slate-300 flex flex-col justify-between p-1 cursor-pointer transition relative group/cell ${
-                          day.isToday
-                            ? 'bg-purple-50/70 border-x border-purple-400 ring-1 ring-purple-300 z-10'
-                            : day.isPast
-                            ? 'bg-slate-100/60 hover:bg-slate-200/60'
-                            : 'bg-white hover:bg-emerald-50/80'
-                        }`}
-                      >
-                        <span className="text-[10px] text-gray-400 font-normal leading-none select-none pointer-events-none block pt-0.5 pl-0.5">
-                          {day.dayNum}
-                        </span>
-                        <div className="flex-1 flex items-center justify-center">
-                          <Plus className="w-3.5 h-3.5 text-emerald-600 opacity-0 group-hover/cell:opacity-100 transition stroke-[2.5]" />
-                        </div>
-                      </div>
-                    ))}
+                    {/* Sticky Date Label */}
+                    <td className={`sticky left-0 z-10 p-2 border-r border-slate-300 text-[11px] font-bold whitespace-nowrap ${
+                      day.isToday ? 'bg-purple-600 text-white font-black' : 'bg-slate-100 text-slate-800'
+                    }`}>
+                      {day.dayNum} {day.dayOfWeek}
+                    </td>
 
-                    {/* Overlaid Booking Bars */}
-                    {bars.map(({ booking, leftPx, widthPx, extendsLeft, extendsRight, colorClass, statusLabel }) => {
-                      const roundedClass = `${extendsLeft ? 'rounded-l-none' : 'rounded-l-md'} ${extendsRight ? 'rounded-r-none' : 'rounded-r-md'}`;
-                      const tooltipText = `Guest: ${booking.guestName}\nRoom: ${booking.roomNumber}\nStay: ${formatDateHuman(booking.checkInDate)} – ${formatDateHuman(booking.checkOutDate)}\nStatus: ${statusLabel}`;
+                    {/* Room Columns */}
+                    {FIXED_ROOMS.map((room) => {
+                      const booking = getBookingForRoomAndDate(room.number, day.ymd);
+
+                      let bgBadge = 'bg-emerald-500 hover:bg-emerald-600';
+                      let symbol = '🟩';
+
+                      if (booking) {
+                        if (booking.status === 'checked-in') {
+                          if (booking.checkOutDate === todayYMD) {
+                            bgBadge = 'bg-rose-600 hover:bg-rose-700';
+                            symbol = '🟥';
+                          } else {
+                            bgBadge = 'bg-blue-600 hover:bg-blue-700';
+                            symbol = '🟦';
+                          }
+                        } else {
+                          bgBadge = 'bg-amber-500 hover:bg-amber-600';
+                          symbol = '🟧';
+                        }
+                      }
 
                       return (
-                        <div
-                          key={booking.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectBooking(booking.id);
+                        <td
+                          key={`${room.number}_${day.ymd}`}
+                          className="p-1 border-r border-slate-200 text-center align-middle cursor-pointer"
+                          onClick={() => {
+                            if (booking) {
+                              setSelectedMobileCellBooking({
+                                booking,
+                                roomNumber: room.number,
+                                dateYMD: day.ymd,
+                              });
+                            } else {
+                              onSelectCell(room.number, day.ymd);
+                            }
                           }}
-                          style={{
-                            left: `${leftPx + 1}px`,
-                            width: `${Math.max(COL_WIDTH - 2, widthPx - 2)}px`,
-                          }}
-                          title={tooltipText}
-                          className={`absolute top-2.5 bottom-1.5 z-20 flex items-center px-1 sm:px-1.5 transition cursor-pointer font-sans shadow-2xs border select-none overflow-hidden ${colorClass} ${roundedClass}`}
                         >
-                          <span className="text-[10px] sm:text-[11px] font-semibold leading-tight truncate w-full tracking-tight">
-                            {booking.guestName}
-                          </span>
-                        </div>
+                          <div className={`w-7 h-7 mx-auto rounded-md flex items-center justify-center transition active:scale-90 ${bgBadge}`}>
+                            {/* Empty square or status icon badge */}
+                            {!booking && <Plus className="w-3 h-3 text-white opacity-40" />}
+                          </div>
+                        </td>
                       );
                     })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Reservation Details Popup for Mobile */}
+        {selectedMobileCellBooking && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-2xs animate-fadeIn">
+            <div className="bg-white rounded-2xl max-w-xs w-full p-4 shadow-2xl border border-gray-100 text-gray-900 space-y-3">
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="font-extrabold text-sm text-indigo-950">Room {selectedMobileCellBooking.roomNumber}</span>
+                <button
+                  onClick={() => setSelectedMobileCellBooking(null)}
+                  className="p-1 text-gray-400 hover:text-gray-700 rounded-lg"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-1.5 text-xs">
+                <div>
+                  <span className="text-3xs uppercase font-mono text-gray-400 block font-bold">Guest Name</span>
+                  <span className="font-extrabold text-sm text-gray-900">{selectedMobileCellBooking.booking.guestName}</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <span className="text-3xs uppercase font-mono text-gray-400 block">Check In</span>
+                    <span className="font-bold text-gray-800">{formatDateHuman(selectedMobileCellBooking.booking.checkInDate)}</span>
+                  </div>
+                  <div>
+                    <span className="text-3xs uppercase font-mono text-gray-400 block">Check Out</span>
+                    <span className="font-bold text-gray-800">{formatDateHuman(selectedMobileCellBooking.booking.checkOutDate)}</span>
                   </div>
                 </div>
-              );
-            })}
+
+                <div className="pt-1">
+                  <span className="text-3xs uppercase font-mono text-gray-400 block">Status</span>
+                  <span className="inline-block px-2 py-0.5 text-2xs font-extrabold uppercase rounded bg-indigo-50 text-indigo-700 mt-0.5">
+                    {selectedMobileCellBooking.booking.status}
+                  </span>
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setSelectedMobileCellBooking(null)}
+                  className="px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-lg"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => {
+                    const id = selectedMobileCellBooking.booking.id;
+                    setSelectedMobileCellBooking(null);
+                    onSelectBooking(id);
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-xs"
+                >
+                  Open Booking
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* 3. Legend Footer */}
-      <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-700 select-none">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded bg-emerald-100 border border-emerald-300 inline-block"></span>
-            <span>Available</span>
+      {/* ========================================================= */}
+      {/* 2. DESKTOP SPREADSHEET CALENDAR (Shown strictly on sm:block) */}
+      {/* ========================================================= */}
+      <div className="hidden sm:block" id="desktop_pms_calendar">
+        {/* Header Navigation */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:p-5 border-b border-gray-100 gap-4 bg-white select-none">
+          <div>
+            <h2 className="text-lg font-black text-gray-950 flex items-center gap-2 tracking-tight">
+              <CalendarIcon className="w-5 h-5 text-indigo-600" />
+              Booking Calendar
+            </h2>
+            <p className="text-xs text-gray-500 font-medium mt-0.5">
+              Monthly occupancy chart for resort rooms & reservations
+            </p>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded bg-blue-600 inline-block"></span>
-            <span>Checked In / Occupied</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded bg-amber-500 inline-block"></span>
-            <span>Arrival / Booked</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded bg-rose-600 inline-block"></span>
-            <span>Departure / Checked Out</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded bg-slate-200 inline-block"></span>
-            <span>Past Dates</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded bg-purple-600 ring-2 ring-purple-400 inline-block"></span>
-            <span>Today</span>
+
+          {/* Month Navigation & Today */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1 shadow-2xs select-none">
+              <button
+                onClick={goToPrevMonth}
+                className="px-3 py-1.5 hover:bg-white hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
+                title={`Go to ${prevMonthName}`}
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span>{prevMonthName}</span>
+              </button>
+
+              <span className="px-4 py-1.5 text-sm font-black text-slate-900 min-w-[130px] text-center tracking-tight">
+                {currentMonthTitle}
+              </span>
+
+              <button
+                onClick={goToNextMonth}
+                className="px-3 py-1.5 hover:bg-white hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
+                title={`Go to ${nextMonthName}`}
+              >
+                <span>{nextMonthName}</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <button
+              onClick={goToToday}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+            >
+              Today
+            </button>
           </div>
         </div>
 
-        <div className="text-[11px] font-mono font-bold text-slate-400">
-          13 ROOMS • MONTHLY VIEW
+        {/* Grid Viewport (Scrollable horizontally) */}
+        <div ref={scrollContainerRef} className="overflow-x-auto w-full relative">
+          <div style={{ width: `${ROOM_COL_WIDTH + daysInMonth * COL_WIDTH}px` }} className="min-w-full">
+            {/* Header Row: Days of Month */}
+            <div className="flex border-b border-slate-300 bg-slate-50 sticky top-0 z-30 select-none">
+              {/* Room Column Label */}
+              <div
+                style={{ width: `${ROOM_COL_WIDTH}px` }}
+                className="shrink-0 py-3 px-3 font-extrabold text-xs text-slate-700 uppercase tracking-wider sticky left-0 z-40 bg-slate-100 border-r border-slate-300 shadow-[2px_0_5px_rgba(0,0,0,0.04)] flex items-center justify-between"
+              >
+                <span>Room</span>
+                <span className="text-[10px] text-slate-400 font-normal lowercase">13 total</span>
+              </div>
+
+              {/* Day Columns */}
+              <div className="flex">
+                {monthDays.map((day) => (
+                  <div
+                    key={day.ymd}
+                    style={{ width: `${COL_WIDTH}px` }}
+                    className={`shrink-0 py-2 text-center border-r border-slate-300 flex flex-col justify-center ${
+                      day.isToday
+                        ? 'bg-purple-600 text-white font-black shadow-xs ring-2 ring-purple-600 z-10'
+                        : day.isPast
+                        ? 'bg-slate-100 text-slate-400 font-medium'
+                        : 'bg-slate-50 text-slate-700 font-semibold'
+                    }`}
+                  >
+                    <span className="text-[10px] uppercase font-bold tracking-tight opacity-80 leading-none">
+                      {day.dayOfWeek}
+                    </span>
+                    <span className="text-xs font-black mt-1 leading-none">
+                      {day.dayNum}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Room Rows */}
+            <div className="divide-y divide-slate-300 text-xs text-slate-700">
+              {FIXED_ROOMS.map((room) => {
+                const bars = getRoomBookingsForMonth(room.number);
+
+                return (
+                  <div key={room.number} className="flex h-14 group hover:bg-slate-50/40 relative">
+                    {/* Sticky Left Room Number */}
+                    <div
+                      style={{ width: `${ROOM_COL_WIDTH}px` }}
+                      className="shrink-0 px-3 font-semibold sticky left-0 z-30 bg-white group-hover:bg-slate-50 border-r border-slate-300 flex flex-col justify-center shadow-[2px_0_5px_rgba(0,0,0,0.04)] select-none"
+                    >
+                      <span className="text-sm font-black text-slate-900 leading-tight">Room {room.number}</span>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight mt-0.5">
+                        Fl {room.floor} • {room.type}
+                      </span>
+                    </div>
+
+                    {/* Days Timeline Relative Container */}
+                    <div
+                      style={{ width: `${daysInMonth * COL_WIDTH}px` }}
+                      className="relative flex shrink-0 h-14"
+                    >
+                      {/* Background Day Cells */}
+                      {monthDays.map((day) => (
+                        <div
+                          key={day.ymd}
+                          style={{ width: `${COL_WIDTH}px` }}
+                          onClick={() => onSelectCell(room.number, day.ymd)}
+                          title={`Book Room ${room.number} on ${day.ymd}`}
+                          className={`shrink-0 h-14 border-r border-slate-300 flex flex-col justify-between p-1 cursor-pointer transition relative group/cell ${
+                            day.isToday
+                              ? 'bg-purple-50/70 border-x border-purple-400 ring-1 ring-purple-300 z-10'
+                              : day.isPast
+                              ? 'bg-slate-100/60 hover:bg-slate-200/60'
+                              : 'bg-white hover:bg-emerald-50/80'
+                          }`}
+                        >
+                          <span className="text-[10px] text-gray-400 font-normal leading-none select-none pointer-events-none block pt-0.5 pl-0.5">
+                            {day.dayNum}
+                          </span>
+                          <div className="flex-1 flex items-center justify-center">
+                            <Plus className="w-3.5 h-3.5 text-emerald-600 opacity-0 group-hover/cell:opacity-100 transition stroke-[2.5]" />
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Overlaid Booking Bars */}
+                      {bars.map(({ booking, leftPx, widthPx, extendsLeft, extendsRight, colorClass, statusLabel }) => {
+                        const roundedClass = `${extendsLeft ? 'rounded-l-none' : 'rounded-l-md'} ${extendsRight ? 'rounded-r-none' : 'rounded-r-md'}`;
+                        const tooltipText = `Guest: ${booking.guestName}\nRoom: ${booking.roomNumber}\nStay: ${formatDateHuman(booking.checkInDate)} – ${formatDateHuman(booking.checkOutDate)}\nStatus: ${statusLabel}`;
+
+                        return (
+                          <div
+                            key={booking.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectBooking(booking.id);
+                            }}
+                            style={{
+                              left: `${leftPx + 1}px`,
+                              width: `${Math.max(COL_WIDTH - 2, widthPx - 2)}px`,
+                            }}
+                            title={tooltipText}
+                            className={`absolute top-2.5 bottom-1.5 z-20 flex items-center px-1.5 transition cursor-pointer font-sans shadow-2xs border select-none overflow-hidden ${colorClass} ${roundedClass}`}
+                          >
+                            <span className="text-[11px] font-semibold leading-tight truncate w-full tracking-tight">
+                              {booking.guestName}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Legend Footer */}
+        <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-700 select-none">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded bg-emerald-100 border border-emerald-300 inline-block"></span>
+              <span>Available</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded bg-blue-600 inline-block"></span>
+              <span>Checked In / Occupied</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded bg-amber-500 inline-block"></span>
+              <span>Arrival / Booked</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded bg-rose-600 inline-block"></span>
+              <span>Departure / Checked Out</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded bg-slate-200 inline-block"></span>
+              <span>Past Dates</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded bg-purple-600 ring-2 ring-purple-400 inline-block"></span>
+              <span>Today</span>
+            </div>
+          </div>
+
+          <div className="text-[11px] font-mono font-bold text-slate-400">
+            13 ROOMS • MONTHLY SPREADSHEET
+          </div>
         </div>
       </div>
     </div>
   );
 }
+

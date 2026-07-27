@@ -2,13 +2,11 @@ import React, { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import BookingCalendar from './components/BookingCalendar';
-import CurrentGuests from './components/CurrentGuests';
-import GuestManagement from './components/GuestManagement';
 import BookingModal from './components/BookingModal';
-import { ShieldCheck, Sun, Moon } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'calendar' | 'onsite' | 'crm'>('dashboard');
+  const [currentTab, setCurrentTab] = useState<'dashboard' | 'calendar'>('dashboard');
   
   // Modal controllers
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -61,7 +59,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex bg-slate-50 min-h-screen text-gray-800 font-sans antialiased" id="pms_core_root">
+    <div className="flex bg-slate-50 min-h-screen text-gray-800 font-sans antialiased overflow-x-hidden" id="pms_core_root">
       
       {/* 1. Sidebar Panel */}
       <Sidebar currentTab={currentTab} onTabChange={setCurrentTab} />
@@ -70,13 +68,11 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden" id="desk_viewport">
         
         {/* Header toolbar */}
-        <header className="bg-white border-b border-gray-100 pl-14 pr-4 sm:px-8 py-3.5 sm:py-4 shrink-0 flex items-center justify-between">
+        <header className="bg-white border-b border-gray-100 pl-12 sm:px-6 lg:px-8 py-2.5 sm:py-3.5 shrink-0 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h1 className="text-sm sm:text-xl font-extrabold text-gray-900 tracking-tight capitalize select-none truncate">
-              {currentTab === 'dashboard' && 'Operations Dashboard'}
+            <h1 className="text-sm sm:text-lg font-extrabold text-gray-900 tracking-tight capitalize select-none truncate">
+              {currentTab === 'dashboard' && 'Dashboard'}
               {currentTab === 'calendar' && 'Booking Calendar'}
-              {currentTab === 'onsite' && 'Checked-in Guests'}
-              {currentTab === 'crm' && 'Guest Ledger'}
             </h1>
           </div>
  
@@ -90,7 +86,7 @@ export default function App() {
             <div className="flex items-center gap-1.5 sm:gap-2 select-none">
               <button
                 onClick={() => setIsAdminMode(!isAdminMode)}
-                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-2xs sm:text-xs font-bold tracking-tight transition duration-150 cursor-pointer ${
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border text-2xs sm:text-xs font-bold tracking-tight transition duration-150 cursor-pointer ${
                   isAdminMode
                     ? 'bg-amber-500 border-amber-600 text-slate-950 shadow-xs'
                     : 'bg-white hover:bg-slate-50 border-gray-250 text-gray-700'
@@ -120,17 +116,16 @@ export default function App() {
         </header>
 
         {/* Dynamic Panel Content Area */}
-        <main className="flex-1 p-2.5 sm:p-6 lg:p-8 overflow-y-auto overflow-x-hidden" id="panel_content_viewport">
+        <main className="flex-1 p-2 sm:p-5 lg:p-8 overflow-y-auto overflow-x-hidden" id="panel_content_viewport">
           
           {/* Active Tab Screen Routing */}
-          <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
+          <div className="max-w-7xl mx-auto space-y-3 sm:space-y-6">
             
             {currentTab === 'dashboard' && (
               <Dashboard
                 onSelectBooking={handleSelectBooking}
                 onSelectCell={handleSelectCell}
                 onNavigateToCalendar={() => setCurrentTab('calendar')}
-                onNavigateToGuests={() => setCurrentTab('crm')}
                 refreshTrigger={refreshTrigger}
               />
             )}
@@ -141,17 +136,6 @@ export default function App() {
                 onSelectBooking={handleSelectBooking}
                 refreshTrigger={refreshTrigger}
               />
-            )}
-
-            {currentTab === 'onsite' && (
-              <CurrentGuests
-                onSelectBooking={handleSelectBooking}
-                refreshTrigger={refreshTrigger}
-              />
-            )}
-
-            {currentTab === 'crm' && (
-              <GuestManagement />
             )}
             
           </div>
@@ -172,3 +156,4 @@ export default function App() {
     </div>
   );
 }
+
