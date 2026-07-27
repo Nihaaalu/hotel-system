@@ -1,0 +1,6 @@
+{
+  "name": "Hotel Management System",
+  "description": "An offline-first, production-ready desktop hotel management application for small hotels, featuring room bookings, live calendars, and background Cloud sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
