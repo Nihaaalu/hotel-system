@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Guest, Booking } from '../types';
 import { GuestService, BookingService } from '../services/dbServices';
+import { formatDateHuman } from '../utils/formatters';
 import { Search, User, Phone, MapPin, FileCheck, History, Calendar, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function GuestManagement() {
@@ -162,11 +163,11 @@ export default function GuestManagement() {
                               <div className="grid grid-cols-2 gap-2 text-2xs text-gray-500">
                                 <div>
                                   <span className="block font-medium">Check-In Date</span>
-                                  <span className="font-semibold text-gray-800">{booking.checkInDate}</span>
+                                  <span className="font-semibold text-gray-800">{formatDateHuman(booking.checkInDate)}</span>
                                 </div>
                                 <div>
                                   <span className="block font-medium">Check-Out Date</span>
-                                  <span className="font-semibold text-gray-800">{booking.checkOutDate}</span>
+                                  <span className="font-semibold text-gray-800">{formatDateHuman(booking.checkOutDate)}</span>
                                 </div>
                               </div>
 

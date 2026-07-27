@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Room, Booking } from '../types';
 import { RoomService, BookingService } from '../services/dbServices';
+import { formatDateHuman } from '../utils/formatters';
 const { FIXED_ROOMS } = RoomService;
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, User, Plus } from 'lucide-react';
 
@@ -200,34 +201,47 @@ export default function BookingCalendar({
         </div>
 
         {/* Month Navigation & Today */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1 shadow-2xs">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div 
+            className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1 shadow-2xs select-none"
+            onTouchStart={(e) => {
+              (window as any)._calendarTouchStartX = e.touches[0].clientX;
+            }}
+            onTouchEnd={(e) => {
+              const startX = (window as any)._calendarTouchStartX;
+              if (startX !== undefined) {
+                const diffX = e.changedTouches[0].clientX - startX;
+                if (diffX > 50) goToPrevMonth();
+                else if (diffX < -50) goToNextMonth();
+              }
+            }}
+          >
             <button
               onClick={goToPrevMonth}
-              className="px-3 py-1.5 hover:bg-white hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
+              className="px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] hover:bg-white hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
               title={`Go to ${prevMonthName}`}
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-5 h-5 sm:w-4 sm:h-4" />
               <span className="hidden sm:inline">{prevMonthName}</span>
             </button>
 
-            <span className="px-4 py-1.5 text-sm font-black text-slate-900 min-w-[130px] text-center tracking-tight">
+            <span className="px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-black text-slate-900 min-w-[110px] sm:min-w-[130px] text-center tracking-tight">
               {currentMonthTitle}
             </span>
 
             <button
               onClick={goToNextMonth}
-              className="px-3 py-1.5 hover:bg-white hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
+              className="px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] hover:bg-white hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
               title={`Go to ${nextMonthName}`}
             >
               <span className="hidden sm:inline">{nextMonthName}</span>
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-5 h-5 sm:w-4 sm:h-4" />
             </button>
           </div>
 
           <button
             onClick={goToToday}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+            className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs min-h-[44px] flex items-center justify-center"
           >
             Today
           </button>
@@ -238,11 +252,11 @@ export default function BookingCalendar({
       <div ref={scrollContainerRef} className="overflow-x-auto w-full relative">
         <div style={{ width: `${ROOM_COL_WIDTH + daysInMonth * COL_WIDTH}px` }} className="min-w-full">
           {/* Header Row: Days of Month */}
-          <div className="flex border-b border-gray-200 bg-slate-50/80 sticky top-0 z-30 select-none">
+          <div className="flex border-b border-slate-300 bg-slate-50 sticky top-0 z-30 select-none">
             {/* Room Column Label */}
             <div
               style={{ width: `${ROOM_COL_WIDTH}px` }}
-              className="shrink-0 py-3 px-3 font-extrabold text-xs text-slate-700 uppercase tracking-wider sticky left-0 z-40 bg-slate-100 border-r border-slate-200 shadow-[2px_0_5px_rgba(0,0,0,0.03)] flex items-center justify-between"
+              className="shrink-0 py-3 px-3 font-extrabold text-xs text-slate-700 uppercase tracking-wider sticky left-0 z-40 bg-slate-100 border-r border-slate-300 shadow-[2px_0_5px_rgba(0,0,0,0.04)] flex items-center justify-between"
             >
               <span>Room</span>
               <span className="text-[10px] text-slate-400 font-normal lowercase">13 total</span>
@@ -254,11 +268,11 @@ export default function BookingCalendar({
                 <div
                   key={day.ymd}
                   style={{ width: `${COL_WIDTH}px` }}
-                  className={`shrink-0 py-2 text-center border-r border-slate-200 flex flex-col justify-center ${
+                  className={`shrink-0 py-2 text-center border-r border-slate-300 flex flex-col justify-center ${
                     day.isToday
                       ? 'bg-purple-600 text-white font-black shadow-xs ring-2 ring-purple-600 z-10'
                       : day.isPast
-                      ? 'bg-slate-100/90 text-slate-400 font-medium'
+                      ? 'bg-slate-100 text-slate-400 font-medium'
                       : 'bg-slate-50 text-slate-700 font-semibold'
                   }`}
                 >
@@ -274,7 +288,7 @@ export default function BookingCalendar({
           </div>
 
           {/* Room Rows */}
-          <div className="divide-y divide-gray-200 text-xs text-slate-700">
+          <div className="divide-y divide-slate-300 text-xs text-slate-700">
             {FIXED_ROOMS.map((room) => {
               const bars = getRoomBookingsForMonth(room.number);
 
@@ -283,9 +297,9 @@ export default function BookingCalendar({
                   {/* Sticky Left Room Number */}
                   <div
                     style={{ width: `${ROOM_COL_WIDTH}px` }}
-                    className="shrink-0 px-3 font-semibold sticky left-0 z-30 bg-white group-hover:bg-slate-50 border-r border-slate-200 flex flex-col justify-center shadow-[2px_0_5px_rgba(0,0,0,0.03)] select-none"
+                    className="shrink-0 px-3 font-semibold sticky left-0 z-30 bg-white group-hover:bg-slate-50 border-r border-slate-300 flex flex-col justify-center shadow-[2px_0_5px_rgba(0,0,0,0.04)] select-none"
                   >
-                    <span className="text-sm font-black text-slate-900 leading-tight">Room {room.number}</span>
+                    <span className="text-xs sm:text-sm font-black text-slate-900 leading-tight">Room {room.number}</span>
                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight mt-0.5">
                       Fl {room.floor} • {room.type}
                     </span>
@@ -303,22 +317,27 @@ export default function BookingCalendar({
                         style={{ width: `${COL_WIDTH}px` }}
                         onClick={() => onSelectCell(room.number, day.ymd)}
                         title={`Book Room ${room.number} on ${day.ymd}`}
-                        className={`shrink-0 h-14 border-r border-slate-100 flex items-center justify-center cursor-pointer transition group/cell ${
+                        className={`shrink-0 h-14 border-r border-slate-300 flex flex-col justify-between p-1 cursor-pointer transition relative group/cell ${
                           day.isToday
-                            ? 'bg-purple-50/70 border-x-2 border-purple-500 ring-1 ring-purple-400 z-10'
+                            ? 'bg-purple-50/70 border-x border-purple-400 ring-1 ring-purple-300 z-10'
                             : day.isPast
-                            ? 'bg-slate-100/50 hover:bg-slate-200/60'
+                            ? 'bg-slate-100/60 hover:bg-slate-200/60'
                             : 'bg-white hover:bg-emerald-50/80'
                         }`}
                       >
-                        <Plus className="w-3.5 h-3.5 text-emerald-600 opacity-0 group-hover/cell:opacity-100 transition stroke-[2.5]" />
+                        <span className="text-[10px] text-gray-400 font-normal leading-none select-none pointer-events-none block pt-0.5 pl-0.5">
+                          {day.dayNum}
+                        </span>
+                        <div className="flex-1 flex items-center justify-center">
+                          <Plus className="w-3.5 h-3.5 text-emerald-600 opacity-0 group-hover/cell:opacity-100 transition stroke-[2.5]" />
+                        </div>
                       </div>
                     ))}
 
                     {/* Overlaid Booking Bars */}
                     {bars.map(({ booking, leftPx, widthPx, extendsLeft, extendsRight, colorClass, statusLabel }) => {
-                      const roundedClass = `${extendsLeft ? 'rounded-l-none' : 'rounded-l-lg'} ${extendsRight ? 'rounded-r-none' : 'rounded-r-lg'}`;
-                      const balanceDue = booking.totalAmount - booking.advancePaid;
+                      const roundedClass = `${extendsLeft ? 'rounded-l-none' : 'rounded-l-md'} ${extendsRight ? 'rounded-r-none' : 'rounded-r-md'}`;
+                      const tooltipText = `Guest: ${booking.guestName}\nRoom: ${booking.roomNumber}\nStay: ${formatDateHuman(booking.checkInDate)} – ${formatDateHuman(booking.checkOutDate)}\nStatus: ${statusLabel}`;
 
                       return (
                         <div
@@ -328,24 +347,15 @@ export default function BookingCalendar({
                             onSelectBooking(booking.id);
                           }}
                           style={{
-                            left: `${leftPx + 2}px`,
-                            width: `${Math.max(COL_WIDTH - 4, widthPx - 4)}px`,
+                            left: `${leftPx + 1}px`,
+                            width: `${Math.max(COL_WIDTH - 2, widthPx - 2)}px`,
                           }}
-                          title={`${booking.guestName} (${statusLabel}) • ${booking.checkInDate} to ${booking.checkOutDate}`}
-                          className={`absolute top-2 bottom-2 z-20 flex items-center justify-between px-2.5 transition cursor-pointer font-sans shadow-xs border select-none overflow-hidden ${colorClass} ${roundedClass}`}
+                          title={tooltipText}
+                          className={`absolute top-2.5 bottom-1.5 z-20 flex items-center px-1 sm:px-1.5 transition cursor-pointer font-sans shadow-2xs border select-none overflow-hidden ${colorClass} ${roundedClass}`}
                         >
-                          <div className="flex items-center gap-1.5 min-w-0 pr-1">
-                            <User className="w-3 h-3 shrink-0 opacity-80" />
-                            <span className="text-xs font-black truncate leading-tight">
-                              {booking.guestName}
-                            </span>
-                          </div>
-
-                          {widthPx >= 90 && (
-                            <span className="text-[10px] font-extrabold opacity-90 shrink-0 uppercase tracking-tight bg-black/15 px-1.5 py-0.5 rounded">
-                              {balanceDue > 0 ? `₹${balanceDue.toLocaleString()}` : 'Paid'}
-                            </span>
-                          )}
+                          <span className="text-[10px] sm:text-[11px] font-semibold leading-tight truncate w-full tracking-tight">
+                            {booking.guestName}
+                          </span>
                         </div>
                       );
                     })}

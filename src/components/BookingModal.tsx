@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Booking, Guest, Payment } from '../types';
 import { RoomService, BookingService, PaymentService } from '../services/dbServices';
+import { formatDateHuman } from '../utils/formatters';
 const { FIXED_ROOMS } = RoomService;
-import { X, Calendar, User, Phone, MapPin, FileCheck, DollarSign, Tag, Check, CreditCard, Receipt, Clock } from 'lucide-react';
+import { X, Calendar, User, Check, ChevronDown, Receipt, Clock, Trash2, ArrowUpRight } from 'lucide-react';
 
 interface BookingModalProps {
   bookingId?: string | null;           // If present, we view/edit this booking
@@ -26,9 +27,22 @@ export default function BookingModal({
 
   // Form State for Guest
   const [guestName, setGuestName] = useState('');
-  const [guestPhone, setGuestPhone] = useState('');
-  const [guestAddress, setGuestAddress] = useState('');
-  const [guestIdProof, setGuestIdProof] = useState('');
+  const [savedGuestNames, setSavedGuestNames] = useState<string[]>(() => {
+    const defaults = ['Ansari', 'Irshad'];
+    try {
+      const local = localStorage.getItem('pms_saved_guest_names');
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed)) {
+          return Array.from(new Set([...defaults, ...parsed]));
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return defaults;
+  });
+  const [isNameDropdownOpen, setIsNameDropdownOpen] = useState(false);
 
   // Form State for Booking
   const [selectedRoomNumbers, setSelectedRoomNumbers] = useState<number[]>([]);
@@ -183,7 +197,6 @@ export default function BookingModal({
       }
 
       setGuestName('');
-      setGuestPhone('');
       setRemarks('');
       setTotalAmount(0);
       setAdvancePaid(0);
@@ -198,9 +211,6 @@ export default function BookingModal({
         if (b) {
           setLoadedBooking(b);
           setGuestName(b.guestName || '');
-          setGuestPhone(b.guestPhone || '');
-          setGuestAddress(b.guestPhone || ''); // Address loaded inside guest metadata
-          setGuestIdProof(b.guestIdProof || '');
 
           setRoomNumber(b.roomNumber);
           setSelectedRoomNumbers([b.roomNumber]);
@@ -295,6 +305,18 @@ export default function BookingModal({
         }
       }
 
+      // Persist newly entered guest name in combobox defaults
+      const trimmedName = guestName.trim();
+      if (trimmedName && !savedGuestNames.includes(trimmedName)) {
+        const updatedNames = [...savedGuestNames, trimmedName];
+        setSavedGuestNames(updatedNames);
+        try {
+          localStorage.setItem('pms_saved_guest_names', JSON.stringify(updatedNames));
+        } catch (e) {
+          // ignore
+        }
+      }
+
       // Generate a shared booking Group ID if multiple rooms are selected
       let sharedGroupId: string | undefined = undefined;
       if (selectedRoomNumbers.length > 1) {
@@ -307,8 +329,8 @@ export default function BookingModal({
 
         await BookingService.createBooking(
           {
-            name: guestName.trim(),
-            phone: guestPhone.trim(),
+            name: trimmedName,
+            phone: '',
             address: '',
             idProof: '',
           },
@@ -780,8 +802,8 @@ export default function BookingModal({
               </div>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Row 1: Stay Dates (Check-In & Check-Out Inputs with optional Date Picker Popover) */}
+            <form id="new_booking_form" onSubmit={handleSubmit} className="space-y-4">
+              {/* Row 1: Stay Dates */}
               <div className="space-y-2 pb-3 border-b border-gray-100 relative">
                 <div className="flex justify-between items-center">
                   <label className="text-xs font-semibold tracking-wide text-gray-500 uppercase block">Stay Dates</label>
@@ -811,8 +833,13 @@ export default function BookingModal({
                           setCheckOutDate(toYYYYMMDD(nextDay));
                         }
                       }}
-                      className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 focus:outline-none shadow-xs"
+                      className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs"
                     />
+                    {checkInDate && (
+                      <span className="text-[11px] text-indigo-600 font-bold block mt-1">
+                        {formatDateHuman(checkInDate)}
+                      </span>
+                    )}
                   </div>
                   <div>
                     <label className="text-[11px] font-medium text-gray-500 block mb-1">Check-Out Date</label>
@@ -822,31 +849,36 @@ export default function BookingModal({
                       value={checkOutDate}
                       min={checkInDate}
                       onChange={(e) => setCheckOutDate(e.target.value)}
-                      className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 focus:outline-none shadow-xs"
+                      className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs"
                     />
+                    {checkOutDate && (
+                      <span className="text-[11px] text-indigo-600 font-bold block mt-1">
+                        {formatDateHuman(checkOutDate)}
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 {showDatePicker && (
-                  <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg p-3 z-50 animate-fade-in max-w-[320px] mx-auto" id="stay_dates_calendar_popover">
-                    <div className="flex justify-between items-center pb-1.5 mb-1.5 border-b border-gray-100 select-none">
-                      <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase block">Select Stay Range</span>
+                  <div className="fixed sm:absolute inset-x-3 sm:inset-x-0 top-16 sm:top-full mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl p-4 z-50 animate-fade-in max-w-[340px] mx-auto" id="stay_dates_calendar_popover">
+                    <div className="flex justify-between items-center pb-2 mb-2 border-b border-gray-100 select-none">
+                      <span className="text-xs font-bold tracking-wide text-gray-700 uppercase block">Select Stay Range</span>
                       <button
                         type="button"
                         onClick={() => setShowDatePicker(false)}
-                        className="text-[12px] font-black text-gray-400 hover:text-gray-700 cursor-pointer h-5 w-5 flex items-center justify-center p-0 rounded-full hover:bg-gray-100 transition-colors"
+                        className="text-[12px] font-black text-gray-400 hover:text-gray-700 cursor-pointer h-6 w-6 flex items-center justify-center p-0 rounded-full hover:bg-gray-100 transition-colors"
                         title="Close"
                       >
                         ✕
                       </button>
                     </div>
 
-                    {/* Month Picker Dropdowns & Buttons */}
+                    {/* Month Picker Navigation */}
                     <div className="flex items-center justify-between mb-2 select-none gap-1">
                       <button
                         type="button"
                         onClick={handlePrevMonth}
-                        className="p-1 rounded-md hover:bg-gray-100 text-gray-650 font-black cursor-pointer text-xs"
+                        className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-650 font-black cursor-pointer text-xs min-h-[36px] min-w-[36px] flex items-center justify-center"
                       >
                         ‹
                       </button>
@@ -854,7 +886,7 @@ export default function BookingModal({
                         <select
                           value={currentMonth}
                           onChange={(e) => setCurrentMonth(parseInt(e.target.value, 10))}
-                          className="bg-gray-50 border border-gray-200 rounded-md px-1.5 py-0.5 text-[11px] font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                          className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                         >
                           {monthsList.map((m, idx) => (
                             <option key={m} value={idx}>{m.substring(0, 3)}</option>
@@ -863,7 +895,7 @@ export default function BookingModal({
                         <select
                           value={currentYear}
                           onChange={(e) => setCurrentYear(parseInt(e.target.value, 10))}
-                          className="bg-gray-50 border border-gray-200 rounded-md px-1.5 py-0.5 text-[11px] font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                          className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                         >
                           {[2025, 2026, 2027, 2028, 2029, 2030].map(y => (
                             <option key={y} value={y}>{y}</option>
@@ -873,14 +905,14 @@ export default function BookingModal({
                       <button
                         type="button"
                         onClick={handleNextMonth}
-                        className="p-1 rounded-md hover:bg-gray-100 text-gray-650 font-black cursor-pointer text-xs"
+                        className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-650 font-black cursor-pointer text-xs min-h-[36px] min-w-[36px] flex items-center justify-center"
                       >
                         ›
                       </button>
                     </div>
 
                     {/* Weekday headers */}
-                    <div className="grid grid-cols-7 gap-0.5 text-center text-[9px] font-extrabold text-gray-400 uppercase font-mono mb-1 select-none">
+                    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-extrabold text-gray-400 uppercase font-mono mb-1 select-none">
                       <div>Su</div>
                       <div>Mo</div>
                       <div>Tu</div>
@@ -891,7 +923,7 @@ export default function BookingModal({
                     </div>
 
                     {/* Day cells grid */}
-                    <div className="grid grid-cols-7 gap-0.5">
+                    <div className="grid grid-cols-7 gap-1">
                       {(() => {
                         const daysInMonthVal = new Date(currentYear, currentMonth + 1, 0).getDate();
                         const firstDayIndexVal = new Date(currentYear, currentMonth, 1).getDay();
@@ -917,9 +949,9 @@ export default function BookingModal({
                             isInRange = dateStr > checkInDate && dateStr < hoveredDate;
                           }
 
-                          let cellStyle = "text-gray-800 hover:bg-gray-100 rounded-md";
+                          let cellStyle = "text-gray-800 hover:bg-gray-100 rounded-lg";
                           if (isCheckIn || isCheckOut) {
-                            cellStyle = "bg-indigo-600 text-white font-extrabold rounded-md shadow-2xs";
+                            cellStyle = "bg-indigo-600 text-white font-extrabold rounded-lg shadow-2xs";
                           } else if (isInRange) {
                             cellStyle = "bg-indigo-50 text-indigo-900 font-bold rounded-none border-y border-indigo-100";
                           } else if (isToday) {
@@ -933,7 +965,7 @@ export default function BookingModal({
                               onClick={() => handleDaySelect(dateObj)}
                               onMouseEnter={() => handleDayHover(dateObj)}
                               onMouseLeave={() => handleDayHover(null)}
-                              className={`aspect-square text-[10px] font-semibold flex items-center justify-center transition-all duration-100 cursor-pointer ${cellStyle}`}
+                              className={`aspect-square min-h-[36px] text-xs font-semibold flex items-center justify-center transition-all duration-100 cursor-pointer ${cellStyle}`}
                             >
                               {day}
                             </button>
@@ -960,7 +992,7 @@ export default function BookingModal({
                     <p className="text-xs font-bold text-gray-500">Please select check-in and check-out dates above</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5" id="available_rooms_grid">
+                  <div className="grid grid-cols-3 sm:grid-cols-7 gap-2" id="available_rooms_grid">
                     {FIXED_ROOMS.map((room) => {
                       const num = room.number;
                       const isSelected = selectedRoomNumbers.includes(num);
@@ -973,14 +1005,13 @@ export default function BookingModal({
                           disabled={!isAvailable}
                           onClick={() => {
                             if (isSelected) {
-                              if (selectedRoomNumbers.length > 1) {
-                                setSelectedRoomNumbers(selectedRoomNumbers.filter(n => n !== num));
-                              }
+                              // Every room toggles off cleanly!
+                              setSelectedRoomNumbers(selectedRoomNumbers.filter(n => n !== num));
                             } else {
                               setSelectedRoomNumbers([...selectedRoomNumbers, num]);
                             }
                           }}
-                          className={`p-2.5 rounded-xl border font-bold text-xs text-center transition-all duration-150 cursor-pointer ${
+                          className={`min-h-[44px] p-2.5 rounded-xl border font-bold text-xs sm:text-xs text-center transition-all duration-150 cursor-pointer flex items-center justify-center active:scale-95 select-none ${
                             isSelected
                               ? 'bg-indigo-600 border-indigo-700 text-white shadow-xs font-extrabold ring-2 ring-indigo-400'
                               : isAvailable
@@ -997,34 +1028,65 @@ export default function BookingModal({
                 )}
               </div>
 
-              {/* Row 3: Guest Name & Mobile Number */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">
-                    Guest Name <span className="text-red-500">*</span>
-                  </label>
+              {/* Row 3: Booking Name (Searchable Combobox) */}
+              <div className="relative">
+                <label className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">
+                  Booking Name <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
                   <input
                     type="text"
                     required
                     autoFocus
                     value={guestName}
-                    onChange={(e) => setGuestName(e.target.value)}
-                    placeholder="e.g. Rahul Sharma"
-                    className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs font-semibold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs"
+                    onFocus={() => setIsNameDropdownOpen(true)}
+                    onChange={(e) => {
+                      setGuestName(e.target.value);
+                      setIsNameDropdownOpen(true);
+                    }}
+                    placeholder="Search or enter guest name (e.g. Ansari, Irshad)"
+                    className="w-full rounded-xl border border-gray-200 bg-white p-3 pr-9 text-xs sm:text-sm font-semibold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setIsNameDropdownOpen(!isNameDropdownOpen)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
+                  >
+                    <ChevronDown className={`w-4 h-4 transition-transform duration-150 ${isNameDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
                 </div>
-                <div>
-                  <label className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">
-                    Mobile Number <span className="text-gray-400 font-normal lowercase">(optional)</span>
-                  </label>
-                  <input
-                    type="tel"
-                    value={guestPhone}
-                    onChange={(e) => setGuestPhone(e.target.value)}
-                    placeholder="e.g. +91 98765 43210"
-                    className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs font-semibold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs"
-                  />
-                </div>
+
+                {isNameDropdownOpen && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-20" 
+                      onClick={() => setIsNameDropdownOpen(false)} 
+                    />
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-30 max-h-48 overflow-y-auto py-1 animate-fade-in">
+                      {savedGuestNames
+                        .filter(name => name.toLowerCase().includes(guestName.toLowerCase()))
+                        .map((name) => (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={() => {
+                              setGuestName(name);
+                              setIsNameDropdownOpen(false);
+                            }}
+                            className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-gray-800 hover:bg-indigo-50 hover:text-indigo-700 transition cursor-pointer flex items-center justify-between"
+                          >
+                            <span>{name}</span>
+                            {guestName === name && <Check className="w-4 h-4 text-indigo-600" />}
+                          </button>
+                        ))}
+                      {guestName.trim() && !savedGuestNames.some(n => n.toLowerCase() === guestName.trim().toLowerCase()) && (
+                        <div className="px-3.5 py-2 text-xs font-medium text-indigo-600 bg-indigo-50/50 border-t border-gray-100 flex items-center justify-between">
+                          <span>Create new entry: <strong>"{guestName.trim()}"</strong></span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Row 4: Remarks */}
@@ -1037,23 +1099,23 @@ export default function BookingModal({
                   value={remarks}
                   onChange={(e) => setRemarks(e.target.value)}
                   placeholder="e.g. Early check-in requested, extra bed"
-                  className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs font-medium text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs"
+                  className="w-full rounded-xl border border-gray-200 bg-white p-3 text-xs sm:text-sm font-medium text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs"
                 />
               </div>
 
-              {/* Row 5: Action Buttons */}
-              <div className="flex gap-2 justify-end border-t border-gray-100 pt-3 mt-4 shrink-0">
+              {/* Action Buttons */}
+              <div className="flex gap-3 justify-end border-t border-gray-100 pt-4 mt-4 sticky sm:static bottom-0 bg-white z-10 pb-1 sm:pb-0">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 border border-gray-200 rounded-lg text-xs font-semibold text-gray-650 hover:bg-gray-50 transition cursor-pointer"
+                  className="flex-1 sm:flex-none px-5 py-3 sm:py-2.5 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer min-h-[44px] flex items-center justify-center"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || !checkInDate || !checkOutDate || selectedRoomNumbers.length === 0 || !guestName.trim()}
-                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
+                  disabled={isSubmitting}
+                  className="flex-1 sm:flex-none px-6 py-3 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none min-h-[44px] flex items-center justify-center"
                 >
                   {isSubmitting ? 'Saving...' : 'Save Booking'}
                 </button>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Booking } from '../types';
 import { BookingService } from '../services/dbServices';
+import { formatDateHuman } from '../utils/formatters';
 import { Users, Phone, ArrowUpRight, DollarSign, Loader2, KeyRound } from 'lucide-react';
 
 interface CurrentGuestsProps {
@@ -95,10 +96,10 @@ export default function CurrentGuests({ onSelectBooking, refreshTrigger }: Curre
                     </td>
 
                     {/* Checkin Date */}
-                    <td className="py-4 px-5 text-gray-600">{booking.checkInDate}</td>
+                    <td className="py-4 px-5 text-gray-600 font-medium">{formatDateHuman(booking.checkInDate)}</td>
 
                     {/* Checkout Date */}
-                    <td className="py-4 px-5 text-gray-650">{booking.checkOutDate}</td>
+                    <td className="py-4 px-5 text-gray-600 font-medium">{formatDateHuman(booking.checkOutDate)}</td>
 
                     {/* Balance Due */}
                     <td className="py-4 px-5 text-right font-semibold">

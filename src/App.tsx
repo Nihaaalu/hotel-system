@@ -67,30 +67,30 @@ export default function App() {
       <Sidebar currentTab={currentTab} onTabChange={setCurrentTab} />
  
       {/* 2. Main Desk Container */}
-      <div className="flex-1 flex flex-col min-w-0" id="desk_viewport">
+      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden" id="desk_viewport">
         
         {/* Header toolbar */}
-        <header className="bg-white border-b border-gray-100 px-8 py-4 shrink-0 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-extrabold text-gray-900 tracking-tight capitalize select-none">
-              {currentTab === 'dashboard' && 'Operations Desk Dashboard'}
-              {currentTab === 'calendar' && 'Interact Room Calendar Grid'}
-              {currentTab === 'onsite' && 'Checked-in Staying Guests'}
-              {currentTab === 'crm' && 'Grand CRM Guest Profiles'}
+        <header className="bg-white border-b border-gray-100 pl-14 pr-4 sm:px-8 py-3.5 sm:py-4 shrink-0 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h1 className="text-sm sm:text-xl font-extrabold text-gray-900 tracking-tight capitalize select-none truncate">
+              {currentTab === 'dashboard' && 'Operations Dashboard'}
+              {currentTab === 'calendar' && 'Booking Calendar'}
+              {currentTab === 'onsite' && 'Checked-in Guests'}
+              {currentTab === 'crm' && 'Guest Ledger'}
             </h1>
           </div>
  
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             {/* Operator info label */}
-            <div className="text-right border-r border-gray-100 pr-4 select-none">
+            <div className="hidden md:block text-right border-r border-gray-100 pr-4 select-none">
               <span className="text-3xs font-semibold text-gray-400 font-mono uppercase block">Time Shift</span>
               <span className="text-xs font-bold font-mono text-gray-800">{currentLocalTime} • {getShiftName()}</span>
             </div>
 
-            <div className="flex items-center gap-2 select-none">
+            <div className="flex items-center gap-1.5 sm:gap-2 select-none">
               <button
                 onClick={() => setIsAdminMode(!isAdminMode)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold tracking-tight transition duration-150 cursor-pointer ${
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-2xs sm:text-xs font-bold tracking-tight transition duration-150 cursor-pointer ${
                   isAdminMode
                     ? 'bg-amber-500 border-amber-600 text-slate-950 shadow-xs'
                     : 'bg-white hover:bg-slate-50 border-gray-250 text-gray-700'
@@ -98,15 +98,15 @@ export default function App() {
                 title={isAdminMode ? "Disable Admin Mode" : "Enable Admin Mode"}
                 id="toggle_admin_button"
               >
-                <ShieldCheck className={`w-4 h-4 ${isAdminMode ? 'text-slate-950' : 'text-gray-400'}`} />
-                {isAdminMode ? 'Admin Mode' : 'Staff Mode'}
+                <ShieldCheck className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isAdminMode ? 'text-slate-950' : 'text-gray-400'}`} />
+                <span>{isAdminMode ? 'Admin' : 'Staff'}</span>
               </button>
 
-              <div className="flex items-center gap-2 select-none pl-2 border-l border-gray-150" id="operator_badge">
-                <div className="w-8 h-8 rounded-full bg-slate-900 text-slate-100 flex items-center justify-center font-bold text-xs shadow-sm">
+              <div className="flex items-center gap-2 select-none pl-1.5 sm:pl-2 border-l border-gray-150" id="operator_badge">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-900 text-slate-100 flex items-center justify-center font-bold text-xs shadow-sm shrink-0">
                   {isAdminMode ? 'AD' : 'R1'}
                 </div>
-                <div className="hidden sm:block">
+                <div className="hidden lg:block">
                   <span className="text-3xs font-semibold text-gray-400 font-mono uppercase block">
                     {isAdminMode ? 'System Admin' : 'Receptionist'}
                   </span>
@@ -120,10 +120,10 @@ export default function App() {
         </header>
 
         {/* Dynamic Panel Content Area */}
-        <main className="flex-1 p-8 overflow-y-auto" id="panel_content_viewport">
+        <main className="flex-1 p-2.5 sm:p-6 lg:p-8 overflow-y-auto overflow-x-hidden" id="panel_content_viewport">
           
           {/* Active Tab Screen Routing */}
-          <div className="max-w-7xl mx-auto space-y-6">
+          <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
             
             {currentTab === 'dashboard' && (
               <Dashboard
