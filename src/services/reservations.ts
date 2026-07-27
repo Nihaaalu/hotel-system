@@ -566,7 +566,6 @@ export const ReservationService = {
       .eq('id', reservationId)
       .select();
     logResponse(resData, resError);
-    logResponse(resData, resError);
 
     if (resError) {
       console.error('Failed to update reservation status:', resError);
