@@ -4,10 +4,11 @@ import Dashboard from './components/Dashboard';
 import BookingCalendar from './components/BookingCalendar';
 import BookingModal from './components/BookingModal';
 import Inventory from './components/Inventory';
+import Analytics from './components/Analytics';
 import { useHotelData } from './context/HotelContext';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'calendar' | 'inventory'>('dashboard');
+  const [currentTab, setCurrentTab] = useState<'dashboard' | 'calendar' | 'inventory' | 'analytics'>('dashboard');
   const { refreshData } = useHotelData();
 
   // Modal controllers
@@ -77,6 +78,7 @@ export default function App() {
               {currentTab === 'dashboard' && 'Dashboard'}
               {currentTab === 'calendar' && 'Booking Calendar'}
               {currentTab === 'inventory' && 'Inventory & Expenses'}
+              {currentTab === 'analytics' && 'Financial Analytics'}
             </h1>
           </div>
 
@@ -128,6 +130,10 @@ export default function App() {
 
             {currentTab === 'inventory' && (
               <Inventory />
+            )}
+
+            {currentTab === 'analytics' && (
+              <Analytics />
             )}
             
           </div>

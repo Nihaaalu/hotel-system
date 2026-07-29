@@ -51,7 +51,14 @@ export interface Payment {
   _synced?: boolean; // flag for firebase sync status
 }
 
-export type ExpenseCategory = 'Meat' | 'Groceries' | 'Cleaning' | 'Miscellaneous';
+export type ExpenseCategory =
+  | 'Meat'
+  | 'Groceries'
+  | 'Cleaning'
+  | 'Miscellaneous'
+  | 'Salary'
+  | 'Electricity Bill'
+  | 'Laundry';
 
 export interface Expense {
   id: string;

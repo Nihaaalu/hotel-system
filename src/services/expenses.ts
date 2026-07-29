@@ -77,21 +77,21 @@ export const ExpenseService = {
       };
 
       logQuery('inventory_expenses', 'INSERT', 'N/A', payload);
+      console.log('TABLE:\npublic.inventory_expenses');
+      console.log('PAYLOAD:\n', JSON.stringify(payload, null, 2));
+
       const { data, error } = await supabase
         .from('inventory_expenses')
         .insert(payload)
         .select()
         .single();
-      logResponse(data, error);
+
+      console.log('SUPABASE RESPONSE:\n', JSON.stringify(data, null, 2));
+      console.log('SUPABASE ERROR:\n', JSON.stringify(error, null, 2));
 
       if (error) {
         console.error('Supabase inventory_expenses INSERT returned error:', error);
-        // If DB has conflicting check constraints (23514), warn clearly but do not crash the app UI
-        if (error.code === '23514') {
-          console.warn('Supabase table inventory_expenses has conflicting check constraints on category column.');
-        } else {
-          throw new Error(error.message || 'Failed to insert expense into Supabase');
-        }
+        throw new Error(error.message || `Failed to insert expense into Supabase: ${JSON.stringify(error)}`);
       } else if (data && data.id) {
         newExpense.id = String(data.id);
       }
@@ -115,21 +115,20 @@ export const ExpenseService = {
       if (expenseData.amount !== undefined) payload.amount = Number(expenseData.amount);
       if (expenseData.remarks !== undefined) payload.remarks = expenseData.remarks;
 
-      logQuery('inventory_expenses', 'UPDATE', `id = ${id}`, payload);
+      const numId = Number(id);
+      const targetId = !isNaN(numId) ? numId : id;
+
+      logQuery('inventory_expenses', 'UPDATE', `id = ${targetId}`, payload);
       const { data, error } = await supabase
         .from('inventory_expenses')
         .update(payload)
-        .eq('id', id)
+        .eq('id', targetId)
         .select();
       logResponse(data, error);
 
       if (error) {
         console.error('Supabase inventory_expenses UPDATE failed:', error);
-        if (error.code === '23514') {
-          console.warn('Supabase table inventory_expenses has conflicting check constraints on category column.');
-        } else {
-          throw new Error(error.message || 'Failed to update expense in Supabase');
-        }
+        throw new Error(error.message || 'Failed to update expense in Supabase');
       }
     }
   },
@@ -138,11 +137,14 @@ export const ExpenseService = {
     localExpenses = localExpenses.filter((exp) => exp.id !== id);
 
     if (isSupabaseConfigured) {
-      logQuery('inventory_expenses', 'DELETE', `id = ${id}`);
+      const numId = Number(id);
+      const targetId = !isNaN(numId) ? numId : id;
+
+      logQuery('inventory_expenses', 'DELETE', `id = ${targetId}`);
       const { data, error } = await supabase
         .from('inventory_expenses')
         .delete()
-        .eq('id', id)
+        .eq('id', targetId)
         .select();
       logResponse(data, error);
 

@@ -11,7 +11,15 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 
-const CATEGORIES: ExpenseCategory[] = ['Meat', 'Groceries', 'Cleaning', 'Miscellaneous'];
+const CATEGORIES: ExpenseCategory[] = [
+  'Meat',
+  'Groceries',
+  'Cleaning',
+  'Miscellaneous',
+  'Salary',
+  'Electricity Bill',
+  'Laundry',
+];
 
 export default function Inventory() {
   const { expenses, addExpense, updateExpense, deleteExpense } = useHotelData();
@@ -58,6 +66,9 @@ export default function Inventory() {
       Groceries: 0,
       Cleaning: 0,
       Miscellaneous: 0,
+      Salary: 0,
+      'Electricity Bill': 0,
+      Laundry: 0,
     };
 
     expenses.forEach((exp) => {
@@ -324,6 +335,9 @@ export default function Inventory() {
                         exp.category === 'Meat' ? 'bg-red-50 text-red-700 border border-red-200' :
                         exp.category === 'Groceries' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                         exp.category === 'Cleaning' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                        exp.category === 'Salary' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                        exp.category === 'Electricity Bill' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                        exp.category === 'Laundry' ? 'bg-cyan-50 text-cyan-700 border border-cyan-200' :
                         'bg-gray-100 text-gray-700 border border-gray-200'
                       }`}>
                         {exp.category}

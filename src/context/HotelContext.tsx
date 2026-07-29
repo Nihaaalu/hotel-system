@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { Room, Booking, Payment, Guest, Expense } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ExpenseService } from '../services/expenses';
+import { ReservationService } from '../services/reservations';
 
 function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advancePaid: number; cleanRemarks: string } {
   if (!remarksStr) return { totalAmount: 0, advancePaid: 0, cleanRemarks: '' };
@@ -34,6 +35,7 @@ interface HotelContextType {
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt'>) => Promise<Expense>;
   updateExpense: (id: string, expense: Partial<Omit<Expense, 'id' | 'createdAt'>>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
+  updateBookingPayment: (reservationId: string, totalAmount: number, advancePaid: number) => Promise<void>;
 }
 
 const HotelContext = createContext<HotelContextType | undefined>(undefined);
@@ -301,6 +303,19 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [refreshData]
   );
 
+  const updateBookingPayment = useCallback(
+    async (reservationId: string, totalAmount: number, advancePaid: number) => {
+      try {
+        await ReservationService.updateBookingPayment(reservationId, totalAmount, advancePaid);
+        await refreshData();
+      } catch (err) {
+        console.error('Error updating booking payment:', err);
+        throw err;
+      }
+    },
+    [refreshData]
+  );
+
   return (
     <HotelContext.Provider
       value={{
@@ -315,6 +330,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addExpense,
         updateExpense,
         deleteExpense,
+        updateBookingPayment,
       }}
     >
       {children}

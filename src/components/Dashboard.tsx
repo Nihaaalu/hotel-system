@@ -40,16 +40,51 @@ export default function Dashboard({
     const todayStr = new Date().toISOString().split('T')[0];
     const currentYearMonth = todayStr.substring(0, 7);
 
-    // Calculations
-    const future = bookings.filter((b) => b.status === 'booked' && b.checkInDate > todayStr);
-    const checkinsToday = bookings.filter((b) => b.status === 'checked-in' && b.checkInDate === todayStr);
-    const checkoutsToday = bookings.filter((b) => b.checkOutDate === todayStr && (b.status === 'checked-in' || b.status === 'checked-out'));
-    const staying = bookings.filter((b) => b.status === 'checked-in');
+    // Filter active bookings for TODAY (checkInDate <= todayStr)
+    const todayActiveBookings = bookings.filter((b) => {
+      if (b.status === 'cancelled') return false;
+      if (b.checkInDate > todayStr) return false; // Ignore future bookings for today's dashboard!
+      return true;
+    });
 
-    const activeBookings = bookings.filter((b) => b.status !== 'cancelled');
-    const totalAmountSum = activeBookings.reduce((sum, b) => sum + Number(b.totalAmount || 0), 0);
-    const advancePaidSum = activeBookings.reduce((sum, b) => sum + Number(b.advancePaid || 0), 0);
-    const balanceSum = totalAmountSum - advancePaidSum;
+    const future = bookings.filter((b) => b.status === 'booked' && b.checkInDate > todayStr);
+    const checkinsToday = todayActiveBookings.filter((b) => b.status === 'checked-in' && b.checkInDate === todayStr);
+    const checkoutsToday = bookings.filter((b) => b.checkOutDate === todayStr && (b.status === 'checked-in' || b.status === 'checked-out'));
+    const staying = todayActiveBookings.filter((b) => b.status === 'checked-in');
+
+    // Financial calculations grouped by unique reservation
+    const uniqueTodayResMap = new Map<string, { totalAmount: number; advancePaid: number; paymentStatus: string; status: string }>();
+    todayActiveBookings.forEach((b) => {
+      const groupId = b.bookingGroupId || b.id;
+      if (!uniqueTodayResMap.has(groupId)) {
+        uniqueTodayResMap.set(groupId, {
+          totalAmount: Number(b.totalAmount || 0),
+          advancePaid: Number(b.advancePaid || 0),
+          paymentStatus: b.paymentStatus,
+          status: b.status,
+        });
+      } else {
+        const existing = uniqueTodayResMap.get(groupId)!;
+        if (b.status === 'checked-in') existing.status = 'checked-in';
+        if (b.paymentStatus === 'paid') existing.paymentStatus = 'paid';
+      }
+    });
+
+    let totalAmountSum = 0;
+    let advancePaidSum = 0;
+    let balanceSum = 0;
+
+    uniqueTodayResMap.forEach((res) => {
+      totalAmountSum += res.totalAmount;
+      advancePaidSum += res.advancePaid;
+
+      // When Guest is Checked In or payment_status === 'paid', remaining balance is 0
+      if (res.status === 'checked-in' || res.status === 'checked-out' || res.paymentStatus === 'paid') {
+        balanceSum += 0;
+      } else {
+        balanceSum += Math.max(0, res.totalAmount - res.advancePaid);
+      }
+    });
 
     const todayColl = payments
       .filter((p) => p.paymentDate.split('T')[0] === todayStr)
@@ -63,10 +98,10 @@ export default function Dashboard({
       .filter((e) => e.expenseDate && e.expenseDate.startsWith(currentYearMonth))
       .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
-    // Build room statuses based on cached Supabase rooms
+    // Build room statuses based on today's active bookings ONLY
     const statuses: RoomStatusMapping[] = rooms.map((room) => {
-      const activeRoomBookings = bookings.filter(
-        (b) => b.roomNumber === room.number && b.status !== 'checked-out' && b.status !== 'cancelled'
+      const activeRoomBookings = todayActiveBookings.filter(
+        (b) => b.roomNumber === room.number && b.status !== 'checked-out'
       );
 
       // 1. Checked-in booking
@@ -93,22 +128,22 @@ export default function Dashboard({
         };
       }
 
-      // 2. Arriving today / Reserved reservation
-      const bookedBooking = activeRoomBookings.find(
-        (b) => b.status === 'booked'
+      // 2. Arriving TODAY (checkInDate === todayStr)
+      const arrivingTodayBooking = activeRoomBookings.find(
+        (b) => b.checkInDate === todayStr && (b.status === 'booked' || b.status === 'reserved')
       );
 
-      if (bookedBooking) {
+      if (arrivingTodayBooking) {
         return {
           room,
           status: 'CHECKIN_TODAY',
-          booking: bookedBooking,
+          booking: arrivingTodayBooking,
           colorClass: 'border-orange-500 bg-orange-50/10 hover:bg-orange-50/20 text-orange-950',
           badgeClass: 'bg-orange-100 text-orange-850 border-orange-200',
         };
       }
 
-      // 3. Otherwise available
+      // 3. Otherwise available (including future bookings)
       return {
         room,
         status: 'AVAILABLE',

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Calendar, Package, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Calendar, Package, TrendingUp, Menu, X } from 'lucide-react';
 
 interface SidebarProps {
-  currentTab: 'dashboard' | 'calendar' | 'inventory';
-  onTabChange: (tab: 'dashboard' | 'calendar' | 'inventory') => void;
+  currentTab: 'dashboard' | 'calendar' | 'inventory' | 'analytics';
+  onTabChange: (tab: 'dashboard' | 'calendar' | 'inventory' | 'analytics') => void;
 }
 
 export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
@@ -13,9 +13,10 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'calendar', label: 'Booking Calendar', icon: Calendar },
     { id: 'inventory', label: 'Inventory', icon: Package },
+    { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   ] as const;
 
-  const handleSelectTab = (tab: 'dashboard' | 'calendar' | 'inventory') => {
+  const handleSelectTab = (tab: 'dashboard' | 'calendar' | 'inventory' | 'analytics') => {
     onTabChange(tab);
     setIsMobileDrawerOpen(false);
   };

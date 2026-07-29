@@ -3,7 +3,7 @@ import { Booking, Guest, Payment, Room } from '../types';
 import { BookingService, PaymentService } from '../services/dbServices';
 import { useHotelData } from '../context/HotelContext';
 import { formatDateHuman } from '../utils/formatters';
-import { X, Calendar, User, Check, ChevronDown, Receipt, Clock, Trash2, ArrowUpRight } from 'lucide-react';
+import { X, Calendar, User, Check, ChevronDown, Receipt, Clock, Trash2, ArrowUpRight, Edit2 } from 'lucide-react';
 
 interface BookingModalProps {
   bookingId?: string | null;           // If present, we view/edit this booking
@@ -22,7 +22,7 @@ export default function BookingModal({
   onClose,
   onSuccess,
 }: BookingModalProps) {
-  const { rooms: roomsList, bookings: contextBookings, payments: contextPayments, checkOverlappingBooking } = useHotelData();
+  const { rooms: roomsList, bookings: contextBookings, payments: contextPayments, checkOverlappingBooking, updateBookingPayment } = useHotelData();
   const [groupBookingsSameGroup, setGroupBookingsSameGroup] = useState<Booking[]>([]);
   const isEditing = !!bookingId;
 
@@ -138,6 +138,58 @@ export default function BookingModal({
   const [extraPaymentMethod, setExtraPaymentMethod] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
   const [extraPaymentRemarks, setExtraPaymentRemarks] = useState('');
   const [showAddPaymentForm, setShowAddPaymentForm] = useState(false);
+
+  // Edit Payment State inside View mode
+  const [isEditingPayment, setIsEditingPayment] = useState(false);
+  const [editTotalAmount, setEditTotalAmount] = useState<number | ''>('');
+  const [editAdvancePaid, setEditAdvancePaid] = useState<number | ''>('');
+  const [paymentEditError, setPaymentEditError] = useState<string | null>(null);
+
+  const handleOpenEditPayment = () => {
+    if (loadedBooking) {
+      setEditTotalAmount(loadedBooking.totalAmount);
+      setEditAdvancePaid(loadedBooking.advancePaid);
+      setPaymentEditError(null);
+      setIsEditingPayment(true);
+    }
+  };
+
+  const handleSavePaymentEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loadedBooking) return;
+
+    const newTotal = Number(editTotalAmount) || 0;
+    const newAdvance = Number(editAdvancePaid) || 0;
+
+    if (newAdvance > newTotal) {
+      setPaymentEditError('Advance paid cannot exceed total amount');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      setPaymentEditError(null);
+      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
+      await updateBookingPayment(resId, newTotal, newAdvance);
+
+      setLoadedBooking((prev) =>
+        prev
+          ? {
+              ...prev,
+              totalAmount: newTotal,
+              advancePaid: newAdvance,
+              paymentStatus: newAdvance >= newTotal && newTotal > 0 ? 'paid' : 'pending',
+            }
+          : null
+      );
+      setIsEditingPayment(false);
+      onSuccess();
+    } catch (err: any) {
+      setPaymentEditError(err?.message || 'Failed to update payment');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   // General Status
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -611,21 +663,88 @@ export default function BookingModal({
                     </div>
 
                     <div className="border-t border-gray-50 pt-2 shrink-0">
-                      <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">Financial State Ledger</span>
-                      <div className="grid grid-cols-3 gap-2 text-center mt-2">
-                        <div className="p-2 bg-gray-50 rounded-xl">
-                          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Total</span>
-                          <span className="text-xs font-extrabold text-gray-800">₹{loadedBooking.totalAmount.toLocaleString()}</span>
-                        </div>
-                        <div className="p-2 bg-green-50/50 rounded-xl">
-                          <span className="text-[10px] text-green-700 font-semibold uppercase tracking-wider block">Paid</span>
-                          <span className="text-xs font-extrabold text-green-700">₹{loadedBooking.advancePaid.toLocaleString()}</span>
-                        </div>
-                        <div className={`p-2 rounded-xl ${loadedBooking.totalAmount - loadedBooking.advancePaid > 0 ? 'bg-red-50/50' : 'bg-gray-50'}`}>
-                          <span className="text-[10px] text-red-700 font-semibold uppercase tracking-wider block">Balance</span>
-                          <span className="text-xs font-extrabold text-red-700">₹{(loadedBooking.totalAmount - loadedBooking.advancePaid).toLocaleString()}</span>
-                        </div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase">Financial State Ledger</span>
+                        {loadedBooking.status !== 'cancelled' && (
+                          <button
+                            type="button"
+                            onClick={handleOpenEditPayment}
+                            className="px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100 text-[11px] font-bold rounded-lg transition cursor-pointer flex items-center gap-1"
+                            id="btn_edit_payment"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            Edit Payment
+                          </button>
+                        )}
                       </div>
+
+                      {isEditingPayment ? (
+                        <form onSubmit={handleSavePaymentEdit} className="mt-2 p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-600 block mb-1">Total Amount (₹)</label>
+                              <input
+                                type="number"
+                                required
+                                min="0"
+                                value={editTotalAmount}
+                                onChange={(e) => setEditTotalAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                                id="input_edit_total_amount"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-600 block mb-1">Advance Paid (₹)</label>
+                              <input
+                                type="number"
+                                required
+                                min="0"
+                                value={editAdvancePaid}
+                                onChange={(e) => setEditAdvancePaid(e.target.value === '' ? '' : Number(e.target.value))}
+                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                                id="input_edit_advance_paid"
+                              />
+                            </div>
+                          </div>
+
+                          {paymentEditError && (
+                            <p className="text-2xs font-bold text-rose-600 italic">{paymentEditError}</p>
+                          )}
+
+                          <div className="flex items-center justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setIsEditingPayment(false)}
+                              className="px-3 py-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={isSubmitting}
+                              className="px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-sm cursor-pointer disabled:opacity-50"
+                              id="btn_save_edit_payment"
+                            >
+                              Save Changes
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-2 text-center mt-2">
+                          <div className="p-2 bg-gray-50 rounded-xl">
+                            <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Total</span>
+                            <span className="text-xs font-extrabold text-gray-800">₹{loadedBooking.totalAmount.toLocaleString()}</span>
+                          </div>
+                          <div className="p-2 bg-green-50/50 rounded-xl">
+                            <span className="text-[10px] text-green-700 font-semibold uppercase tracking-wider block">Paid</span>
+                            <span className="text-xs font-extrabold text-green-700">₹{loadedBooking.advancePaid.toLocaleString()}</span>
+                          </div>
+                          <div className={`p-2 rounded-xl ${loadedBooking.totalAmount - loadedBooking.advancePaid > 0 ? 'bg-red-50/50' : 'bg-gray-50'}`}>
+                            <span className="text-[10px] text-red-700 font-semibold uppercase tracking-wider block">Balance</span>
+                            <span className="text-xs font-extrabold text-red-700">₹{(loadedBooking.totalAmount - loadedBooking.advancePaid).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
