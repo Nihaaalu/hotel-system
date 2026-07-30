@@ -115,7 +115,7 @@ export default function BookingCalendar({
     return (
       bookingList.find((b) => {
         if (b.roomNumber !== roomNumber) return false;
-        if (b.status === 'cancelled') return false;
+        if (b.status === 'cancelled' || b.status === 'checked-out') return false;
         return dateYMD >= b.checkInDate && dateYMD < b.checkOutDate;
       }) || null
     );
@@ -149,7 +149,7 @@ export default function BookingCalendar({
     return bookingList
       .filter((b) => {
         if (b.roomNumber !== roomNumber) return false;
-        if (b.status === 'cancelled') return false;
+        if (b.status === 'cancelled' || b.status === 'checked-out') return false;
         return b.checkInDate <= monthEndStr && b.checkOutDate >= monthStartStr;
       })
       .map((b) => {

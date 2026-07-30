@@ -9,8 +9,10 @@ interface ExportOccupancySheetOptions {
   exportType: 'pdf' | 'jpeg';
 }
 
+const COUPLE_ROOMS = new Set([101, 102, 103, 201, 202, 203, 204, 205]);
+
 /**
- * Generates an A4 Landscape Occupancy Register report for the current selected month
+ * Generates an A4 Landscape Occupancy Register report for Dreamy Vacations Resorts
  * directly from live Supabase data in memory and triggers immediate browser download.
  */
 export async function exportOccupancySheet({
@@ -33,7 +35,18 @@ export async function exportOccupancySheet({
   };
 
   const todayObj = new Date();
-  const todayYMD = formatYMD(todayObj.getFullYear(), todayObj.getMonth(), todayObj.getDate());
+
+  // Generated on: DD/MM/YYYY HH:MM
+  const formatGenDate = (d: Date) => {
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+  };
+
+  const genDateStr = formatGenDate(todayObj);
 
   // Generate days array for month
   const daysList = [];
@@ -41,15 +54,15 @@ export async function exportOccupancySheet({
     const dateObj = new Date(year, month, d);
     const ymd = formatYMD(year, month, d);
     const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
-    const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6; // Sun or Sat
-    const isToday = ymd === todayYMD;
+    const dayOfWeek = dateObj.getDay(); // 0 = Sun, 5 = Fri, 6 = Sat
+    const isFriSatSun = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
+
     daysList.push({
       dayNum: d,
       formattedDayNum: String(d).padStart(2, '0'),
       ymd,
       dayName,
-      isWeekend,
-      isToday,
+      isFriSatSun,
     });
   }
 
@@ -75,7 +88,7 @@ export async function exportOccupancySheet({
   // Create temporary container element off-screen
   const exportContainer = document.createElement('div');
   exportContainer.id = 'temp_occupancy_export_sheet';
-  
+
   // A4 Landscape Aspect Ratio styling: 1414px x 1000px
   Object.assign(exportContainer.style, {
     position: 'fixed',
@@ -84,20 +97,15 @@ export async function exportOccupancySheet({
     width: '1414px',
     height: '1000px',
     backgroundColor: '#FFFFFF',
-    color: '#0F172A',
+    color: '#000000',
     fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     boxSizing: 'border-box',
     padding: '20px 24px',
     display: 'flex',
     flexDirection: 'column',
-    justify: 'space-between',
+    justifyContent: 'space-between',
     zIndex: '-9999',
     overflow: 'hidden',
-  });
-
-  const nowFormatted = new Date().toLocaleString('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
   });
 
   // Calculate row height dynamically to guarantee 100% 1-page fit
@@ -106,7 +114,11 @@ export async function exportOccupancySheet({
   const totalGridAvailableHeight = 1000 - 40 - headerSectionHeight - footerSectionHeight; // ~855px
   const rowCount = daysInMonth + 1; // days + header row
   const rowHeightPx = Math.max(14, Math.floor(totalGridAvailableHeight / rowCount));
-  const fontSizePx = Math.max(7, Math.min(10, Math.floor(rowHeightPx * 0.52)));
+  const baseFontSizePx = Math.max(7, Math.min(10, Math.floor(rowHeightPx * 0.52)));
+  // Increased font sizes specifically for dates, weekdays, room headers, and guest names
+  const headerFontSizePx = baseFontSizePx + 6;
+  const dateFontSizePx = baseFontSizePx + 5;
+  const cellFontSizePx = baseFontSizePx + 6;
 
   // Truncate guest name if long
   const formatGuestName = (name: string) => {
@@ -121,21 +133,31 @@ export async function exportOccupancySheet({
   // Build HTML Content
   exportContainer.innerHTML = `
     <!-- 1. TOP HEADER -->
-    <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #0F172A; padding-bottom: 10px; height: 55px; box-sizing: border-box;">
-      <div>
-        <h1 style="font-size: 20px; font-weight: 900; margin: 0; color: #0F172A; tracking-tight: -0.5px; text-transform: uppercase;">
-          Grand Horizon Hotel & Resort
-        </h1>
-        <div style="font-size: 13px; font-weight: 800; color: #475569; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">
-          Monthly Room Occupancy Register
-        </div>
-      </div>
-      <div style="text-align: right;">
-        <div style="font-size: 18px; font-weight: 900; color: #1E293B; text-transform: uppercase;">
+    <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #444444; padding-bottom: 8px; height: 58px; box-sizing: border-box;">
+      <!-- TOP LEFT: MONTH AND YEAR -->
+      <div style="flex: 1; text-align: left;">
+        <div style="font-size: 22px; font-weight: 900; color: #D32F2F; text-transform: uppercase; letter-spacing: -0.3px;">
           ${monthName} ${yearStr}
         </div>
-        <div style="font-size: 10px; font-weight: 600; color: #64748B; margin-top: 2px;">
-          Generated: ${nowFormatted} • Live Supabase Register
+      </div>
+
+      <!-- CENTER: HOTEL NAME AND REPORT TITLE -->
+      <div style="flex: 2; text-align: center;">
+        <h1 style="font-size: 24px; font-weight: 900; margin: 0; color: #000000; text-transform: uppercase; letter-spacing: -0.2px;">
+          DREAMY VACATIONS RESORTS
+        </h1>
+        <div style="font-size: 13px; font-weight: 800; color: #444444; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">
+          MONTHLY OCCUPANCY REPORT
+        </div>
+      </div>
+
+      <!-- TOP RIGHT: GENERATED DATE ONLY -->
+      <div style="flex: 1; text-align: right;">
+        <div style="font-size: 10px; font-weight: 800; color: #555555; text-transform: uppercase;">
+          Generated on:
+        </div>
+        <div style="font-size: 11px; font-weight: 900; color: #000000; margin-top: 1px;">
+          ${genDateStr}
         </div>
       </div>
     </div>
@@ -145,78 +167,67 @@ export async function exportOccupancySheet({
       <table style="width: 100%; border-collapse: collapse; table-layout: fixed; font-family: monospace;">
         <thead>
           <tr style="height: ${rowHeightPx}px;">
-            <th style="width: 80px; background-color: #0F172A; color: #FFFFFF; font-size: ${fontSizePx + 1}px; font-weight: 900; border: 1px solid #334155; text-align: center; vertical-align: middle;">
-              DATE
+            <th style="width: 80px; background-color: #333333; color: #FFFFFF; font-size: ${headerFontSizePx}px; font-weight: 900; border: 1px solid #444444; text-align: center; vertical-align: middle;">
+              <span style="position: relative; top: -6px; display: inline-block;">DATE</span>
             </th>
             ${rooms
-              .map(
-                (room) => `
-              <th style="background-color: #1E293B; color: #FFFFFF; font-size: ${fontSizePx + 1}px; font-weight: 900; border: 1px solid #334155; text-align: center; vertical-align: middle;">
-                ${room.number}
-              </th>
-            `
-              )
+              .map((room) => {
+                const isCouple = COUPLE_ROOMS.has(Number(room.number));
+                const bg = isCouple ? '#FFF4D6' : '#E2E8F0';
+                return `
+                  <th style="background-color: ${bg}; color: #000000; font-size: ${headerFontSizePx}px; font-weight: 900; border: 1px solid #444444; text-align: center; vertical-align: middle;">
+                    <span style="position: relative; top: -6px; display: inline-block;">${room.number}</span>
+                  </th>
+                `;
+              })
               .join('')}
           </tr>
         </thead>
         <tbody>
           ${daysList
             .map((day) => {
-              // Date cell styling
-              let dateCellBg = '#F8FAFC';
-              let dateCellColor = '#334155';
-              let dateFontWeight = '700';
-
-              if (day.isToday) {
-                dateCellBg = '#DC2626';
-                dateCellColor = '#FFFFFF';
-                dateFontWeight = '900';
-              } else if (day.isWeekend) {
-                dateCellBg = '#FEE2E2';
-                dateCellColor = '#991B1B';
-                dateFontWeight = '800';
-              }
+              // Date cell styling: Fri/Sat/Sun -> Red (#D32F2F) with white text; Mon-Thu -> White with black text
+              const dateCellBg = day.isFriSatSun ? '#D32F2F' : '#FFFFFF';
+              const dateCellColor = day.isFriSatSun ? '#FFFFFF' : '#000000';
 
               return `
-              <tr style="height: ${rowHeightPx}px; ${day.isToday ? 'outline: 2px solid #EF4444; z-index: 10;' : ''}">
-                <td style="background-color: ${dateCellBg}; color: ${dateCellColor}; font-size: ${fontSizePx}px; font-weight: ${dateFontWeight}; border: 1px solid #94A3B8; text-align: center; vertical-align: middle; padding: 0;">
-                  ${day.formattedDayNum} ${day.dayName.toUpperCase()}
+              <tr style="height: ${rowHeightPx}px;">
+                <td style="background-color: ${dateCellBg}; color: ${dateCellColor}; font-size: ${dateFontSizePx}px; font-weight: 900; border: 1px solid #444444; text-align: center; vertical-align: middle; padding: 0;">
+                  <span style="position: relative; top: -6px; display: inline-block;">${day.formattedDayNum} ${day.dayName.toUpperCase()}</span>
                 </td>
 
                 ${rooms
                   .map((room) => {
                     const booking = getBookingForRoomAndDate(room.number, day.ymd);
+                    const isCouple = COUPLE_ROOMS.has(Number(room.number));
 
-                    let bg = '#FFFFFF'; // White for available
-                    let textColor = '#1E293B';
-                    let borderColor = '#CBD5E1';
+                    let bg = isCouple ? '#FFF4D6' : '#FFFFFF'; // Available
+                    let textColor = '#000000';
+                    let textDecoration = 'none';
                     let guestText = '';
 
                     if (booking) {
                       guestText = formatGuestName(booking.guestName || 'GUEST');
 
                       if (booking.status === 'checked-in') {
-                        bg = '#BBF7D0'; // Green
-                        textColor = '#166534';
-                        borderColor = '#22C55E';
+                        bg = '#E53935'; // Red
+                        textColor = '#FFFFFF';
                       } else if (booking.status === 'checked-out') {
-                        bg = '#BFDBFE'; // Blue
-                        textColor = '#1E40AF';
-                        borderColor = '#3B82F6';
+                        bg = isCouple ? '#FFF4D6' : '#FFFFFF'; // White / Cream
+                        textColor = '#757575'; // Grey
+                        textDecoration = 'line-through'; // Strike-through
                       } else if (booking.status === 'booked') {
-                        bg = '#FEF08A'; // Yellow
-                        textColor = '#854D0E';
-                        borderColor = '#EAB308';
+                        bg = '#FFF176'; // Yellow
+                        textColor = '#000000';
                       } else if (booking.status === 'cancelled') {
-                        bg = '#E5E7EB'; // Grey
-                        textColor = '#4B5563';
-                        borderColor = '#9CA3AF';
+                        bg = '#E0E0E0'; // Light Grey
+                        textColor = '#616161';
                       }
                     }
 
                     return `
-                      <td style="background-color: ${bg}; color: ${textColor}; font-size: ${fontSizePx}px; font-weight: 800; border: 1px solid ${borderColor}; text-align: center; vertical-align: middle; padding: 0 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                        ${guestText}
+                      <td style="background-color: ${bg}; color: ${textColor}; text-decoration: ${textDecoration}; font-size: ${cellFontSizePx}px; font-weight: 800; border: 1px solid #444444; text-align: center; vertical-align: middle; padding: 0 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        ${guestText ? `<span style="position: relative; top: -6px; display: inline-block;">${guestText}</span>` : ''}
                       </td>
                     `;
                   })
@@ -230,41 +241,33 @@ export async function exportOccupancySheet({
     </div>
 
     <!-- 3. LEGEND & FOOTER SECTION -->
-    <div style="display: flex; align-items: center; justify-between: space-between; border-top: 1px solid #CBD5E1; padding-top: 6px; font-size: 10px; font-weight: 700; color: #334155;">
-      <!-- Legend badges -->
-      <div style="display: flex; items-center; gap: 14px;">
-        <div style="display: flex; align-items: center; gap: 4px;">
-          <span style="display: inline-block; width: 12px; height: 12px; background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 2px;"></span>
-          <span>Available</span>
+    <div style="display: flex; align-items: center; justify-content: space-between; border-top: 2px solid #444444; padding-top: 6px; font-size: 11px; font-weight: 700; color: #000000;">
+      <!-- Centered Legend Badges -->
+      <div style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 20px;">
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span style="display: inline-block; width: 14px; height: 14px; background: #FFFFFF; border: 1px solid #444444; border-radius: 2px;"></span>
+          <span style="position: relative; top: -6px; display: inline-block;">White = Available</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 4px;">
-          <span style="display: inline-block; width: 12px; height: 12px; background: #FEF08A; border: 1px solid #EAB308; border-radius: 2px;"></span>
-          <span>Reserved (Yellow)</span>
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span style="display: inline-block; width: 14px; height: 14px; background: #FFF176; border: 1px solid #444444; border-radius: 2px;"></span>
+          <span style="position: relative; top: -6px; display: inline-block;">Yellow = Reserved</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 4px;">
-          <span style="display: inline-block; width: 12px; height: 12px; background: #BBF7D0; border: 1px solid #22C55E; border-radius: 2px;"></span>
-          <span>Checked In (Green)</span>
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span style="display: inline-block; width: 14px; height: 14px; background: #E53935; border: 1px solid #444444; border-radius: 2px;"></span>
+          <span style="position: relative; top: -6px; display: inline-block;">Red = Checked In</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 4px;">
-          <span style="display: inline-block; width: 12px; height: 12px; background: #BFDBFE; border: 1px solid #3B82F6; border-radius: 2px;"></span>
-          <span>Checked Out (Blue)</span>
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span style="display: inline-block; width: 14px; height: 14px; background: #E0E0E0; border: 1px solid #444444; border-radius: 2px;"></span>
+          <span style="position: relative; top: -6px; display: inline-block;">Grey = Cancelled</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 4px;">
-          <span style="display: inline-block; width: 12px; height: 12px; background: #E5E7EB; border: 1px solid #9CA3AF; border-radius: 2px;"></span>
-          <span>Cancelled (Grey)</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 4px;">
-          <span style="display: inline-block; width: 12px; height: 12px; background: #DC2626; border-radius: 2px;"></span>
-          <span>Today (Red)</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 4px;">
-          <span style="display: inline-block; width: 12px; height: 12px; background: #FEE2E2; border: 1px solid #991B1B; border-radius: 2px;"></span>
-          <span>Weekend (Light Red)</span>
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span style="display: inline-block; width: 14px; height: 14px; background: #FFF4D6; border: 1px solid #444444; border-radius: 2px;"></span>
+          <span style="position: relative; top: -6px; display: inline-block;">Cream = Couple Room</span>
         </div>
       </div>
 
-      <div style="font-family: monospace; font-size: 10px; font-weight: 800; color: #64748B;">
-        ${rooms.length} ROOMS • ${daysInMonth} DAYS REGISTER
+      <div style="font-family: monospace; font-size: 11px; font-weight: 800; color: #444444;">
+        <span style="position: relative; top: -6px; display: inline-block;">${rooms.length} ROOMS • ${daysInMonth} DAYS</span>
       </div>
     </div>
   `;
@@ -275,7 +278,7 @@ export async function exportOccupancySheet({
     // Wait for DOM layout
     await new Promise((res) => setTimeout(res, 100));
 
-    // Render HTML to high resolution canvas (300 DPI equivalent)
+    // Render HTML to high resolution canvas
     const canvas = await html2canvas(exportContainer, {
       scale: 2.5,
       useCORS: true,
@@ -283,7 +286,7 @@ export async function exportOccupancySheet({
       backgroundColor: '#FFFFFF',
     });
 
-    const fileNameBase = `Hotel_Occupancy_${monthName}_${yearStr}`;
+    const fileNameBase = `Dreamy_Vacations_Resorts_Occupancy_${monthName}_${yearStr}`;
 
     if (exportType === 'pdf') {
       const imgData = canvas.toDataURL('image/png');
@@ -312,3 +315,4 @@ export async function exportOccupancySheet({
     }
   }
 }
+

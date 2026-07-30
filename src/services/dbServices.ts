@@ -62,6 +62,9 @@ export const BookingService = {
   async checkInGuest(id: string, remarks?: string, checkedInBy?: string): Promise<void> {
     return ReservationService.checkInGuest(id, remarks, checkedInBy);
   },
+  async checkoutGuest(id: string, remarks?: string): Promise<void> {
+    return ReservationService.checkoutGuest(id, remarks);
+  },
   async releaseRoom(id: string): Promise<void> {
     return ReservationService.releaseRoom(id);
   },
@@ -73,6 +76,22 @@ export const BookingService = {
   },
   async deleteBooking(id: string): Promise<void> {
     return ReservationService.deleteBooking(id);
+  },
+  async replaceRoom(reservationRoomId: string, newRoomNumber: number): Promise<void> {
+    return ReservationService.replaceRoom(reservationRoomId, newRoomNumber);
+  },
+  async updateBookingDetails(
+    reservationId: string,
+    data: {
+      guestName?: string;
+      checkInDate?: string;
+      checkOutDate?: string;
+      remarks?: string;
+      totalAmount?: number;
+      advancePaid?: number;
+    }
+  ): Promise<void> {
+    return ReservationService.updateBookingDetails(reservationId, data);
   },
   async checkOverlappingBooking(
     roomNumber: number,

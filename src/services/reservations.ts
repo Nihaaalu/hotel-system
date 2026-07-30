@@ -492,6 +492,54 @@ export const ReservationService = {
   },
 
   /**
+   * CHECKOUT GUEST Action:
+   * Sets status = 'checked_out' in reservation_rooms and reservations.
+   * Preserves booking history, payments, and guest details.
+   */
+  async checkoutGuest(id: string, remarks?: string): Promise<void> {
+    if (!isSupabaseConfigured) return;
+
+    logQuery('reservation_rooms', 'SELECT', `id = ${id}`);
+    let { data: roomRow } = await supabase
+      .from('reservation_rooms')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    let reservationId = roomRow?.reservation_id || id;
+
+    if (roomRow?.id) {
+      logQuery('reservation_rooms', 'UPDATE', `id = ${roomRow.id}`, { status: 'checked_out' });
+      await supabase
+        .from('reservation_rooms')
+        .update({ status: 'checked_out' })
+        .eq('id', roomRow.id);
+    } else if (reservationId) {
+      logQuery('reservation_rooms', 'UPDATE', `reservation_id = ${reservationId}`, { status: 'checked_out' });
+      await supabase
+        .from('reservation_rooms')
+        .update({ status: 'checked_out' })
+        .eq('reservation_id', reservationId);
+    }
+
+    if (reservationId) {
+      const { data: siblingRooms } = await supabase
+        .from('reservation_rooms')
+        .select('status')
+        .eq('reservation_id', reservationId);
+
+      const allCheckedOut = !siblingRooms || siblingRooms.every((r) => r.status === 'checked_out' || r.status === 'checked-out');
+      if (allCheckedOut) {
+        logQuery('reservations', 'UPDATE', `id = ${reservationId}`, { status: 'checked_out' });
+        await supabase
+          .from('reservations')
+          .update({ status: 'checked_out' })
+          .eq('id', reservationId);
+      }
+    }
+  },
+
+  /**
    * Helper to delete payments and checkin_logs for a reservation
    */
   async purgeReservationDependencies(reservationId: string): Promise<void> {
@@ -513,7 +561,8 @@ export const ReservationService = {
 
   /**
    * RELEASE THIS ROOM Action:
-   * Deletes reservation, reservation_rooms, payments, and checkin_logs
+   * Removes ONLY this room allocation from reservation_rooms.
+   * Only deletes parent reservation and dependencies if no remaining rooms exist.
    */
   async releaseRoom(id: string): Promise<void> {
     if (!isSupabaseConfigured) return;
@@ -526,11 +575,6 @@ export const ReservationService = {
       .maybeSingle();
 
     const reservationId = roomRow?.reservation_id || id;
-
-    // Purge dependencies (payments, checkin_logs)
-    if (reservationId) {
-      await this.purgeReservationDependencies(reservationId);
-    }
 
     // Delete reservation_room
     if (roomRow?.id) {
@@ -549,6 +593,7 @@ export const ReservationService = {
         .eq('reservation_id', reservationId);
 
       if (!remaining || remaining.length === 0) {
+        await this.purgeReservationDependencies(reservationId);
         logQuery('reservations', 'DELETE', `id = ${reservationId}`);
         await supabase.from('reservations').delete().eq('id', reservationId);
       }
@@ -566,7 +611,7 @@ export const ReservationService = {
       return this.checkInGuest(id);
     }
     if (status === 'checked-out' || status === 'checked_out') {
-      return this.releaseRoom(id);
+      return this.checkoutGuest(id);
     }
     if (status === 'cancelled') {
       return this.cancelSingleRoom(id);
@@ -646,6 +691,31 @@ export const ReservationService = {
    */
   async deleteBooking(id: string): Promise<void> {
     await this.releaseRoom(id);
+  },
+
+  /**
+   * Replaces the room for a given reservation_rooms row ID
+   */
+  async replaceRoom(reservationRoomId: string, newRoomNumber: number): Promise<void> {
+    if (!isSupabaseConfigured) return;
+
+    // 1. Get room list to find room ID for newRoomNumber
+    const rooms = await RoomService.getRooms();
+    const targetRoom = rooms.find((r) => r.number === newRoomNumber);
+    const newRoomId = targetRoom ? targetRoom.id : newRoomNumber;
+
+    logQuery('reservation_rooms', 'UPDATE', `id = ${reservationRoomId}`, { room_id: newRoomId });
+    const { data, error } = await supabase
+      .from('reservation_rooms')
+      .update({ room_id: newRoomId })
+      .eq('id', reservationRoomId)
+      .select();
+
+    logResponse(data, error);
+    if (error) {
+      console.error('Error replacing room in reservation_rooms:', error);
+      throw error;
+    }
   },
 
   /**
@@ -775,6 +845,81 @@ export const ReservationService = {
       };
       logQuery('payments', 'INSERT', 'N/A', paymentPayload);
       await supabase.from('payments').insert(paymentPayload);
+    }
+  },
+
+  /**
+   * Updates booking details (guestName, checkInDate, checkOutDate, remarks, totalAmount, advancePaid)
+   */
+  async updateBookingDetails(
+    reservationId: string,
+    data: {
+      guestName?: string;
+      checkInDate?: string;
+      checkOutDate?: string;
+      remarks?: string;
+      totalAmount?: number;
+      advancePaid?: number;
+    }
+  ): Promise<void> {
+    if (!isSupabaseConfigured) return;
+
+    let targetResId = reservationId;
+    let { data: resData } = await supabase
+      .from('reservations')
+      .select('*')
+      .eq('id', targetResId)
+      .maybeSingle();
+
+    if (!resData) {
+      const { data: rrData } = await supabase
+        .from('reservation_rooms')
+        .select('reservation_id')
+        .eq('id', targetResId)
+        .maybeSingle();
+      if (rrData?.reservation_id) {
+        targetResId = String(rrData.reservation_id);
+        const { data: parentRes } = await supabase
+          .from('reservations')
+          .select('*')
+          .eq('id', targetResId)
+          .maybeSingle();
+        resData = parentRes;
+      }
+    }
+
+    if (!targetResId) return;
+
+    const payload: any = {};
+    if (data.checkInDate) payload.check_in_date = data.checkInDate;
+    if (data.checkOutDate) payload.check_out_date = data.checkOutDate;
+
+    const currentRemarksStr = resData?.remarks || '';
+    const { cleanRemarks, totalAmount: curTotal, advancePaid: curAdvance } = parsePaymentMetadata(currentRemarksStr);
+
+    const finalTotal = data.totalAmount !== undefined ? data.totalAmount : curTotal;
+    const finalAdvance = data.advancePaid !== undefined ? data.advancePaid : curAdvance;
+    const finalCleanRemarks = data.remarks !== undefined ? data.remarks : cleanRemarks;
+
+    const newMetadata = `[PAYMENT:total=${finalTotal},advance=${finalAdvance}]`;
+    payload.remarks = `${newMetadata} ${finalCleanRemarks}`.trim();
+
+    logQuery('reservations', 'UPDATE', `id = ${targetResId}`, payload);
+    const { error: updateErr } = await supabase
+      .from('reservations')
+      .update(payload)
+      .eq('id', targetResId);
+
+    if (updateErr) {
+      console.error('Failed to update reservation details:', updateErr);
+      throw updateErr;
+    }
+
+    if (data.guestName && resData?.guest_id) {
+      await supabase
+        .from('profiles')
+        .update({ full_name: data.guestName })
+        .eq('id', resData.guest_id);
     }
   },
 };

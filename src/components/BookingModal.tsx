@@ -3,13 +3,29 @@ import { Booking, Guest, Payment, Room } from '../types';
 import { BookingService, PaymentService } from '../services/dbServices';
 import { useHotelData } from '../context/HotelContext';
 import { formatDateHuman } from '../utils/formatters';
-import { X, Calendar, User, Check, ChevronDown, Receipt, Clock, Trash2, ArrowUpRight, Edit2 } from 'lucide-react';
+import {
+  X,
+  Calendar,
+  User,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Receipt,
+  Clock,
+  Trash2,
+  Edit2,
+  Plus,
+  RefreshCw,
+  AlertTriangle,
+  CreditCard,
+} from 'lucide-react';
 
 interface BookingModalProps {
   bookingId?: string | null;           // If present, we view/edit this booking
   initialRoomNumber?: number | null;   // If present, default room for new booking
   initialCheckInDate?: string | null;  // If present, default check-in for new booking
-  isAdminMode?: boolean;               // If true, shows Admin Delete option
+  isAdminMode?: boolean;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -22,13 +38,20 @@ export default function BookingModal({
   onClose,
   onSuccess,
 }: BookingModalProps) {
-  const { rooms: roomsList, bookings: contextBookings, payments: contextPayments, checkOverlappingBooking, updateBookingPayment } = useHotelData();
+  const {
+    rooms: roomsList,
+    bookings: contextBookings,
+    payments: contextPayments,
+    checkOverlappingBooking,
+    updateBookingPayment,
+    refreshData,
+  } = useHotelData();
+
   const [groupBookingsSameGroup, setGroupBookingsSameGroup] = useState<Booking[]>([]);
   const isEditing = !!bookingId;
 
-  // Form State for Guest
+  // Form State for Guest (New Booking)
   const [guestName, setGuestName] = useState('');
-
   const [savedGuestNames, setSavedGuestNames] = useState<string[]>(() => {
     const defaults = ['Ansari', 'Irshad'];
     try {
@@ -46,11 +69,10 @@ export default function BookingModal({
   });
   const [isNameDropdownOpen, setIsNameDropdownOpen] = useState(false);
 
-  // Form State for Booking
+  // Form State for Booking (New Booking)
   const [selectedRoomNumbers, setSelectedRoomNumbers] = useState<number[]>(
     initialRoomNumber ? [initialRoomNumber] : []
   );
-  const [roomNumber, setRoomNumber] = useState<number>(initialRoomNumber || 0);
   const [checkInDate, setCheckInDate] = useState('');
   const [checkOutDate, setCheckOutDate] = useState('');
   const [totalAmount, setTotalAmount] = useState<number | ''>('');
@@ -58,15 +80,32 @@ export default function BookingModal({
   const [remarks, setRemarks] = useState('');
   const [roomAvailability, setRoomAvailability] = useState<Record<number, boolean>>({});
 
+  // Quick Additional Advance State
+  const [quickAdvanceInput, setQuickAdvanceInput] = useState<number | ''>('');
+  const [quickAdvanceMethod, setQuickAdvanceMethod] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
+
+  // Replace Room Modal State
+  const [roomToReplace, setRoomToReplace] = useState<Booking | null>(null);
+  const [selectedNewRoomForReplace, setSelectedNewRoomForReplace] = useState<number | ''>('');
+
+  // Guest Information Edit State
+  const [isEditingGuest, setIsEditingGuest] = useState(false);
+  const [editGuestName, setEditGuestName] = useState('');
+  const [editRemarks, setEditRemarks] = useState('');
+
+  // Total Amount Edit State
+  const [isEditingTotal, setIsEditingTotal] = useState(false);
+  const [editTotalInput, setEditTotalInput] = useState<number | ''>('');
+
+  // Release Confirmation Dialog State
+  const [releaseConfirmTarget, setReleaseConfirmTarget] = useState<{
+    type: 'single' | 'entire';
+    roomBooking?: Booking;
+  } | null>(null);
+
   // Custom Date Picker calendar states
-  const [currentMonth, setCurrentMonth] = useState(() => {
-    const today = new Date();
-    return today.getMonth();
-  });
-  const [currentYear, setCurrentYear] = useState(() => {
-    const today = new Date();
-    return today.getFullYear();
-  });
+  const [currentMonth, setCurrentMonth] = useState(() => new Date().getMonth());
+  const [currentYear, setCurrentYear] = useState(() => new Date().getFullYear());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [hoveredDate, setHoveredDate] = useState<string | null>(null);
 
@@ -102,7 +141,6 @@ export default function BookingModal({
 
   const handleDaySelect = (dayObj: Date) => {
     const clickedStr = toYYYYMMDD(dayObj);
-
     if (!checkInDate || (checkInDate && checkOutDate)) {
       setCheckInDate(clickedStr);
       setCheckOutDate('');
@@ -131,65 +169,6 @@ export default function BookingModal({
 
   // Loaded Booking State for View Mode
   const [loadedBooking, setLoadedBooking] = useState<Booking | null>(null);
-  const [payments, setPayments] = useState<Payment[]>([]);
-
-  // Extra Payment State inside View mode
-  const [extraPaymentAmount, setExtraPaymentAmount] = useState<number>(0);
-  const [extraPaymentMethod, setExtraPaymentMethod] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
-  const [extraPaymentRemarks, setExtraPaymentRemarks] = useState('');
-  const [showAddPaymentForm, setShowAddPaymentForm] = useState(false);
-
-  // Edit Payment State inside View mode
-  const [isEditingPayment, setIsEditingPayment] = useState(false);
-  const [editTotalAmount, setEditTotalAmount] = useState<number | ''>('');
-  const [editAdvancePaid, setEditAdvancePaid] = useState<number | ''>('');
-  const [paymentEditError, setPaymentEditError] = useState<string | null>(null);
-
-  const handleOpenEditPayment = () => {
-    if (loadedBooking) {
-      setEditTotalAmount(loadedBooking.totalAmount);
-      setEditAdvancePaid(loadedBooking.advancePaid);
-      setPaymentEditError(null);
-      setIsEditingPayment(true);
-    }
-  };
-
-  const handleSavePaymentEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loadedBooking) return;
-
-    const newTotal = Number(editTotalAmount) || 0;
-    const newAdvance = Number(editAdvancePaid) || 0;
-
-    if (newAdvance > newTotal) {
-      setPaymentEditError('Advance paid cannot exceed total amount');
-      return;
-    }
-
-    try {
-      setIsSubmitting(true);
-      setPaymentEditError(null);
-      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
-      await updateBookingPayment(resId, newTotal, newAdvance);
-
-      setLoadedBooking((prev) =>
-        prev
-          ? {
-              ...prev,
-              totalAmount: newTotal,
-              advancePaid: newAdvance,
-              paymentStatus: newAdvance >= newTotal && newTotal > 0 ? 'paid' : 'pending',
-            }
-          : null
-      );
-      setIsEditingPayment(false);
-      onSuccess();
-    } catch (err: any) {
-      setPaymentEditError(err?.message || 'Failed to update payment');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   // General Status
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -239,19 +218,12 @@ export default function BookingModal({
       if (b) {
         setLoadedBooking(b);
         setGuestName(b.guestName || '');
-        setRoomNumber(b.roomNumber);
         setSelectedRoomNumbers([b.roomNumber]);
         setCheckInDate(b.checkInDate);
         setCheckOutDate(b.checkOutDate);
         setTotalAmount(b.totalAmount);
         setAdvancePaid(b.advancePaid);
         setRemarks(b.remarks || '');
-
-        // Match associated payments from context
-        const pList = contextPayments.filter(
-          (p) => p.bookingId === b.id || (b.bookingGroupId && p.bookingId === b.bookingGroupId)
-        );
-        setPayments(pList);
 
         if (b.bookingGroupId) {
           const sameGroup = contextBookings.filter(
@@ -265,7 +237,7 @@ export default function BookingModal({
     }
   }, [isEditing, bookingId, contextBookings, contextPayments]);
 
-  // Auto check room availability based on check-in and check-out dates using in-memory context check
+  // Auto check room availability based on check-in and check-out dates
   useEffect(() => {
     if (checkInDate && checkOutDate && roomsList.length > 0) {
       const start = new Date(checkInDate).getTime();
@@ -290,11 +262,21 @@ export default function BookingModal({
     }
   }, [checkInDate, checkOutDate, bookingId, roomsList, checkOverlappingBooking]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const allocatedRoomsList = groupBookingsSameGroup.length > 0
+    ? groupBookingsSameGroup
+    : loadedBooking
+    ? [loadedBooking]
+    : [];
+
+  const balanceRemaining = loadedBooking
+    ? Math.max(0, (loadedBooking.totalAmount || 0) - (loadedBooking.advancePaid || 0))
+    : 0;
+
+  // Handler for New Booking Form Submit
+  const handleSubmitNewBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
-    // Validation
     if (!guestName.trim()) {
       setErrorMsg('Guest Name is required');
       return;
@@ -314,7 +296,6 @@ export default function BookingModal({
 
     setIsSubmitting(true);
     try {
-      // 1. Check overlap for all selected rooms first
       for (const num of selectedRoomNumbers) {
         const isOverlapping = checkOverlappingBooking(num, checkInDate, checkOutDate);
         if (isOverlapping) {
@@ -324,7 +305,6 @@ export default function BookingModal({
         }
       }
 
-      // Persist newly entered guest name in combobox defaults
       const trimmedName = guestName.trim();
       if (trimmedName && !savedGuestNames.includes(trimmedName)) {
         const updatedNames = [...savedGuestNames, trimmedName];
@@ -336,7 +316,6 @@ export default function BookingModal({
         }
       }
 
-      // Create booking via service (inserts into reservations & reservation_rooms)
       await BookingService.createMultiRoomBooking(
         { name: trimmedName },
         selectedRoomNumbers,
@@ -349,6 +328,7 @@ export default function BookingModal({
         }
       );
 
+      await refreshData();
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -358,6 +338,110 @@ export default function BookingModal({
     }
   };
 
+  // Quick Additional Advance Handler
+  const handleQuickAddAdvance = async () => {
+    if (!loadedBooking || !quickAdvanceInput || Number(quickAdvanceInput) <= 0) return;
+
+    try {
+      setIsSubmitting(true);
+      setErrorMsg(null);
+
+      const addAmount = Number(quickAdvanceInput);
+      await PaymentService.addPayment(
+        loadedBooking.id,
+        addAmount,
+        quickAdvanceMethod,
+        'Additional advance payment'
+      );
+
+      const currentAdvance = loadedBooking.advancePaid || 0;
+      const newAdvance = currentAdvance + addAmount;
+      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
+
+      await updateBookingPayment(resId, loadedBooking.totalAmount, newAdvance);
+
+      setLoadedBooking((prev) =>
+        prev
+          ? {
+              ...prev,
+              advancePaid: newAdvance,
+              paymentStatus: newAdvance >= prev.totalAmount && prev.totalAmount > 0 ? 'paid' : 'pending',
+            }
+          : null
+      );
+
+      setQuickAdvanceInput('');
+      await refreshData();
+      onSuccess();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to record advance payment');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Paid Full Handler
+  const handlePaidFull = async () => {
+    if (!loadedBooking) return;
+    const remaining = Math.max(0, (loadedBooking.totalAmount || 0) - (loadedBooking.advancePaid || 0));
+    if (remaining <= 0) return;
+
+    try {
+      setIsSubmitting(true);
+      setErrorMsg(null);
+
+      await PaymentService.addPayment(
+        loadedBooking.id,
+        remaining,
+        'cash',
+        'Paid in Full'
+      );
+
+      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
+      const newAdvance = loadedBooking.totalAmount;
+      await updateBookingPayment(resId, loadedBooking.totalAmount, newAdvance);
+
+      setLoadedBooking((prev) =>
+        prev
+          ? {
+              ...prev,
+              advancePaid: newAdvance,
+              paymentStatus: 'paid',
+            }
+          : null
+      );
+
+      await refreshData();
+      onSuccess();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to process Paid Full');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Replace Room Handler
+  const handleConfirmReplaceRoom = async () => {
+    if (!roomToReplace || !selectedNewRoomForReplace) return;
+
+    try {
+      setIsSubmitting(true);
+      setErrorMsg(null);
+
+      await BookingService.replaceRoom(roomToReplace.id, Number(selectedNewRoomForReplace));
+      setRoomToReplace(null);
+      setSelectedNewRoomForReplace('');
+
+      await refreshData();
+      onSuccess();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to replace room');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Check In Handler (Single tap, no extra confirm)
   const handleCheckInGuest = async () => {
     if (!loadedBooking) return;
     setErrorMsg(null);
@@ -376,6 +460,7 @@ export default function BookingModal({
       } else {
         await BookingService.checkInGuest(loadedBooking.id, loadedBooking.remarks);
       }
+      await refreshData();
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -385,16 +470,50 @@ export default function BookingModal({
     }
   };
 
-  const handleReleaseRoom = async (entireGroup: boolean = false) => {
+  // Check Out Handler (Checkout & Close Room)
+  const handleCheckoutGuest = async () => {
     if (!loadedBooking) return;
+    setErrorMsg(null);
+
+    try {
+      setIsSubmitting(true);
+      if (loadedBooking.bookingGroupId && groupBookingsSameGroup.length > 1) {
+        const targetBookings = groupBookingsSameGroup.filter((b) => b.status === 'checked-in');
+        const toUpdate = targetBookings.map((b) => b.id);
+        if (!toUpdate.includes(loadedBooking.id) && loadedBooking.status === 'checked-in') {
+          toUpdate.push(loadedBooking.id);
+        }
+        for (const bid of toUpdate) {
+          await BookingService.checkoutGuest(bid, loadedBooking.remarks);
+        }
+      } else {
+        await BookingService.checkoutGuest(loadedBooking.id, loadedBooking.remarks);
+      }
+      await refreshData();
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error checking out guest');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Confirmed Release Handler (Step 2)
+  const handleConfirmRelease = async () => {
+    if (!loadedBooking || !releaseConfirmTarget) return;
     try {
       setIsSubmitting(true);
       setErrorMsg(null);
-      if (entireGroup && loadedBooking.bookingGroupId) {
-        await BookingService.cancelEntireReservation(loadedBooking.bookingGroupId);
+      if (releaseConfirmTarget.type === 'entire') {
+        const targetGroup = loadedBooking.bookingGroupId || loadedBooking.id;
+        await BookingService.cancelEntireReservation(targetGroup);
       } else {
-        await BookingService.releaseRoom(loadedBooking.id);
+        const targetId = releaseConfirmTarget.roomBooking?.id || loadedBooking.id;
+        await BookingService.releaseRoom(targetId);
       }
+      setReleaseConfirmTarget(null);
+      await refreshData();
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -404,444 +523,343 @@ export default function BookingModal({
     }
   };
 
-  const handleDeleteBooking = async () => {
+  // Save Guest Info Edit
+  const handleSaveGuestEdit = async () => {
     if (!loadedBooking) return;
-    const confirmDelete = window.confirm(
-      `CRITICAL ACTION: Are you sure you want to PERMANENTLY DELETE booking for room ${loadedBooking.roomNumber} (${loadedBooking.guestName})?\nThis action cannot be undone.`
-    );
-    if (!confirmDelete) return;
-
     try {
       setIsSubmitting(true);
       setErrorMsg(null);
-      await BookingService.deleteBooking(loadedBooking.id);
+
+      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
+      await BookingService.updateBookingDetails(resId, {
+        guestName: editGuestName.trim(),
+        remarks: editRemarks.trim(),
+      });
+
+      setLoadedBooking((prev) =>
+        prev
+          ? {
+              ...prev,
+              guestName: editGuestName.trim(),
+              remarks: editRemarks.trim(),
+            }
+          : null
+      );
+
+      setIsEditingGuest(false);
+      await refreshData();
       onSuccess();
-      onClose();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error permanently deleting booking');
+      setErrorMsg(err.message || 'Failed to save guest details');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleAddExtraPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loadedBooking) return;
-    setErrorMsg(null);
-
-    const maxAllowed = loadedBooking.totalAmount - loadedBooking.advancePaid;
-    if (extraPaymentAmount <= 0) {
-      setErrorMsg('Payment amount must be greater than zero');
-      return;
-    }
-
+  // Save Total Amount Edit
+  const handleSaveTotalAmountEdit = async () => {
+    if (!loadedBooking || editTotalInput === '') return;
     try {
       setIsSubmitting(true);
-      await PaymentService.addPayment(
-        loadedBooking.id,
-        extraPaymentAmount,
-        extraPaymentMethod,
-        extraPaymentRemarks || 'Extra payment logged dynamically'
+      setErrorMsg(null);
+
+      const newTotal = Number(editTotalInput);
+      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
+
+      await updateBookingPayment(resId, newTotal, loadedBooking.advancePaid);
+
+      setLoadedBooking((prev) =>
+        prev
+          ? {
+              ...prev,
+              totalAmount: newTotal,
+              paymentStatus: prev.advancePaid >= newTotal && newTotal > 0 ? 'paid' : 'pending',
+            }
+          : null
       );
 
-      setExtraPaymentAmount(0);
-      setExtraPaymentRemarks('');
-      setShowAddPaymentForm(false);
-      
+      setIsEditingTotal(false);
+      await refreshData();
       onSuccess();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to log payment');
+      setErrorMsg(err.message || 'Failed to save total amount');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-gray-900/40 backdrop-blur-sm transition duration-200">
-      <div 
-        className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden border border-gray-100 flex flex-col max-h-[94vh]"
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-3 bg-gray-950/60 backdrop-blur-xs transition duration-150">
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-150 flex flex-col max-h-[92vh]"
         id="booking_detail_modal"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-5 border-b border-gray-100 bg-gray-50/50 shrink-0">
-          <div>
-            <h3 className="text-base sm:text-lg font-bold text-gray-900">
-              {isEditing ? `Room Reservation - Room ${loadedBooking?.roomNumber}` : 'New Booking'}
-            </h3>
-            {isEditing && (
-              <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 sm:mt-1 uppercase font-mono tracking-wider">
-                Booking ID: #{loadedBooking?.id}
-              </p>
-            )}
-          </div>
+        {/* Modal Top Control Bar */}
+        <div className="flex items-center justify-between px-3.5 sm:px-4 py-2.5 border-b border-gray-100 bg-gray-50/80 shrink-0">
+          <h3 className="text-xs sm:text-sm font-extrabold text-gray-900 uppercase tracking-wide">
+            {isEditing ? 'Booking Details' : 'New Room Booking'}
+          </h3>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-100 transition text-gray-400 hover:text-gray-600 min-h-[40px] min-w-[40px] flex items-center justify-center"
+            className="p-1 rounded-lg border border-gray-200 hover:bg-gray-100 transition text-gray-500 hover:text-gray-800 cursor-pointer"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-3.5 sm:p-6 overflow-y-auto flex-1 text-sm text-gray-700 space-y-3 sm:space-y-6">
+        {/* Scrollable Container */}
+        <div className="p-3 sm:p-4 overflow-y-auto flex-1 space-y-3 text-xs text-gray-800">
           {errorMsg && (
-            <div className="p-3.5 bg-red-50 text-red-600 text-xs rounded-xl border border-red-100 flex items-center gap-2">
+            <div className="p-2.5 bg-red-50 text-red-600 text-xs font-semibold rounded-xl border border-red-100 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-red-500 shrink-0"></span>
               {errorMsg}
             </div>
           )}
 
           {isEditing && loadedBooking ? (
-            /* VIEW/EDIT DETAIL MODE */
-            <div className="space-y-6">
-              {/* Status Header Badge */}
-              <div className="flex flex-wrap items-center justify-between gap-4 p-4 border border-gray-100 bg-gray-50/50 rounded-2xl">
-                <div className="flex items-center gap-3">
-                  <div className="px-4 py-2 bg-white border border-gray-100 rounded-xl">
-                    <span className="text-gray-500 text-xs font-semibold uppercase tracking-wide block">Room</span>
-                    <span className="text-lg font-extrabold text-indigo-700">{loadedBooking.roomNumber}</span>
+            /* VIEW / EDIT SINGLE COMPACT SCREEN */
+            <div className="space-y-3">
+              {/* 1. HEADER (Rooms, Dates, Status) */}
+              <div className="bg-indigo-950 text-white p-3 rounded-xl flex items-center justify-between shadow-xs">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+                    Rooms: <span className="text-white font-extrabold">{allocatedRoomsList.map((r) => r.roomNumber).join(', ')}</span>
                   </div>
-                  <div>
-                    <span className="text-gray-500 text-xs font-semibold uppercase tracking-wide block">Current Booking Status</span>
-                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg mt-1 ${
-                      loadedBooking.status === 'booked'
-                        ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                        : loadedBooking.status === 'checked-in'
-                        ? 'bg-red-50 text-red-700 border border-red-200'
-                        : loadedBooking.status === 'cancelled'
-                        ? 'bg-red-55 border border-red-200 text-red-650 font-bold'
-                        : 'bg-gray-50 text-gray-650 border border-gray-200'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        loadedBooking.status === 'booked'
-                          ? 'bg-blue-500'
-                          : loadedBooking.status === 'checked-in'
-                          ? 'bg-red-500'
-                          : loadedBooking.status === 'cancelled'
-                          ? 'bg-red-600'
-                          : 'bg-gray-500'
-                      }`}></span>
-                      {loadedBooking.status === 'booked' ? 'CONFIRMED' : loadedBooking.status.toUpperCase()}
+                  <div className="text-xs font-black flex items-center gap-1.5 mt-0.5 text-indigo-100">
+                    <span>{formatDateHuman(loadedBooking.checkInDate)}</span>
+                    <span className="text-indigo-400 font-mono">→</span>
+                    <span>{formatDateHuman(loadedBooking.checkOutDate)}</span>
+                  </div>
+                </div>
+                <span className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg shadow-xs ${
+                  loadedBooking.status === 'booked'
+                    ? 'bg-blue-500 text-white'
+                    : loadedBooking.status === 'checked-in'
+                    ? 'bg-emerald-500 text-white'
+                    : loadedBooking.status === 'checked-out'
+                    ? 'bg-gray-600 text-white'
+                    : 'bg-rose-600 text-white'
+                }`}>
+                  {loadedBooking.status === 'booked' ? 'CONFIRMED' : loadedBooking.status.toUpperCase()}
+                </span>
+              </div>
+
+              {/* 2. GUEST INFORMATION */}
+              <div className="p-3 bg-gray-50/80 border border-gray-150 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Guest Information</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditGuestName(loadedBooking.guestName || '');
+                      setEditRemarks(loadedBooking.remarks || '');
+                      setIsEditingGuest(true);
+                    }}
+                    className="p-1 rounded-lg text-indigo-600 hover:bg-indigo-50 transition cursor-pointer flex items-center gap-1 text-[11px] font-bold"
+                    title="Edit Guest Info"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>Edit</span>
+                  </button>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-gray-100">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Guest Name</span>
+                  <span className="font-extrabold text-sm text-gray-900">{loadedBooking.guestName || 'GUEST'}</span>
+                </div>
+                <div className="border-t border-gray-100 pt-1.5">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Remarks</span>
+                  <p className="font-medium text-gray-700 italic text-xs mt-0.5">
+                    {loadedBooking.remarks ? `"${loadedBooking.remarks}"` : 'No special remarks recorded.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* 3. PAYMENT SUMMARY */}
+              <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2.5">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Payment Summary</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {balanceRemaining > 0 && (
+                      <button
+                        type="button"
+                        onClick={handlePaidFull}
+                        disabled={isSubmitting}
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1"
+                      >
+                        <Check className="w-3 h-3" />
+                        <span>Paid Full</span>
+                      </button>
+                    )}
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${balanceRemaining > 0 ? 'bg-red-50 text-red-700 font-extrabold' : 'bg-emerald-50 text-emerald-700 font-extrabold'}`}>
+                      {balanceRemaining > 0 ? `Balance: ₹${balanceRemaining.toLocaleString()}` : 'Fully Paid'}
                     </span>
                   </div>
                 </div>
+
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 relative">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-bold uppercase text-gray-400">Total</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditTotalInput(loadedBooking.totalAmount);
+                          setIsEditingTotal(true);
+                        }}
+                        className="p-0.5 text-indigo-600 hover:bg-indigo-100 rounded transition cursor-pointer"
+                        title="Edit Total Amount"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div className="text-xs font-black text-gray-900 mt-0.5">₹{loadedBooking.totalAmount.toLocaleString()}</div>
+                  </div>
+
+                  <div className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-100">
+                    <div className="text-[9px] font-bold uppercase text-emerald-600">Advance Paid</div>
+                    <div className="text-xs font-black text-emerald-700 mt-0.5">₹{loadedBooking.advancePaid.toLocaleString()}</div>
+                  </div>
+
+                  <div className={`p-2 rounded-lg border ${balanceRemaining > 0 ? 'bg-rose-50/60 border-rose-100' : 'bg-gray-50 border-gray-100'}`}>
+                    <div className="text-[9px] font-bold uppercase text-rose-500">Balance</div>
+                    <div className="text-xs font-black text-rose-700 mt-0.5">₹{balanceRemaining.toLocaleString()}</div>
+                  </div>
+                </div>
+
+                {/* Quick Additional Advance Box */}
+                {loadedBooking.status !== 'checked-out' && (
+                  <div className="bg-indigo-50/60 border border-indigo-100 p-2 rounded-lg space-y-1.5">
+                    <div className="text-[10px] font-extrabold uppercase text-indigo-800 flex items-center justify-between">
+                      <span>Add Additional Advance</span>
+                      <span className="text-[9px] text-gray-400 font-normal lowercase">(increases advance paid)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Amount (₹)"
+                        value={quickAdvanceInput}
+                        onChange={(e) => setQuickAdvanceInput(e.target.value === '' ? '' : Number(e.target.value))}
+                        className="w-24 bg-white border border-gray-200 rounded-lg p-1.5 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[36px]"
+                      />
+                      <select
+                        value={quickAdvanceMethod}
+                        onChange={(e) => setQuickAdvanceMethod(e.target.value as any)}
+                        className="bg-white border border-gray-200 rounded-lg p-1.5 text-xs font-semibold text-gray-700 focus:ring-1 focus:ring-indigo-500 min-h-[36px] cursor-pointer"
+                      >
+                        <option value="cash">Cash</option>
+                        <option value="card">Card</option>
+                        <option value="upi">UPI</option>
+                        <option value="net_banking">Net Banking</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleQuickAddAdvance}
+                        disabled={!quickAdvanceInput || Number(quickAdvanceInput) <= 0 || isSubmitting}
+                        className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-2xs transition disabled:opacity-40 min-h-[36px] cursor-pointer"
+                      >
+                        Add Advance
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Booking Actions Section */}
-              <div className="p-5 border border-gray-150 rounded-2xl bg-white space-y-3.5 shadow-xs" id="booking_actions_section">
-                <h4 className="font-extrabold text-xs text-gray-400 font-mono uppercase tracking-wider">
-                  Booking Actions
-                </h4>
+              {/* 4. ROOMS SECTION (Allocated Rooms) */}
+              <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Allocated Rooms ({allocatedRoomsList.length})</span>
+                </div>
+                <div className="space-y-1.5">
+                  {allocatedRoomsList.map((roomBooking) => (
+                    <div key={roomBooking.id} className="p-2 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between gap-2">
+                      <div>
+                        <span className="font-extrabold text-xs text-indigo-950">Room {roomBooking.roomNumber}</span>
+                        <span className="text-[10px] text-gray-500 block font-medium">{getRoomConfig(roomBooking.roomNumber)}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoomToReplace(roomBooking);
+                            setSelectedNewRoomForReplace('');
+                          }}
+                          className="px-2 py-1 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold text-[11px] rounded-lg transition cursor-pointer flex items-center gap-1"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Replace Room</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReleaseConfirmTarget({ type: 'single', roomBooking })}
+                          className="px-2 py-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-[11px] rounded-lg transition cursor-pointer"
+                        >
+                          Remove Room
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-                <div className="flex flex-wrap gap-2.5">
+              {/* 5. ACTIONS */}
+              <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">Actions</span>
+                <div className="flex flex-wrap gap-1.5">
                   {loadedBooking.status === 'booked' && (
                     <button
                       type="button"
-                      onClick={() => handleCheckInGuest()}
+                      onClick={handleCheckInGuest}
                       disabled={isSubmitting}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
-                      id="btn_checkin_guest"
+                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer"
                     >
-                      <Check className="w-4 h-4" />
-                      Check-In Guest
+                      Check In
                     </button>
                   )}
-
                   {loadedBooking.status === 'checked-in' && (
                     <button
                       type="button"
-                      onClick={() => handleReleaseRoom(false)}
+                      onClick={handleCheckoutGuest}
                       disabled={isSubmitting}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-black text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
-                      id="btn_checkout_guest"
+                      className="px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer"
                     >
-                      <Receipt className="w-4 h-4" />
                       Checkout & Close Room
                     </button>
                   )}
-
-                  {/* Release Options */}
-                  {(loadedBooking.status === 'booked' || loadedBooking.status === 'checked-in') && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleReleaseRoom(false)}
-                        disabled={isSubmitting}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-red-200 text-red-650 hover:bg-red-50 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
-                        id="btn_release_this_room"
-                      >
-                        <X className="w-4 h-4" />
-                        Release This Room
-                      </button>
-
-                      {groupBookingsSameGroup.length > 1 && loadedBooking.bookingGroupId && (
-                        <button
-                          type="button"
-                          onClick={() => handleReleaseRoom(true)}
-                          disabled={isSubmitting}
-                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-red-50 border border-red-250 text-red-700 hover:bg-red-100 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
-                          id="btn_release_all_rooms"
-                        >
-                          <X className="w-4 h-4" />
-                          Release All Rooms
-                        </button>
-                      )}
-                    </>
-                  )}
-
-                  {loadedBooking.status === 'checked-out' && (
-                    <p className="text-xs text-gray-500 font-medium italic">
-                      This guest has successfully checked out. No further actions are available.
-                    </p>
-                  )}
-
-                  {loadedBooking.status === 'cancelled' && (
-                    <p className="text-xs text-rose-600 font-bold italic">
-                      This booking has been cancelled and the room has been released.
-                    </p>
-                  )}
-
-                  {isAdminMode && (
+                  <button
+                    type="button"
+                    onClick={() => setReleaseConfirmTarget({ type: 'single', roomBooking: loadedBooking })}
+                    disabled={isSubmitting}
+                    className="px-3 py-1.5 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-xs rounded-lg transition cursor-pointer"
+                  >
+                    Release This Room
+                  </button>
+                  {allocatedRoomsList.length > 1 && (
                     <button
                       type="button"
-                      onClick={handleDeleteBooking}
+                      onClick={() => setReleaseConfirmTarget({ type: 'entire' })}
                       disabled={isSubmitting}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer md:ml-auto disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none"
-                      title="Permanently remove from database (Admin Only)"
-                      id="btn_delete_permanently"
+                      className="px-3 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-bold text-xs rounded-lg transition cursor-pointer"
                     >
-                      Delete Permanently
+                      Release Entire Booking
                     </button>
                   )}
                 </div>
-              </div>
-
-              {/* Guest & Stay Details Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* Guest Details Cards */}
-                <div className="p-4 border border-gray-100 rounded-2xl flex flex-col gap-3">
-                  <h4 className="font-semibold text-gray-900 border-b border-gray-50 pb-2 flex items-center gap-2">
-                    <User className="w-4 h-4 text-gray-400" />
-                    Booking Details
-                  </h4>
-                  <div className="space-y-2">
-                    <div>
-                      <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">Booking Name</span>
-                      <span className="text-sm font-semibold text-gray-800">{loadedBooking.guestName}</span>
-                    </div>
-                    {loadedBooking.guestPhone && (
-                      <div>
-                        <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">Mobile Number</span>
-                        <span className="text-sm font-semibold text-gray-800">{loadedBooking.guestPhone}</span>
-                      </div>
-                    )}
-                    {loadedBooking.remarks && (
-                      <div>
-                        <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">Remarks</span>
-                        <p className="text-xs text-gray-500 italic mt-0.5">"{loadedBooking.remarks}"</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Stay details */}
-                <div className="p-4 border border-gray-100 rounded-2xl flex flex-col gap-3">
-                  <h4 className="font-semibold text-gray-900 border-b border-gray-50 pb-2 flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-gray-400" />
-                    Stay Dimensions
-                  </h4>
-                  <div className="space-y-4">
-                    <div className="flex gap-4">
-                      <div>
-                        <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">Check-In</span>
-                        <span className="text-sm font-semibold text-gray-800">{loadedBooking.checkInDate}</span>
-                      </div>
-                      <div>
-                        <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">Check-Out</span>
-                        <span className="text-sm font-semibold text-gray-800">{loadedBooking.checkOutDate}</span>
-                      </div>
-                    </div>
-
-                    <div className="border-t border-gray-50 pt-2 shrink-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-semibold tracking-wide text-gray-500 uppercase">Financial State Ledger</span>
-                        {loadedBooking.status !== 'cancelled' && (
-                          <button
-                            type="button"
-                            onClick={handleOpenEditPayment}
-                            className="px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100 text-[11px] font-bold rounded-lg transition cursor-pointer flex items-center gap-1"
-                            id="btn_edit_payment"
-                          >
-                            <Edit2 className="w-3 h-3" />
-                            Edit Payment
-                          </button>
-                        )}
-                      </div>
-
-                      {isEditingPayment ? (
-                        <form onSubmit={handleSavePaymentEdit} className="mt-2 p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-600 block mb-1">Total Amount (₹)</label>
-                              <input
-                                type="number"
-                                required
-                                min="0"
-                                value={editTotalAmount}
-                                onChange={(e) => setEditTotalAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                                id="input_edit_total_amount"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-600 block mb-1">Advance Paid (₹)</label>
-                              <input
-                                type="number"
-                                required
-                                min="0"
-                                value={editAdvancePaid}
-                                onChange={(e) => setEditAdvancePaid(e.target.value === '' ? '' : Number(e.target.value))}
-                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                                id="input_edit_advance_paid"
-                              />
-                            </div>
-                          </div>
-
-                          {paymentEditError && (
-                            <p className="text-2xs font-bold text-rose-600 italic">{paymentEditError}</p>
-                          )}
-
-                          <div className="flex items-center justify-end gap-2 pt-1">
-                            <button
-                              type="button"
-                              onClick={() => setIsEditingPayment(false)}
-                              className="px-3 py-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="submit"
-                              disabled={isSubmitting}
-                              className="px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-sm cursor-pointer disabled:opacity-50"
-                              id="btn_save_edit_payment"
-                            >
-                              Save Changes
-                            </button>
-                          </div>
-                        </form>
-                      ) : (
-                        <div className="grid grid-cols-3 gap-2 text-center mt-2">
-                          <div className="p-2 bg-gray-50 rounded-xl">
-                            <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Total</span>
-                            <span className="text-xs font-extrabold text-gray-800">₹{loadedBooking.totalAmount.toLocaleString()}</span>
-                          </div>
-                          <div className="p-2 bg-green-50/50 rounded-xl">
-                            <span className="text-[10px] text-green-700 font-semibold uppercase tracking-wider block">Paid</span>
-                            <span className="text-xs font-extrabold text-green-700">₹{loadedBooking.advancePaid.toLocaleString()}</span>
-                          </div>
-                          <div className={`p-2 rounded-xl ${loadedBooking.totalAmount - loadedBooking.advancePaid > 0 ? 'bg-red-50/50' : 'bg-gray-50'}`}>
-                            <span className="text-[10px] text-red-700 font-semibold uppercase tracking-wider block">Balance</span>
-                            <span className="text-xs font-extrabold text-red-700">₹{(loadedBooking.totalAmount - loadedBooking.advancePaid).toLocaleString()}</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Payments log & entry */}
-              <div className="p-4 border border-gray-100 rounded-2xl space-y-4">
-                <div className="flex items-center justify-between border-b border-gray-55 pb-2">
-                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
-                    <Receipt className="w-4 h-4 text-gray-400" />
-                    Payment Ledger Receipts ({payments.length})
-                  </h4>
-                  {loadedBooking.status !== 'checked-out' && (loadedBooking.totalAmount - loadedBooking.advancePaid > 0) && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAddPaymentForm(!showAddPaymentForm)}
-                      className="px-3 py-1 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg transition"
-                    >
-                      {showAddPaymentForm ? 'Cancel Payment Form' : 'Log Extra Payment'}
-                    </button>
-                  )}
-                </div>
-
-                {/* Additional Payment Form */}
-                {showAddPaymentForm && (
-                  <form onSubmit={handleAddExtraPayment} className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">Payment Amount (₹)</label>
-                        <input
-                          type="number"
-                          required
-                          value={extraPaymentAmount || ''}
-                          onChange={(e) => setExtraPaymentAmount(Number(e.target.value))}
-                          placeholder="Amount in Rupees"
-                          className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-semibold tracking-wide text-gray-500 uppercase block mb-1">Method</label>
-                        <select
-                          value={extraPaymentMethod}
-                          onChange={(e) => setExtraPaymentMethod(e.target.value as any)}
-                          className="w-full rounded-lg border border-gray-200 bg-white p-2.5 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none cursor-pointer"
-                        >
-                          <option value="cash">Cash</option>
-                          <option value="card">Credit/Debit Card</option>
-                          <option value="upi">UPI/QR Code</option>
-                          <option value="net_banking">Net Banking</option>
-                        </select>
-                      </div>
-                      <div className="flex items-end">
-                        <button
-                          type="submit"
-                          disabled={isSubmitting}
-                          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition disabled:bg-gray-100 disabled:text-gray-500 disabled:border disabled:border-gray-300 disabled:opacity-100 disabled:cursor-not-allowed disabled:shadow-none cursor-pointer"
-                        >
-                          Add Receipt
-                        </button>
-                      </div>
-                    </div>
-                  </form>
-                )}
-
-                {/* Payments Table */}
-                {payments.length === 0 ? (
-                  <p className="text-2xs text-gray-400 font-medium italic text-center py-2">No individual receipts have been loaded for this card yet.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-center border divide-y divide-gray-100 rounded-lg text-2xs overflow-hidden font-mono text-gray-600">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="py-2.5 px-3">Date</th>
-                          <th className="py-2.5 px-3">Method</th>
-                          <th className="py-2.5 px-3">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100 bg-white font-medium">
-                        {payments.map((p) => (
-                          <tr key={p.id}>
-                            <td className="py-2 px-3 text-gray-400">{new Date(p.paymentDate).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}</td>
-                            <td className="py-2 px-3 uppercase text-indigo-700">{p.paymentMethod.replace('_', ' ')}</td>
-                            <td className="py-2 px-3 text-gray-900 font-bold">₹{p.amount.toLocaleString()}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </div>
             </div>
           ) : (
-            <form id="new_booking_form" onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
+            /* NEW BOOKING FORM MODE */
+            <form id="new_booking_form" onSubmit={handleSubmitNewBooking} className="space-y-3">
               {/* Row 1: Stay Dates */}
-              <div className="space-y-1.5 sm:space-y-2 pb-2.5 sm:pb-3 border-b border-gray-100 relative">
+              <div className="space-y-1.5 pb-2.5 border-b border-gray-100 relative">
                 <div className="flex justify-between items-center">
-                  <label className="text-[11px] sm:text-xs font-bold tracking-wide text-gray-500 uppercase block">1. Stay Dates</label>
+                  <label className="text-[10px] font-bold tracking-wide text-gray-500 uppercase block">1. Stay Dates</label>
                   <button
                     type="button"
                     onClick={() => setShowDatePicker(!showDatePicker)}
@@ -852,9 +870,9 @@ export default function BookingModal({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-[10px] sm:text-[11px] font-semibold text-gray-400 block mb-0.5 sm:mb-1">Check-In Date</label>
+                    <label className="text-[10px] font-semibold text-gray-400 block mb-0.5">Check-In Date</label>
                     <input
                       type="date"
                       required
@@ -868,26 +886,26 @@ export default function BookingModal({
                           setCheckOutDate(toYYYYMMDD(nextDay));
                         }
                       }}
-                      className="w-full rounded-xl border border-gray-200 bg-white p-2 sm:p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs min-h-[44px]"
+                      className="w-full rounded-xl border border-gray-200 bg-white p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[40px]"
                     />
                     {checkInDate && (
-                      <span className="text-[10px] sm:text-[11px] text-indigo-600 font-extrabold block mt-0.5">
+                      <span className="text-[10px] text-indigo-600 font-extrabold block mt-0.5">
                         {formatDateHuman(checkInDate)}
                       </span>
                     )}
                   </div>
                   <div>
-                    <label className="text-[10px] sm:text-[11px] font-semibold text-gray-400 block mb-0.5 sm:mb-1">Check-Out Date</label>
+                    <label className="text-[10px] font-semibold text-gray-400 block mb-0.5">Check-Out Date</label>
                     <input
                       type="date"
                       required
                       value={checkOutDate}
                       min={checkInDate}
                       onChange={(e) => setCheckOutDate(e.target.value)}
-                      className="w-full rounded-xl border border-gray-200 bg-white p-2 sm:p-2.5 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs min-h-[44px]"
+                      className="w-full rounded-xl border border-gray-200 bg-white p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[40px]"
                     />
                     {checkOutDate && (
-                      <span className="text-[10px] sm:text-[11px] text-indigo-600 font-extrabold block mt-0.5">
+                      <span className="text-[10px] text-indigo-600 font-extrabold block mt-0.5">
                         {formatDateHuman(checkOutDate)}
                       </span>
                     )}
@@ -895,33 +913,31 @@ export default function BookingModal({
                 </div>
 
                 {showDatePicker && (
-                  <div className="fixed sm:absolute inset-x-3 sm:inset-x-0 top-16 sm:top-full mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl p-3 sm:p-4 z-50 animate-fade-in max-w-[340px] mx-auto" id="stay_dates_calendar_popover">
+                  <div className="fixed sm:absolute inset-x-3 sm:inset-x-0 top-16 sm:top-full mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl p-3 z-50 animate-fade-in max-w-[320px] mx-auto">
                     <div className="flex justify-between items-center pb-2 mb-2 border-b border-gray-100 select-none">
                       <span className="text-xs font-bold tracking-wide text-gray-700 uppercase block">Select Stay Range</span>
                       <button
                         type="button"
                         onClick={() => setShowDatePicker(false)}
-                        className="text-[12px] font-black text-gray-400 hover:text-gray-700 cursor-pointer h-6 w-6 flex items-center justify-center p-0 rounded-full hover:bg-gray-100 transition-colors"
-                        title="Close"
+                        className="text-xs font-black text-gray-400 hover:text-gray-700 cursor-pointer h-6 w-6 flex items-center justify-center p-0 rounded-full hover:bg-gray-100"
                       >
-                        ✕
+                        <X className="w-4 h-4" />
                       </button>
                     </div>
 
-                    {/* Month Picker Navigation */}
                     <div className="flex items-center justify-between mb-2 select-none gap-1">
                       <button
                         type="button"
                         onClick={handlePrevMonth}
-                        className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-650 font-black cursor-pointer text-xs min-h-[36px] min-w-[36px] flex items-center justify-center"
+                        className="p-1 rounded-lg hover:bg-gray-100 text-gray-650 font-black cursor-pointer text-xs min-h-[32px] min-w-[32px] flex items-center justify-center"
                       >
-                        ‹
+                        <ChevronLeft className="w-4 h-4" />
                       </button>
                       <div className="flex items-center gap-1">
                         <select
                           value={currentMonth}
                           onChange={(e) => setCurrentMonth(parseInt(e.target.value, 10))}
-                          className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                          className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold text-gray-700 cursor-pointer"
                         >
                           {monthsList.map((m, idx) => (
                             <option key={m} value={idx}>{m.substring(0, 3)}</option>
@@ -930,7 +946,7 @@ export default function BookingModal({
                         <select
                           value={currentYear}
                           onChange={(e) => setCurrentYear(parseInt(e.target.value, 10))}
-                          className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                          className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold text-gray-700 cursor-pointer"
                         >
                           {[2025, 2026, 2027, 2028, 2029, 2030].map(y => (
                             <option key={y} value={y}>{y}</option>
@@ -940,13 +956,12 @@ export default function BookingModal({
                       <button
                         type="button"
                         onClick={handleNextMonth}
-                        className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-650 font-black cursor-pointer text-xs min-h-[36px] min-w-[36px] flex items-center justify-center"
+                        className="p-1 rounded-lg hover:bg-gray-100 text-gray-650 font-black cursor-pointer text-xs min-h-[32px] min-w-[32px] flex items-center justify-center"
                       >
-                        ›
+                        <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
 
-                    {/* Weekday headers */}
                     <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-extrabold text-gray-400 uppercase font-mono mb-1 select-none">
                       <div>Su</div>
                       <div>Mo</div>
@@ -957,7 +972,6 @@ export default function BookingModal({
                       <div>Sa</div>
                     </div>
 
-                    {/* Day cells grid */}
                     <div className="grid grid-cols-7 gap-1">
                       {(() => {
                         const daysInMonthVal = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -976,7 +990,7 @@ export default function BookingModal({
                           const isCheckIn = dateStr === checkInDate;
                           const isCheckOut = dateStr === checkOutDate;
                           const isToday = dateStr === todayStr;
-                          
+
                           let isInRange = false;
                           if (checkInDate && checkOutDate) {
                             isInRange = dateStr > checkInDate && dateStr < checkOutDate;
@@ -990,7 +1004,7 @@ export default function BookingModal({
                           } else if (isInRange) {
                             cellStyle = "bg-indigo-50 text-indigo-900 font-bold rounded-none border-y border-indigo-100";
                           } else if (isToday) {
-                            cellStyle = "bg-gray-100 border border-gray-300 text-gray-900 font-extrabold rounded-full shadow-3xs";
+                            cellStyle = "bg-gray-100 border border-gray-300 text-gray-900 font-extrabold rounded-full";
                           }
 
                           cells.push(
@@ -1000,7 +1014,7 @@ export default function BookingModal({
                               onClick={() => handleDaySelect(dateObj)}
                               onMouseEnter={() => handleDayHover(dateObj)}
                               onMouseLeave={() => handleDayHover(null)}
-                              className={`aspect-square min-h-[36px] text-xs font-semibold flex items-center justify-center transition-all duration-100 cursor-pointer ${cellStyle}`}
+                              className={`aspect-square min-h-[32px] text-xs font-semibold flex items-center justify-center transition-all duration-100 cursor-pointer ${cellStyle}`}
                             >
                               {day}
                             </button>
@@ -1014,20 +1028,20 @@ export default function BookingModal({
               </div>
 
               {/* Row 2: Selected Rooms */}
-              <div className="space-y-1.5 sm:space-y-2 pb-2.5 sm:pb-3 border-b border-gray-100">
+              <div className="space-y-1.5 pb-2.5 border-b border-gray-100">
                 <div className="flex justify-between items-center">
-                  <span className="text-[11px] sm:text-xs font-bold tracking-wide text-gray-500 uppercase block">2. Room Selection</span>
-                  <div className="text-[10px] sm:text-xs font-bold tracking-wide text-gray-500 uppercase block">
+                  <span className="text-[10px] font-bold tracking-wide text-gray-500 uppercase block">2. Room Selection</span>
+                  <div className="text-[10px] font-bold tracking-wide text-gray-500 uppercase block">
                     Selected: <span className="text-indigo-650 font-black">{selectedRoomNumbers.length === 0 ? 'None' : selectedRoomNumbers.join(', ')}</span>
                   </div>
                 </div>
 
                 {!checkInDate || !checkOutDate ? (
-                  <div className="text-center py-3 sm:py-4 bg-slate-50 border border-dashed border-gray-200 rounded-xl">
+                  <div className="text-center py-3 bg-slate-50 border border-dashed border-gray-200 rounded-xl">
                     <p className="text-xs font-bold text-gray-500">Please select check-in and check-out dates above</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5 sm:gap-2" id="available_rooms_grid">
+                  <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5" id="available_rooms_grid">
                     {roomsList.map((room) => {
                       const num = room.number;
                       const isSelected = selectedRoomNumbers.includes(num);
@@ -1045,9 +1059,9 @@ export default function BookingModal({
                               setSelectedRoomNumbers([...selectedRoomNumbers, num]);
                             }
                           }}
-                          className={`min-h-[44px] p-2 sm:p-2.5 rounded-xl border font-bold text-xs text-center transition-all duration-150 cursor-pointer flex items-center justify-center active:scale-95 select-none ${
+                          className={`min-h-[40px] p-2 rounded-xl border font-bold text-xs text-center transition-all duration-150 cursor-pointer flex items-center justify-center active:scale-95 select-none ${
                             isSelected
-                              ? 'bg-indigo-600 border-indigo-700 text-white shadow-xs font-extrabold ring-2 ring-indigo-400'
+                              ? 'bg-indigo-600 border-indigo-700 text-white shadow-2xs font-extrabold ring-2 ring-indigo-400'
                               : isAvailable
                               ? 'bg-white hover:bg-gray-100 border-gray-200 text-gray-800'
                               : 'bg-gray-100 border-gray-200 text-gray-400 line-through cursor-not-allowed opacity-50'
@@ -1062,9 +1076,9 @@ export default function BookingModal({
                 )}
               </div>
 
-              {/* Row 3: Booking Name (Searchable Combobox) */}
+              {/* Row 3: Guest Name */}
               <div className="relative">
-                <label className="text-[11px] sm:text-xs font-bold tracking-wide text-gray-500 uppercase block mb-1">
+                <label className="text-[10px] font-bold tracking-wide text-gray-500 uppercase block mb-1">
                   3. Guest Name <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
@@ -1079,12 +1093,12 @@ export default function BookingModal({
                       setIsNameDropdownOpen(true);
                     }}
                     placeholder="Search or enter guest name (e.g. Ansari, Irshad)"
-                    className="w-full rounded-xl border border-gray-200 bg-white p-2.5 sm:p-3 pr-9 text-xs sm:text-sm font-semibold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs min-h-[44px]"
+                    className="w-full rounded-xl border border-gray-200 bg-white p-2.5 pr-9 text-xs font-semibold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[42px]"
                   />
                   <button
                     type="button"
                     onClick={() => setIsNameDropdownOpen(!isNameDropdownOpen)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
                   >
                     <ChevronDown className={`w-4 h-4 transition-transform duration-150 ${isNameDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
@@ -1092,11 +1106,11 @@ export default function BookingModal({
 
                 {isNameDropdownOpen && (
                   <>
-                    <div 
-                      className="fixed inset-0 z-20" 
-                      onClick={() => setIsNameDropdownOpen(false)} 
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setIsNameDropdownOpen(false)}
                     />
-                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-30 max-h-48 overflow-y-auto py-1 animate-fade-in">
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-30 max-h-40 overflow-y-auto py-1">
                       {savedGuestNames
                         .filter(name => name.toLowerCase().includes(guestName.toLowerCase()))
                         .map((name) => (
@@ -1107,26 +1121,21 @@ export default function BookingModal({
                               setGuestName(name);
                               setIsNameDropdownOpen(false);
                             }}
-                            className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-gray-800 hover:bg-indigo-50 hover:text-indigo-700 transition cursor-pointer flex items-center justify-between min-h-[40px]"
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-gray-800 hover:bg-indigo-50 hover:text-indigo-700 transition cursor-pointer flex items-center justify-between"
                           >
                             <span>{name}</span>
                             {guestName === name && <Check className="w-4 h-4 text-indigo-600" />}
                           </button>
                         ))}
-                      {guestName.trim() && !savedGuestNames.some(n => n.toLowerCase() === guestName.trim().toLowerCase()) && (
-                        <div className="px-3.5 py-2 text-xs font-medium text-indigo-600 bg-indigo-50/50 border-t border-gray-100 flex items-center justify-between">
-                          <span>Create new entry: <strong>"{guestName.trim()}"</strong></span>
-                        </div>
-                      )}
                     </div>
                   </>
                 )}
               </div>
 
               {/* Row 4: Financial Inputs */}
-              <div className="grid grid-cols-2 gap-2 sm:gap-3">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] sm:text-xs font-bold tracking-wide text-gray-500 uppercase block mb-0.5 sm:mb-1">
+                  <label className="text-[10px] font-bold tracking-wide text-gray-500 uppercase block mb-0.5">
                     Total Amount (₹)
                   </label>
                   <input
@@ -1135,11 +1144,11 @@ export default function BookingModal({
                     value={totalAmount === '' ? '' : totalAmount}
                     onChange={(e) => setTotalAmount(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="0"
-                    className="w-full rounded-xl border border-gray-200 bg-white p-2.5 sm:p-3 text-xs sm:text-sm font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs min-h-[44px]"
+                    className="w-full rounded-xl border border-gray-200 bg-white p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[42px]"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] sm:text-xs font-bold tracking-wide text-gray-500 uppercase block mb-0.5 sm:mb-1">
+                  <label className="text-[10px] font-bold tracking-wide text-gray-500 uppercase block mb-0.5">
                     Advance Paid (₹)
                   </label>
                   <input
@@ -1148,14 +1157,14 @@ export default function BookingModal({
                     value={advancePaid === '' ? '' : advancePaid}
                     onChange={(e) => setAdvancePaid(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="0"
-                    className="w-full rounded-xl border border-gray-200 bg-white p-2.5 sm:p-3 text-xs sm:text-sm font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs min-h-[44px]"
+                    className="w-full rounded-xl border border-gray-200 bg-white p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[42px]"
                   />
                 </div>
               </div>
 
               {/* Row 5: Remarks */}
               <div>
-                <label className="text-[10px] sm:text-xs font-bold tracking-wide text-gray-500 uppercase block mb-0.5 sm:mb-1">
+                <label className="text-[10px] font-bold tracking-wide text-gray-500 uppercase block mb-0.5">
                   Remarks <span className="text-gray-400 font-normal lowercase">(optional)</span>
                 </label>
                 <input
@@ -1163,31 +1172,267 @@ export default function BookingModal({
                   value={remarks}
                   onChange={(e) => setRemarks(e.target.value)}
                   placeholder="e.g. Early check-in requested, extra bed"
-                  className="w-full rounded-xl border border-gray-200 bg-white p-2.5 sm:p-3 text-xs sm:text-sm font-medium text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-xs"
+                  className="w-full rounded-xl border border-gray-200 bg-white p-2 text-xs font-medium text-gray-900 focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
 
-              {/* Action Buttons: Fixed/Sticky Save Booking button on Mobile */}
-              <div className="flex gap-2.5 justify-end border-t border-gray-100 pt-3 sm:pt-4 mt-3 sm:mt-4 sticky bottom-0 bg-white z-20 pb-1 sm:pb-0 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] sm:shadow-none">
+              {/* Save New Booking Button */}
+              <div className="flex gap-2 justify-end border-t border-gray-100 pt-3 mt-3">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="flex-1 sm:flex-none px-4 sm:px-5 py-3 sm:py-2.5 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer min-h-[48px] sm:min-h-[44px] flex items-center justify-center"
+                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer min-h-[44px]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="flex-1 sm:flex-none px-6 sm:px-7 py-3 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-xl shadow-md transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:border disabled:border-gray-200 disabled:cursor-not-allowed disabled:shadow-none min-h-[48px] sm:min-h-[44px] flex items-center justify-center"
+                  className="flex-1 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl shadow-md transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 min-h-[44px]"
                 >
-                  {isSubmitting ? 'Saving...' : '4. Save Booking'}
+                  {isSubmitting ? 'Saving...' : 'Save Booking'}
                 </button>
               </div>
             </form>
           )}
         </div>
       </div>
+
+      {/* MODAL FOR EDITING GUEST INFO */}
+      {isEditingGuest && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/60 backdrop-blur-2xs animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-xs w-full p-4 shadow-2xl border border-gray-200 space-y-3">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+              <h4 className="font-extrabold text-xs text-gray-900 uppercase">Edit Guest Info</h4>
+              <button
+                type="button"
+                onClick={() => setIsEditingGuest(false)}
+                className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2.5 text-xs">
+              <div>
+                <label className="text-[10px] font-bold uppercase text-gray-400 block mb-0.5">Guest Name</label>
+                <input
+                  type="text"
+                  required
+                  value={editGuestName}
+                  onChange={(e) => setEditGuestName(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase text-gray-400 block mb-0.5">Remarks</label>
+                <input
+                  type="text"
+                  value={editRemarks}
+                  onChange={(e) => setEditRemarks(e.target.value)}
+                  placeholder="Remarks..."
+                  className="w-full rounded-xl border border-gray-200 p-2 text-xs font-medium text-gray-900 focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setIsEditingGuest(false)}
+                className="px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveGuestEdit}
+                disabled={isSubmitting || !editGuestName.trim()}
+                className="px-4 py-1.5 text-xs font-extrabold bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-2xs cursor-pointer disabled:opacity-40"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL FOR EDITING TOTAL AMOUNT */}
+      {isEditingTotal && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/60 backdrop-blur-2xs animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-xs w-full p-4 shadow-2xl border border-gray-200 space-y-3">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+              <h4 className="font-extrabold text-xs text-gray-900 uppercase">Edit Total Amount</h4>
+              <button
+                type="button"
+                onClick={() => setIsEditingTotal(false)}
+                className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2 text-xs">
+              <label className="text-[10px] font-bold uppercase text-gray-400 block mb-0.5">Total Amount (₹)</label>
+              <input
+                type="number"
+                min="0"
+                required
+                value={editTotalInput}
+                onChange={(e) => setEditTotalInput(e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full rounded-xl border border-gray-200 p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500"
+              />
+              <div className="text-[10px] text-gray-500 font-medium">
+                New Balance will automatically recalculate as: ₹{Math.max(0, (Number(editTotalInput) || 0) - (loadedBooking?.advancePaid || 0)).toLocaleString()}
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setIsEditingTotal(false)}
+                className="px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveTotalAmountEdit}
+                disabled={isSubmitting || editTotalInput === ''}
+                className="px-4 py-1.5 text-xs font-extrabold bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-2xs cursor-pointer disabled:opacity-40"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION DIALOG FOR RELEASING ROOM */}
+      {releaseConfirmTarget && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/60 backdrop-blur-2xs animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-xs w-full p-4 shadow-2xl border border-gray-200 space-y-3">
+            <div className="flex items-center gap-2 border-b border-gray-100 pb-2.5">
+              <div className="p-2 bg-rose-50 text-rose-600 rounded-xl">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-extrabold text-xs text-gray-900 uppercase">
+                  {releaseConfirmTarget.type === 'entire' ? 'Release Entire Booking?' : 'Release This Room?'}
+                </h4>
+              </div>
+            </div>
+            <p className="text-xs font-medium text-gray-600 leading-relaxed">
+              {releaseConfirmTarget.type === 'entire'
+                ? 'This will cancel all allocated rooms for this booking.'
+                : 'This will remove only this room from the booking.'}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setReleaseConfirmTarget(null)}
+                className="px-3.5 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRelease}
+                disabled={isSubmitting}
+                className="px-4 py-2 text-xs font-black bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-2xs cursor-pointer disabled:opacity-40"
+              >
+                {releaseConfirmTarget.type === 'entire' ? 'Release All' : 'Release'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL FOR REPLACING A ROOM */}
+      {roomToReplace && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/60 backdrop-blur-2xs animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-4 shadow-2xl border border-gray-200 space-y-3">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+              <div className="flex items-center gap-1.5">
+                <RefreshCw className="w-4 h-4 text-indigo-600" />
+                <h4 className="font-extrabold text-xs text-gray-900 uppercase">Replace Room {roomToReplace.roomNumber}</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setRoomToReplace(null);
+                  setSelectedNewRoomForReplace('');
+                }}
+                className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="text-[10px] font-bold uppercase text-gray-400 block">
+                Select New Room to Replace Room {roomToReplace.roomNumber}
+              </div>
+
+              <div className="grid grid-cols-4 sm:grid-cols-5 gap-1.5 max-h-56 overflow-y-auto p-1.5 bg-gray-50 rounded-xl border border-gray-150">
+                {roomsList.map((room) => {
+                  const num = room.number;
+                  const isCurrent = roomToReplace.roomNumber === num;
+                  const isAvailable = roomAvailability[num] !== false && !isCurrent;
+                  const isSelected = selectedNewRoomForReplace === num;
+
+                  return (
+                    <button
+                      key={num}
+                      type="button"
+                      disabled={!isAvailable}
+                      onClick={() => setSelectedNewRoomForReplace(num)}
+                      className={`min-h-[42px] p-1.5 rounded-xl border text-xs font-extrabold text-center transition-all duration-150 cursor-pointer flex flex-col items-center justify-center select-none ${
+                        isCurrent
+                          ? 'bg-amber-100 border-amber-300 text-amber-900 cursor-not-allowed opacity-80'
+                          : isSelected
+                          ? 'bg-indigo-600 border-indigo-700 text-white shadow-2xs ring-2 ring-indigo-400 scale-98'
+                          : isAvailable
+                          ? 'bg-white hover:bg-indigo-50 border-gray-200 text-gray-800 hover:border-indigo-300'
+                          : 'bg-gray-100 border-gray-200 text-gray-400 line-through cursor-not-allowed opacity-50'
+                      }`}
+                    >
+                      <span>{num}</span>
+                      <span className="text-[8px] font-normal leading-none opacity-80 mt-0.5">
+                        {isCurrent ? 'Current' : getRoomConfig(num)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selectedNewRoomForReplace !== '' && (
+                <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-900 font-bold text-xs flex items-center justify-between">
+                  <span>Selected Room:</span>
+                  <span className="font-extrabold text-indigo-700">Room {selectedNewRoomForReplace}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setRoomToReplace(null);
+                  setSelectedNewRoomForReplace('');
+                }}
+                className="px-3.5 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReplaceRoom}
+                disabled={!selectedNewRoomForReplace || isSubmitting}
+                className="px-4 py-2 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-2xs cursor-pointer disabled:opacity-40"
+              >
+                {isSubmitting ? 'Replacing...' : 'Confirm Replace'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
