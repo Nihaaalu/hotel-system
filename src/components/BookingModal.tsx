@@ -21,6 +21,27 @@ import {
   CreditCard,
 } from 'lucide-react';
 
+interface ReplaceStep {
+  roomBookingId: string;
+  guestName: string;
+  fromRoomNumber: number;
+  checkInDate: string;
+  checkOutDate: string;
+  bookingGroupId: string;
+}
+
+interface ChainAssignment {
+  roomBookingId: string;
+  guestName: string;
+  fromRoomNumber: number;
+  toRoomNumber: number;
+}
+
+interface ConflictPrompt {
+  targetRoomNumber: number;
+  conflictingBooking: Booking;
+}
+
 interface BookingModalProps {
   bookingId?: string | null;           // If present, we view/edit this booking
   initialRoomNumber?: number | null;   // If present, default room for new booking
@@ -84,9 +105,10 @@ export default function BookingModal({
   const [quickAdvanceInput, setQuickAdvanceInput] = useState<number | ''>('');
   const [quickAdvanceMethod, setQuickAdvanceMethod] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
 
-  // Replace Room Modal State
-  const [roomToReplace, setRoomToReplace] = useState<Booking | null>(null);
-  const [selectedNewRoomForReplace, setSelectedNewRoomForReplace] = useState<number | ''>('');
+  // Advanced Room Replacement States
+  const [activeReplaceStep, setActiveReplaceStep] = useState<ReplaceStep | null>(null);
+  const [pendingChain, setPendingChain] = useState<ChainAssignment[]>([]);
+  const [conflictPrompt, setConflictPrompt] = useState<ConflictPrompt | null>(null);
 
   // Guest Information Edit State
   const [isEditingGuest, setIsEditingGuest] = useState(false);
@@ -420,25 +442,169 @@ export default function BookingModal({
     }
   };
 
-  // Replace Room Handler
-  const handleConfirmReplaceRoom = async () => {
-    if (!roomToReplace || !selectedNewRoomForReplace) return;
+  // Calculate status for each room in the replacement dialog
+  const getRoomReplacementStatus = (roomNumber: number) => {
+    if (!activeReplaceStep) return { type: 'available', booking: null };
 
+    // 1. Current room being replaced for the active step
+    if (roomNumber === activeReplaceStep.fromRoomNumber) {
+      return { type: 'current', booking: null };
+    }
+
+    const checkIn = activeReplaceStep.checkInDate;
+    const checkOut = activeReplaceStep.checkOutDate;
+
+    let conflictingBooking: Booking | null = null;
+
+    for (const b of contextBookings) {
+      if (b.status === 'cancelled' || b.status === 'checked-out') continue;
+
+      const datesOverlap = checkIn < b.checkOutDate && checkOut > b.checkInDate;
+      if (!datesOverlap) continue;
+
+      // Determine b's effective room number accounting for pendingChain
+      const chainItem = pendingChain.find((p) => p.roomBookingId === b.id);
+      const wasDisplaced = pendingChain.some((p) => p.roomBookingId === b.id);
+
+      let effectiveRoom = b.roomNumber;
+      if (chainItem) {
+        effectiveRoom = chainItem.toRoomNumber;
+      } else if (wasDisplaced) {
+        // Displaced from old room and not given a new room yet
+        continue;
+      }
+
+      if (effectiveRoom === roomNumber) {
+        conflictingBooking = b;
+        break;
+      }
+    }
+
+    if (conflictingBooking) {
+      const sameGroup =
+        (conflictingBooking.bookingGroupId &&
+          conflictingBooking.bookingGroupId === activeReplaceStep.bookingGroupId) ||
+        conflictingBooking.id === activeReplaceStep.roomBookingId ||
+        conflictingBooking.guestName.toLowerCase().trim() ===
+          activeReplaceStep.guestName.toLowerCase().trim();
+
+      if (sameGroup) {
+        return { type: 'disabled_same_booking', booking: conflictingBooking };
+      } else {
+        return { type: 'allocated', booking: conflictingBooking };
+      }
+    }
+
+    return { type: 'available', booking: null };
+  };
+
+  // Execute all accumulated replacement steps in batch
+  const executeBatchReplacement = async (chain: ChainAssignment[]) => {
     try {
       setIsSubmitting(true);
       setErrorMsg(null);
 
-      await BookingService.replaceRoom(roomToReplace.id, Number(selectedNewRoomForReplace));
-      setRoomToReplace(null);
-      setSelectedNewRoomForReplace('');
+      for (const item of chain) {
+        await BookingService.replaceRoom(item.roomBookingId, item.toRoomNumber);
+      }
+
+      setActiveReplaceStep(null);
+      setPendingChain([]);
+      setConflictPrompt(null);
 
       await refreshData();
       onSuccess();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to replace room');
+      setErrorMsg(err.message || 'Failed to replace room(s)');
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // User selects a room in the replacement grid
+  const handleSelectRoomForReplacement = (roomNumber: number) => {
+    if (!activeReplaceStep) return;
+
+    const status = getRoomReplacementStatus(roomNumber);
+
+    if (status.type === 'current' || status.type === 'disabled_same_booking') {
+      return;
+    }
+
+    if (status.type === 'available') {
+      const finalChain = [
+        ...pendingChain,
+        {
+          roomBookingId: activeReplaceStep.roomBookingId,
+          guestName: activeReplaceStep.guestName,
+          fromRoomNumber: activeReplaceStep.fromRoomNumber,
+          toRoomNumber: roomNumber,
+        },
+      ];
+      executeBatchReplacement(finalChain);
+    } else if (status.type === 'allocated' && status.booking) {
+      setConflictPrompt({
+        targetRoomNumber: roomNumber,
+        conflictingBooking: status.booking,
+      });
+    }
+  };
+
+  // Option 1: Switch Rooms
+  const handleSwitchRooms = async () => {
+    if (!activeReplaceStep || !conflictPrompt) return;
+
+    const targetRoom = conflictPrompt.targetRoomNumber;
+    const conflicting = conflictPrompt.conflictingBooking;
+
+    const finalChain = [
+      ...pendingChain,
+      {
+        roomBookingId: activeReplaceStep.roomBookingId,
+        guestName: activeReplaceStep.guestName,
+        fromRoomNumber: activeReplaceStep.fromRoomNumber,
+        toRoomNumber: targetRoom,
+      },
+      {
+        roomBookingId: conflicting.id,
+        guestName: conflicting.guestName,
+        fromRoomNumber: targetRoom,
+        toRoomNumber: activeReplaceStep.fromRoomNumber,
+      },
+    ];
+
+    setConflictPrompt(null);
+    await executeBatchReplacement(finalChain);
+  };
+
+  // Option 2: Replace Room (Chain Replacement)
+  const handleChainReplaceRoom = () => {
+    if (!activeReplaceStep || !conflictPrompt) return;
+
+    const targetRoom = conflictPrompt.targetRoomNumber;
+    const conflicting = conflictPrompt.conflictingBooking;
+
+    const newChain = [
+      ...pendingChain,
+      {
+        roomBookingId: activeReplaceStep.roomBookingId,
+        guestName: activeReplaceStep.guestName,
+        fromRoomNumber: activeReplaceStep.fromRoomNumber,
+        toRoomNumber: targetRoom,
+      },
+    ];
+    setPendingChain(newChain);
+
+    setActiveReplaceStep({
+      roomBookingId: conflicting.id,
+      guestName: conflicting.guestName,
+      fromRoomNumber: targetRoom,
+      checkInDate: conflicting.checkInDate,
+      checkOutDate: conflicting.checkOutDate,
+      bookingGroupId: conflicting.bookingGroupId || conflicting.id,
+    });
+
+    setConflictPrompt(null);
   };
 
   // Check In Handler (Single tap, no extra confirm)
@@ -787,8 +953,16 @@ export default function BookingModal({
                         <button
                           type="button"
                           onClick={() => {
-                            setRoomToReplace(roomBooking);
-                            setSelectedNewRoomForReplace('');
+                            setActiveReplaceStep({
+                              roomBookingId: roomBooking.id,
+                              guestName: loadedBooking?.guestName || 'Guest',
+                              fromRoomNumber: roomBooking.roomNumber,
+                              checkInDate: roomBooking.checkInDate || loadedBooking?.checkInDate || '',
+                              checkOutDate: roomBooking.checkOutDate || loadedBooking?.checkOutDate || '',
+                              bookingGroupId: loadedBooking?.bookingGroupId || loadedBooking?.id || roomBooking.id,
+                            });
+                            setPendingChain([]);
+                            setConflictPrompt(null);
                           }}
                           className="px-2 py-1 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold text-[11px] rounded-lg transition cursor-pointer flex items-center gap-1"
                         >
@@ -1344,20 +1518,74 @@ export default function BookingModal({
         </div>
       )}
 
-      {/* MODAL FOR REPLACING A ROOM */}
-      {roomToReplace && (
+      {/* ACTION PROMPT DIALOG FOR CONFLICTING ALLOCATION */}
+      {conflictPrompt && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-3 bg-black/60 backdrop-blur-2xs animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-xs w-full p-4 shadow-2xl border border-gray-200 space-y-3">
+            <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
+              <div className="p-1.5 bg-amber-50 text-amber-700 rounded-lg">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <h4 className="font-extrabold text-xs text-gray-900 uppercase">Conflicting Allocation</h4>
+            </div>
+            <div className="text-xs font-medium text-gray-700 leading-relaxed">
+              Room <span className="font-extrabold text-gray-900">{conflictPrompt.targetRoomNumber}</span> is currently allocated to{' '}
+              <span className="font-extrabold text-indigo-700">{conflictPrompt.conflictingBooking.guestName}</span>.
+            </div>
+            <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Choose an action</div>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleSwitchRooms}
+                disabled={isSubmitting}
+                className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs cursor-pointer transition text-center"
+              >
+                Switch Rooms
+              </button>
+              <button
+                type="button"
+                onClick={handleChainReplaceRoom}
+                disabled={isSubmitting}
+                className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs rounded-xl shadow-2xs cursor-pointer transition text-center"
+              >
+                Replace Room
+              </button>
+            </div>
+            <div className="text-right pt-1 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setConflictPrompt(null)}
+                className="text-xs font-bold text-gray-500 hover:text-gray-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL FOR ADVANCED ROOM REPLACEMENT */}
+      {activeReplaceStep && (
         <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/60 backdrop-blur-2xs animate-fade-in">
           <div className="bg-white rounded-2xl max-w-sm w-full p-4 shadow-2xl border border-gray-200 space-y-3">
             <div className="flex items-center justify-between border-b border-gray-100 pb-2">
               <div className="flex items-center gap-1.5">
                 <RefreshCw className="w-4 h-4 text-indigo-600" />
-                <h4 className="font-extrabold text-xs text-gray-900 uppercase">Replace Room {roomToReplace.roomNumber}</h4>
+                <div>
+                  <h4 className="font-extrabold text-xs text-gray-900 uppercase">
+                    Replace Room {activeReplaceStep.fromRoomNumber}
+                  </h4>
+                  <div className="text-[10px] font-bold text-indigo-600">
+                    Guest: <span className="text-gray-900 font-extrabold">{activeReplaceStep.guestName}</span>
+                  </div>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  setRoomToReplace(null);
-                  setSelectedNewRoomForReplace('');
+                  setActiveReplaceStep(null);
+                  setPendingChain([]);
+                  setConflictPrompt(null);
                 }}
                 className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer"
               >
@@ -1366,69 +1594,109 @@ export default function BookingModal({
             </div>
 
             <div className="space-y-2 text-xs">
-              <div className="text-[10px] font-bold uppercase text-gray-400 block">
-                Select New Room to Replace Room {roomToReplace.roomNumber}
+              {/* Color Legend */}
+              <div className="flex items-center justify-center gap-3 text-[10px] font-bold text-gray-700 py-1.5 bg-gray-50 rounded-xl border border-gray-200 select-none">
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded bg-amber-400 border border-amber-500 inline-block shrink-0" />
+                  <span>Yellow: Current</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded bg-red-600 border border-red-700 inline-block shrink-0" />
+                  <span>Red: Allocated</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded bg-white border border-gray-300 inline-block shrink-0" />
+                  <span>White: Available</span>
+                </div>
               </div>
 
+              {/* Pending Chain Summary */}
+              {pendingChain.length > 0 && (
+                <div className="p-2 bg-indigo-50 border border-indigo-150 rounded-xl space-y-1">
+                  <div className="text-[10px] font-extrabold uppercase text-indigo-800">
+                    Pending Reassignments ({pendingChain.length}):
+                  </div>
+                  {pendingChain.map((p, idx) => (
+                    <div key={idx} className="text-[11px] font-bold text-indigo-900 flex items-center justify-between">
+                      <span>{p.guestName}</span>
+                      <span className="font-mono">{p.fromRoomNumber} → {p.toRoomNumber}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="text-[10px] font-bold uppercase text-gray-400 block pt-0.5">
+                Select replacement room for {activeReplaceStep.guestName}:
+              </div>
+
+              {/* Room Grid */}
               <div className="grid grid-cols-4 sm:grid-cols-5 gap-1.5 max-h-56 overflow-y-auto p-1.5 bg-gray-50 rounded-xl border border-gray-150">
                 {roomsList.map((room) => {
                   const num = room.number;
-                  const isCurrent = roomToReplace.roomNumber === num;
-                  const isAvailable = roomAvailability[num] !== false && !isCurrent;
-                  const isSelected = selectedNewRoomForReplace === num;
+                  const status = getRoomReplacementStatus(num);
+
+                  let btnStyle = '';
+                  let labelText = getRoomConfig(num);
+                  let isDisabled = false;
+
+                  if (status.type === 'current') {
+                    btnStyle = 'bg-amber-400 text-amber-950 border-amber-500 font-extrabold cursor-not-allowed opacity-90 shadow-2xs';
+                    labelText = 'Current';
+                    isDisabled = true;
+                  } else if (status.type === 'disabled_same_booking') {
+                    btnStyle = 'bg-gray-100 border-gray-200 text-gray-400 line-through cursor-not-allowed opacity-50';
+                    labelText = 'Owned';
+                    isDisabled = true;
+                  } else if (status.type === 'allocated') {
+                    btnStyle = 'bg-red-600 hover:bg-red-700 text-white border-red-700 font-black shadow-2xs';
+                    labelText = status.booking ? status.booking.guestName : 'Allocated';
+                    isDisabled = false;
+                  } else {
+                    btnStyle = 'bg-white hover:bg-indigo-50 text-gray-900 border-gray-300 hover:border-indigo-400 font-extrabold shadow-2xs';
+                    labelText = getRoomConfig(num);
+                    isDisabled = false;
+                  }
 
                   return (
                     <button
                       key={num}
                       type="button"
-                      disabled={!isAvailable}
-                      onClick={() => setSelectedNewRoomForReplace(num)}
-                      className={`min-h-[42px] p-1.5 rounded-xl border text-xs font-extrabold text-center transition-all duration-150 cursor-pointer flex flex-col items-center justify-center select-none ${
-                        isCurrent
-                          ? 'bg-amber-100 border-amber-300 text-amber-900 cursor-not-allowed opacity-80'
-                          : isSelected
-                          ? 'bg-indigo-600 border-indigo-700 text-white shadow-2xs ring-2 ring-indigo-400 scale-98'
-                          : isAvailable
-                          ? 'bg-white hover:bg-indigo-50 border-gray-200 text-gray-800 hover:border-indigo-300'
-                          : 'bg-gray-100 border-gray-200 text-gray-400 line-through cursor-not-allowed opacity-50'
-                      }`}
+                      disabled={isDisabled || isSubmitting}
+                      onClick={() => handleSelectRoomForReplacement(num)}
+                      title={
+                        status.type === 'allocated' && status.booking
+                          ? `Allocated to ${status.booking.guestName}`
+                          : status.type === 'disabled_same_booking'
+                          ? `Already owned by ${activeReplaceStep.guestName}`
+                          : `Room ${num}`
+                      }
+                      className={`min-h-[44px] p-1 rounded-xl border text-xs text-center transition-all duration-150 cursor-pointer flex flex-col items-center justify-center select-none ${btnStyle}`}
                     >
-                      <span>{num}</span>
-                      <span className="text-[8px] font-normal leading-none opacity-80 mt-0.5">
-                        {isCurrent ? 'Current' : getRoomConfig(num)}
+                      <span className="font-extrabold">{num}</span>
+                      <span className="text-[8px] font-bold leading-none opacity-90 mt-0.5 truncate max-w-[52px]">
+                        {labelText}
                       </span>
                     </button>
                   );
                 })}
               </div>
-
-              {selectedNewRoomForReplace !== '' && (
-                <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-900 font-bold text-xs flex items-center justify-between">
-                  <span>Selected Room:</span>
-                  <span className="font-extrabold text-indigo-700">Room {selectedNewRoomForReplace}</span>
-                </div>
-              )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+            <div className="flex items-center justify-between pt-2 border-t border-gray-100">
               <button
                 type="button"
                 onClick={() => {
-                  setRoomToReplace(null);
-                  setSelectedNewRoomForReplace('');
+                  setActiveReplaceStep(null);
+                  setPendingChain([]);
+                  setConflictPrompt(null);
                 }}
-                className="px-3.5 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
+                className="px-3.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={handleConfirmReplaceRoom}
-                disabled={!selectedNewRoomForReplace || isSubmitting}
-                className="px-4 py-2 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-2xs cursor-pointer disabled:opacity-40"
-              >
-                {isSubmitting ? 'Replacing...' : 'Confirm Replace'}
-              </button>
+              {isSubmitting && (
+                <span className="text-xs font-bold text-indigo-600 animate-pulse">Processing...</span>
+              )}
             </div>
           </div>
         </div>
