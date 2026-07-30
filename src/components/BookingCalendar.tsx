@@ -4,6 +4,7 @@ import { useHotelData } from '../context/HotelContext';
 import { formatDateHuman } from '../utils/formatters';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, X, RefreshCw, AlertCircle } from 'lucide-react';
 import MobileCalendar from './MobileCalendar';
+import ExportOccupancyButton from './ExportOccupancyButton';
 
 interface BookingCalendarProps {
   onSelectCell: (roomNumber: number, date: string) => void;
@@ -300,6 +301,13 @@ export default function BookingCalendar({
             >
               Today
             </button>
+
+            <ExportOccupancyButton
+              rooms={rooms}
+              bookings={bookingList}
+              currentMonth={currentMonth}
+              variant="desktop"
+            />
           </div>
         </div>
 

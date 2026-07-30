@@ -1,18 +1,16 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Booking, Room } from '../types';
 import {
   ChevronLeft,
   ChevronRight,
-  RotateCcw,
   ZoomIn,
   ZoomOut,
   X,
-  User,
-  Calendar as CalendarIcon,
   Plus,
-  Clock,
+  Info,
 } from 'lucide-react';
 import { formatDateHuman } from '../utils/formatters';
+import ExportOccupancyButton from './ExportOccupancyButton';
 
 interface MobileCalendarProps {
   rooms: Room[];
@@ -33,10 +31,39 @@ export default function MobileCalendar({
   onSelectBooking,
   todayYMD,
 }: MobileCalendarProps) {
-  // Zoom level state (0.75 to 2.5)
+  // Zoom level state (0.25 to 2.5). Default 1.0 is "Fit to Screen"
   const [zoom, setZoom] = useState<number>(1.0);
+  const [showLegendModal, setShowLegendModal] = useState<boolean>(false);
 
-  // Quick Action / Popup state
+  // Dynamic height measurement for auto-fit calculations
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  const [gridHeight, setGridHeight] = useState<number>(500);
+
+  // Measure container size
+  useEffect(() => {
+    const updateHeight = () => {
+      if (gridContainerRef.current) {
+        const rect = gridContainerRef.current.getBoundingClientRect();
+        if (rect.height > 100) {
+          setGridHeight(rect.height);
+        }
+      }
+    };
+
+    updateHeight();
+    window.addEventListener('resize', updateHeight);
+    const observer = new ResizeObserver(updateHeight);
+    if (gridContainerRef.current) {
+      observer.observe(gridContainerRef.current);
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateHeight);
+      observer.disconnect();
+    };
+  }, []);
+
+  // Selected cell popover / modal state
   const [selectedCellInfo, setSelectedCellInfo] = useState<{
     roomNumber: number;
     dateYMD: string;
@@ -48,38 +75,40 @@ export default function MobileCalendar({
   const month = currentMonth.getMonth(); // 0-indexed
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  // YYYY-MM-DD formatter
+  // Format YYYY-MM-DD
   const formatYMD = (y: number, m: number, d: number) => {
     const mm = String(m + 1).padStart(2, '0');
     const dd = String(d).padStart(2, '0');
     return `${y}-${mm}-${dd}`;
   };
 
-  // Generate days array for current month
-  const monthDays = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateObj = new Date(year, month, d);
-    const ymd = formatYMD(year, month, d);
-    const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'narrow' });
-    const shortDayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
-    const isToday = ymd === todayYMD;
-    const isPast = ymd < todayYMD;
-    monthDays.push({
-      dayNum: d,
-      ymd,
-      dayOfWeek,
-      shortDayName,
-      isToday,
-      isPast,
-    });
-  }
+  // Days array for current month
+  const monthDays = useMemo(() => {
+    const list = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateObj = new Date(year, month, d);
+      const ymd = formatYMD(year, month, d);
+      const shortDayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+      const isToday = ymd === todayYMD;
+      const isPast = ymd < todayYMD;
+      list.push({
+        dayNum: d,
+        formattedDayNum: String(d).padStart(2, '0'),
+        ymd,
+        shortDayName,
+        isToday,
+        isPast,
+      });
+    }
+    return list;
+  }, [year, month, daysInMonth, todayYMD]);
 
   // Month navigation helpers
   const prevMonthObj = new Date(year, month - 1, 1);
   const nextMonthObj = new Date(year, month + 1, 1);
   const currentMonthTitle = currentMonth.toLocaleDateString('en-US', {
     month: 'short',
-    year: 'numeric',
+    year: '2-digit',
   });
 
   const goToPrevMonth = () => onChangeMonth(prevMonthObj);
@@ -100,19 +129,18 @@ export default function MobileCalendar({
     );
   };
 
-  // Cell sizing based on Zoom
-  const BASE_CELL_WIDTH = 32;
-  const BASE_CELL_HEIGHT = 28;
-  const BASE_DATE_COL_WIDTH = 56;
-  const BASE_ROOM_ROW_HEIGHT = 32;
+  // Dynamic cell sizing:
+  // At zoom = 1.0 (Fit view), calculate cellHeight so ALL daysInMonth fit inside gridHeight without vertical scrollbar!
+  const ROOM_ROW_HEIGHT = 22; // sticky header height
+  const availableHeightForCells = Math.max(200, gridHeight - ROOM_ROW_HEIGHT - 2);
+  const fitCellHeight = Math.max(14, Math.floor(availableHeightForCells / daysInMonth));
 
-  const cellWidth = Math.round(BASE_CELL_WIDTH * zoom);
-  const cellHeight = Math.round(BASE_CELL_HEIGHT * zoom);
-  const dateColWidth = Math.max(48, Math.round(BASE_DATE_COL_WIDTH * Math.min(1.2, zoom)));
-  const roomRowHeight = Math.max(28, Math.round(BASE_ROOM_ROW_HEIGHT * Math.min(1.2, zoom)));
+  // Actual cell dimensions
+  const cellHeight = Math.round(fitCellHeight * zoom);
+  const cellWidth = Math.max(20, Math.round(24 * zoom));
+  const dateColWidth = Math.max(30, Math.round(34 * Math.min(1.2, zoom)));
 
   // Gesture handling refs
-  const gridContainerRef = useRef<HTMLDivElement>(null);
   const startDistRef = useRef<number>(0);
   const startZoomRef = useRef<number>(1.0);
   const lastTapTimeRef = useRef<number>(0);
@@ -140,11 +168,10 @@ export default function MobileCalendar({
     }
 
     if (e.touches.length === 1 && roomNumber && dateYMD !== undefined) {
-      // Double tap check
+      // Double tap check to reset zoom
       const now = Date.now();
       if (now - lastTapTimeRef.current < 280) {
-        // Reset zoom
-        setZoom(1.0);
+        setZoom(1.0); // Reset to 100% Fit
         if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
         isLongPressRef.current = false;
         lastTapTimeRef.current = 0;
@@ -163,13 +190,12 @@ export default function MobileCalendar({
           booking: booking || null,
           isLongPress: true,
         });
-      }, 500);
+      }, 450);
     }
   };
 
   // Handle Touch Move
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    // Cancel long press on move
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
@@ -181,7 +207,7 @@ export default function MobileCalendar({
         e.touches[0].clientY - e.touches[1].clientY
       );
       const ratio = dist / startDistRef.current;
-      const newZoom = Math.min(2.5, Math.max(0.75, startZoomRef.current * ratio));
+      const newZoom = Math.min(2.5, Math.max(0.25, startZoomRef.current * ratio));
       setZoom(Number(newZoom.toFixed(2)));
     }
   };
@@ -195,7 +221,7 @@ export default function MobileCalendar({
     startDistRef.current = 0;
   };
 
-  // Cell Click / Tap
+  // Cell Tap
   const handleCellClick = (roomNumber: number, dateYMD: string, booking: Booking | null) => {
     if (isLongPressRef.current) {
       isLongPressRef.current = false;
@@ -214,121 +240,160 @@ export default function MobileCalendar({
     }
   };
 
-  // Reset zoom
+  // Zoom preset handlers
   const handleResetZoom = () => setZoom(1.0);
   const handleZoomIn = () => setZoom((z) => Math.min(2.5, Number((z + 0.25).toFixed(2))));
-  const handleZoomOut = () => setZoom((z) => Math.max(0.75, Number((z - 0.25).toFixed(2))));
+  const handleZoomOut = () => setZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))));
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] w-full bg-slate-900 text-slate-100 select-none overflow-hidden font-sans rounded-xl border border-slate-800 shadow-xl" id="mobile_fullscreen_calendar">
-      {/* 1. TOP TOOLBAR / NAVIGATION */}
-      <div className="shrink-0 bg-slate-900 px-2 py-1.5 border-b border-slate-800 flex items-center justify-between gap-1 z-40">
-        <div className="flex items-center gap-1">
+    <div
+      className="flex flex-col h-[calc(100vh-68px)] w-full bg-slate-950 text-slate-100 select-none overflow-hidden font-sans border-0 shadow-none relative"
+      id="mobile_fullscreen_calendar"
+    >
+      {/* 1. COLLAPSED SINGLE-ROW TOOLBAR (Height ~34px) */}
+      <div className="shrink-0 bg-slate-900 px-1.5 py-1 border-b border-slate-800 flex items-center justify-between gap-1 z-40 h-9">
+        {/* Month Switcher */}
+        <div className="flex items-center gap-0.5">
           <button
             onClick={goToPrevMonth}
-            className="p-1 rounded-lg bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
+            className="p-1 rounded bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
             aria-label="Previous Month"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="w-3.5 h-3.5" />
           </button>
-          <span className="text-xs font-black tracking-tight text-white px-1 font-mono min-w-[78px] text-center">
+          <span className="text-[11px] font-black tracking-tight text-white px-1 font-mono uppercase">
             {currentMonthTitle}
           </span>
           <button
             onClick={goToNextMonth}
-            className="p-1 rounded-lg bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
+            className="p-1 rounded bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
             aria-label="Next Month"
           >
-            <ChevronRight className="w-4 h-4" />
+            <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
+        {/* Action Controls */}
         <div className="flex items-center gap-1">
           <button
             onClick={goToToday}
-            className="px-2 py-1 bg-indigo-600 active:bg-indigo-700 text-white text-[11px] font-extrabold rounded-md shadow-xs transition"
+            className="px-1.5 py-0.5 bg-indigo-600 active:bg-indigo-700 text-white text-[10px] font-extrabold rounded shadow-xs transition"
           >
             Today
           </button>
 
-          {/* Zoom Controls */}
-          <div className="flex items-center bg-slate-800 rounded-md p-0.5 ml-1 border border-slate-700">
+          <ExportOccupancyButton
+            rooms={rooms}
+            bookings={bookingList}
+            currentMonth={currentMonth}
+            variant="mobile"
+          />
+
+          {/* Compact Zoom Control */}
+          <div className="flex items-center bg-slate-800 rounded p-0.5 border border-slate-700">
             <button
               onClick={handleZoomOut}
-              disabled={zoom <= 0.75}
-              className="p-1 text-slate-300 disabled:opacity-30 active:text-white"
+              disabled={zoom <= 0.25}
+              className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white"
               title="Zoom Out"
             >
               <ZoomOut className="w-3 h-3" />
             </button>
-            <span
+            <button
               onClick={handleResetZoom}
-              className="text-[10px] font-mono font-bold px-1 text-slate-300 cursor-pointer hover:text-white"
-              title="Double tap grid or click to reset zoom"
+              className="text-[9.5px] font-mono font-bold px-1 text-indigo-300 hover:text-white"
+              title="Double tap or click to reset to 100% Fit"
             >
               {Math.round(zoom * 100)}%
-            </span>
+            </button>
             <button
               onClick={handleZoomIn}
               disabled={zoom >= 2.5}
-              className="p-1 text-slate-300 disabled:opacity-30 active:text-white"
+              className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white"
               title="Zoom In"
             >
               <ZoomIn className="w-3 h-3" />
             </button>
           </div>
+
+          {/* Tiny Floating Legend Trigger Button */}
+          <button
+            onClick={() => setShowLegendModal(!showLegendModal)}
+            className="p-1 bg-slate-800 active:bg-slate-700 text-amber-400 rounded border border-slate-700 flex items-center justify-center"
+            title="Calendar Legend"
+          >
+            <Info className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
-      {/* 2. COMPACT COLOR LEGEND */}
-      <div className="shrink-0 bg-slate-950 px-2 py-1 flex items-center justify-between text-[9px] font-bold border-b border-slate-800 text-slate-300">
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500 inline-block border border-emerald-400"></span>
-          Avail
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-xs bg-amber-500 inline-block"></span>
-          Reserved
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-xs bg-blue-600 inline-block"></span>
-          Checked In
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-xs bg-rose-600 inline-block"></span>
-          Checked Out
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-xs bg-slate-700 inline-block border border-slate-600"></span>
-          Past
-        </span>
-      </div>
+      {/* 2. FLOATING LEGEND POPUP (Does NOT take permanent vertical space) */}
+      {showLegendModal && (
+        <div className="absolute top-10 right-2 z-50 bg-slate-900 border border-slate-700 rounded-xl p-2.5 shadow-2xl text-[10px] text-slate-200 animate-fadeIn space-y-1.5 w-44 backdrop-blur-md">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-1 font-bold text-white">
+            <span>Color Legend</span>
+            <button onClick={() => setShowLegendModal(false)} className="text-slate-400 hover:text-white">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-xs bg-emerald-500 border border-emerald-400"></span>
+              <span>Available</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-xs bg-amber-500"></span>
+              <span>Reserved</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-xs bg-blue-600"></span>
+              <span>Checked In</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-xs bg-rose-600"></span>
+              <span>Checked Out</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-xs bg-slate-800 border border-slate-700"></span>
+              <span>Past Date</span>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* 3. FREEZE PANES FULLSCREEN MATRIX GRID */}
+      {/* 3. FULLSCREEN AUTO-FIT MATRIX GRID (Spreadsheet Style) */}
       <div
         ref={gridContainerRef}
         onTouchStart={(e) => handleTouchStart(e)}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="flex-1 overflow-auto relative touch-pan-x touch-pan-y bg-slate-950"
+        className="flex-1 overflow-auto relative touch-pan-x touch-pan-y bg-slate-950 scrollbar-none"
       >
-        <table className="border-collapse table-fixed w-max">
+        <table className="border-collapse table-fixed w-max bg-slate-950">
           <thead>
             <tr>
-              {/* Top-Left Freeze Corner: Date / Room Label */}
+              {/* Top-Left Freeze Corner */}
               <th
-                style={{ width: `${dateColWidth}px`, height: `${roomRowHeight}px` }}
-                className="sticky top-0 left-0 z-30 bg-slate-900 border-r border-b border-slate-700 p-0 text-[10px] font-black text-slate-300 text-center uppercase font-mono shadow-xs"
+                style={{
+                  width: `${dateColWidth}px`,
+                  height: `${ROOM_ROW_HEIGHT}px`,
+                  borderColor: 'rgba(255, 255, 255, 0.25)',
+                }}
+                className="sticky top-0 left-0 z-30 bg-slate-900 border-r-2 border-b-2 p-0 text-[9px] font-black text-slate-200 text-center font-mono uppercase shadow-xs"
               >
-                Date
+                RM
               </th>
 
-              {/* Room Numbers Top Header Row (Sticky Top) */}
+              {/* Room Numbers Header Row */}
               {rooms.map((room) => (
                 <th
                   key={room.number}
-                  style={{ width: `${cellWidth}px`, height: `${roomRowHeight}px` }}
-                  className="sticky top-0 z-20 bg-slate-900 border-r border-b border-slate-700 p-0 text-center font-black text-[11px] text-white font-mono shadow-2xs"
+                  style={{
+                    width: `${cellWidth}px`,
+                    height: `${ROOM_ROW_HEIGHT}px`,
+                    borderColor: 'rgba(255, 255, 255, 0.2)',
+                  }}
+                  className="sticky top-0 z-20 bg-slate-900 border-r border-b-2 p-0 text-center font-extrabold text-[10px] text-slate-100 font-mono"
                 >
                   {room.number}
                 </th>
@@ -337,84 +402,105 @@ export default function MobileCalendar({
           </thead>
 
           <tbody>
-            {monthDays.map((day) => (
-              <tr key={day.ymd}>
-                {/* Date Left Column (Sticky Left) */}
-                <td
-                  style={{ width: `${dateColWidth}px`, height: `${cellHeight}px` }}
-                  className={`sticky left-0 z-20 border-r border-b border-slate-800 p-0 text-center align-middle shadow-2xs ${
-                    day.isToday
-                      ? 'bg-indigo-600 text-white font-black'
-                      : day.isPast
-                      ? 'bg-slate-900/90 text-slate-500 font-medium'
-                      : 'bg-slate-900 text-slate-200 font-bold'
-                  }`}
+            {monthDays.map((day) => {
+              const isToday = day.isToday;
+              const cellBorderColor =
+                zoom > 1.2 ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.08)';
+
+              return (
+                <tr
+                  key={day.ymd}
+                  className={isToday ? 'relative z-10 bg-indigo-950/30' : ''}
                 >
-                  <div className="flex items-center justify-center gap-0.5 leading-none">
-                    <span className="text-[11px] font-extrabold font-mono">{day.dayNum}</span>
-                    <span className="text-[8.5px] uppercase text-slate-400 font-mono">
-                      {day.shortDayName}
-                    </span>
-                  </div>
-                </td>
+                  {/* Date Left Column (Compressed: 01, 02...) */}
+                  <td
+                    style={{
+                      width: `${dateColWidth}px`,
+                      height: `${cellHeight}px`,
+                      borderColor: isToday ? 'rgba(99, 102, 241, 0.6)' : 'rgba(255, 255, 255, 0.18)',
+                    }}
+                    className={`sticky left-0 z-20 border-r-2 border-b p-0 text-center align-middle ${
+                      isToday
+                        ? 'bg-indigo-600 text-white font-black shadow-xs'
+                        : day.isPast
+                        ? 'bg-slate-900/95 text-slate-400 font-medium'
+                        : 'bg-slate-900 text-slate-300 font-bold'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center leading-none">
+                      <span className="text-[10px] font-extrabold font-mono">{day.formattedDayNum}</span>
+                      {zoom >= 1.4 && (
+                        <span className="text-[7.5px] uppercase text-slate-400 font-mono ml-0.5">
+                          {day.shortDayName}
+                        </span>
+                      )}
+                    </div>
+                  </td>
 
-                {/* Room Status Cells */}
-                {rooms.map((room) => {
-                  const booking = getBookingForRoomAndDate(room.number, day.ymd);
+                  {/* Room Status Cells */}
+                  {rooms.map((room) => {
+                    const booking = getBookingForRoomAndDate(room.number, day.ymd);
 
-                  // Determine Color Code
-                  let colorBg = 'bg-emerald-500/90 hover:bg-emerald-400 border-emerald-600/50';
-                  let statusTitle = 'Available';
+                    // Color mapping
+                    let colorBg = 'bg-emerald-500 hover:bg-emerald-400';
+                    let statusTitle = 'Available';
 
-                  if (booking) {
-                    if (booking.status === 'checked-in') {
-                      if (booking.checkOutDate === todayYMD) {
-                        colorBg = 'bg-rose-600 hover:bg-rose-500 border-rose-700';
-                        statusTitle = 'Departure Today';
+                    if (booking) {
+                      if (booking.status === 'checked-in') {
+                        if (booking.checkOutDate === todayYMD) {
+                          colorBg = 'bg-rose-600 hover:bg-rose-500';
+                          statusTitle = 'Checkout Today';
+                        } else {
+                          colorBg = 'bg-blue-600 hover:bg-blue-500';
+                          statusTitle = 'Checked In';
+                        }
+                      } else if (booking.status === 'checked-out') {
+                        colorBg = 'bg-rose-600 hover:bg-rose-500';
+                        statusTitle = 'Checked Out';
                       } else {
-                        colorBg = 'bg-blue-600 hover:bg-blue-500 border-blue-700';
-                        statusTitle = 'Checked In';
+                        colorBg = 'bg-amber-500 hover:bg-amber-400';
+                        statusTitle = 'Reserved';
                       }
-                    } else if (booking.status === 'checked-out') {
-                      colorBg = 'bg-rose-600 hover:bg-rose-500 border-rose-700';
-                      statusTitle = 'Checked Out';
-                    } else {
-                      colorBg = 'bg-amber-500 hover:bg-amber-400 border-amber-600';
-                      statusTitle = 'Reserved';
+                    } else if (day.isPast) {
+                      colorBg = 'bg-[#182338] hover:bg-[#1f2d47]';
+                      statusTitle = 'Past Date';
                     }
-                  } else if (day.isPast) {
-                    colorBg = 'bg-slate-800/80 hover:bg-slate-800 border-slate-700/60';
-                    statusTitle = 'Past Date';
-                  }
 
-                  return (
-                    <td
-                      key={`${room.number}_${day.ymd}`}
-                      style={{ width: `${cellWidth}px`, height: `${cellHeight}px` }}
-                      className="p-0 border-r border-b border-slate-900 align-middle text-center"
-                    >
-                      <div
-                        onTouchStart={(e) => handleTouchStart(e, room.number, day.ymd, booking)}
-                        onClick={() => handleCellClick(room.number, day.ymd, booking)}
-                        title={`Rm ${room.number} (${day.ymd}): ${statusTitle}`}
-                        style={{ width: `${cellWidth}px`, height: `${cellHeight}px` }}
-                        className={`w-full h-full border transition-transform active:scale-90 cursor-pointer flex items-center justify-center ${colorBg}`}
+                    return (
+                      <td
+                        key={`${room.number}_${day.ymd}`}
+                        style={{
+                          width: `${cellWidth}px`,
+                          height: `${cellHeight}px`,
+                          borderColor: isToday ? 'rgba(99, 102, 241, 0.4)' : cellBorderColor,
+                        }}
+                        className={`p-0 border-r border-b align-middle text-center ${
+                          isToday ? 'bg-indigo-950/20' : ''
+                        }`}
                       >
-                        {/* Optional status indicator dot if zoomed in */}
-                        {zoom >= 1.5 && booking && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-white/90 shadow-2xs"></span>
-                        )}
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                        <div
+                          onTouchStart={(e) => handleTouchStart(e, room.number, day.ymd, booking)}
+                          onClick={() => handleCellClick(room.number, day.ymd, booking)}
+                          title={`Rm ${room.number} (${day.ymd}): ${statusTitle}`}
+                          style={{ width: `${cellWidth}px`, height: `${cellHeight}px` }}
+                          className={`w-full h-full cursor-pointer flex items-center justify-center transition-all active:ring-2 active:ring-indigo-300 active:ring-inset active:z-10 ${colorBg}`}
+                        >
+                          {/* Dot indicator when zoomed in */}
+                          {zoom >= 1.6 && booking && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-white shadow-2xs"></span>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      {/* 4. TAP / LONG-PRESS POPUP MODAL */}
+      {/* 4. TAP / QUICK DETAILS MODAL */}
       {selectedCellInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-2xs animate-fadeIn">
           <div className="bg-white text-slate-900 rounded-2xl max-w-xs w-full p-4 shadow-2xl border border-slate-100 space-y-3">
@@ -489,8 +575,10 @@ export default function MobileCalendar({
                 <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
                   <Plus className="w-5 h-5" />
                 </div>
-                <p className="text-xs font-bold text-slate-700">Room is available on this date</p>
-                <p className="text-[11px] text-slate-500">Tap below to create a new reservation for Room {selectedCellInfo.roomNumber}.</p>
+                <p className="text-xs font-bold text-slate-700">Room available on this date</p>
+                <p className="text-[11px] text-slate-500">
+                  Tap below to create a new reservation for Room {selectedCellInfo.roomNumber}.
+                </p>
               </div>
             )}
 
