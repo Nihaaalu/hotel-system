@@ -3,6 +3,7 @@ import { Booking } from '../types';
 import { useHotelData } from '../context/HotelContext';
 import { formatDateHuman } from '../utils/formatters';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, X, RefreshCw, AlertCircle } from 'lucide-react';
+import MobileCalendar from './MobileCalendar';
 
 interface BookingCalendarProps {
   onSelectCell: (roomNumber: number, date: string) => void;
@@ -237,200 +238,18 @@ export default function BookingCalendar({
       )}
 
       {/* ========================================================= */}
-      {/* 1. MOBILE TOUCH-FIRST CALENDAR (Shown strictly on sm:hidden) */}
+      {/* 1. DEDICATED MOBILE FULLSCREEN CALENDAR (Shown strictly on sm:hidden) */}
       {/* ========================================================= */}
       <div className="block sm:hidden select-none" id="mobile_pms_calendar">
-        {/* Sticky Top Header Container */}
-        <div className="sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-300 shadow-xs">
-          {/* Section 1: Top Month Switcher */}
-          <div className="p-2 flex items-center justify-between gap-1 h-8">
-            <div className="flex items-center gap-0.5">
-              <button
-                onClick={goToPrevMonth}
-                className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <span className="text-xs font-black tracking-tight text-white min-w-[110px] text-center font-sans">
-                {currentMonthTitle}
-              </span>
-              <button
-                onClick={goToNextMonth}
-                className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <button
-              onClick={goToToday}
-              className="px-2 py-0.5 bg-indigo-600 text-white text-[11px] font-extrabold rounded active:scale-95 transition cursor-pointer"
-            >
-              Today
-            </button>
-          </div>
-
-          {/* Section 2: Color Legend */}
-          <div className="px-2 py-1 flex items-center justify-between text-[9px] font-bold border-t border-slate-800/80 text-slate-300">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-xs bg-emerald-100 border border-emerald-300 inline-block"></span>Avail</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-xs bg-amber-500 inline-block"></span>Reserved</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-xs bg-blue-600 inline-block"></span>Checked In</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-xs bg-rose-600 inline-block"></span>Checkout</span>
-          </div>
-
-          {/* Section 3: Room Header */}
-          <div
-            ref={mobileHeaderRoomScrollRef}
-            onScroll={handleHeaderScroll}
-            className="overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden bg-slate-100 text-slate-800 border-t border-slate-700"
-          >
-            <div className="flex min-w-max h-[38px]">
-              <div className="sticky left-0 z-20 bg-slate-200 p-1 text-center font-black text-slate-700 border-r border-slate-300 min-w-[64px] max-w-[64px] text-[11px] flex items-center justify-center shadow-2xs">
-                Date
-              </div>
-              {rooms.map((room) => (
-                <div
-                  key={room.number}
-                  className="p-1 text-center font-extrabold text-slate-800 border-r border-slate-300 min-w-[64px] max-w-[64px] bg-slate-100 flex items-center justify-center"
-                >
-                  <span className="text-xs font-black text-slate-900 leading-none">{room.number}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Section 4: Scrollable Calendar Body */}
-        <div
-          ref={mobileBodyRoomScrollRef}
-          onScroll={handleBodyScroll}
-          className="overflow-x-auto w-full touch-pan-x touch-pan-y"
-        >
-          <div className="min-w-max">
-            {monthDays.map((day) => (
-              <div
-                key={day.ymd}
-                className="flex border-b border-slate-200/90 h-[48px]"
-              >
-                {/* Sticky Left Date Label */}
-                <div className={`sticky left-0 z-10 p-1 border-r border-slate-300 text-[11px] font-bold text-center flex flex-col items-center justify-center min-w-[64px] max-w-[64px] shadow-2xs ${
-                  day.isToday ? 'bg-indigo-600 text-white font-black' : 'bg-slate-100 text-slate-800'
-                }`}>
-                  <span className="font-extrabold leading-tight">{day.dayNum}</span>
-                  <span className="text-[9.5px] uppercase font-mono tracking-tighter opacity-80">{day.dayOfWeek}</span>
-                </div>
-
-                {/* Room Columns */}
-                {rooms.map((room) => {
-                  const booking = getBookingForRoomAndDate(room.number, day.ymd);
-
-                  let bgClass = 'bg-emerald-50 hover:bg-emerald-100/80 border-emerald-200/60 text-emerald-950';
-
-                  if (booking) {
-                    if (booking.status === 'checked-in') {
-                      if (booking.checkOutDate === todayYMD) {
-                        bgClass = 'bg-rose-600 border-rose-700 text-white font-bold';
-                      } else {
-                        bgClass = 'bg-blue-600 border-blue-700 text-white font-bold';
-                      }
-                    } else {
-                      bgClass = 'bg-amber-500 border-amber-600 text-white font-bold';
-                    }
-                  }
-
-                  return (
-                    <div
-                      key={`${room.number}_${day.ymd}`}
-                      className="p-[2px] border-r border-slate-200/90 text-center flex items-center justify-center min-w-[64px] max-w-[64px] h-[48px] active:scale-95 transition-transform cursor-pointer"
-                      onClick={() => {
-                        if (booking) {
-                          setSelectedMobileCellBooking({
-                            booking,
-                            roomNumber: room.number,
-                            dateYMD: day.ymd,
-                          });
-                        } else {
-                          onSelectCell(room.number, day.ymd);
-                        }
-                      }}
-                    >
-                      {booking ? (
-                        <div className={`w-full h-[42px] px-1 rounded-lg text-white font-bold text-[10px] leading-tight flex items-center justify-center overflow-hidden border shadow-2xs ${bgClass}`}>
-                          <span className="truncate w-full text-center tracking-tight font-sans block">{booking.guestName}</span>
-                        </div>
-                      ) : (
-                        <div className="w-full h-[42px] rounded-lg bg-emerald-50/70 hover:bg-emerald-100/90 border border-emerald-200/60 text-emerald-800 text-[10px] flex items-center justify-center transition">
-                          <span className="text-slate-400/50 font-mono text-[9px] font-semibold select-none">{room.number}</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Reservation Details Popup for Mobile */}
-        {selectedMobileCellBooking && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-2xs animate-fadeIn">
-            <div className="bg-white rounded-2xl max-w-xs w-full p-4 shadow-2xl border border-gray-100 text-gray-900 space-y-3">
-              <div className="flex items-center justify-between border-b pb-2">
-                <span className="font-extrabold text-sm text-indigo-950">Room {selectedMobileCellBooking.roomNumber}</span>
-                <button
-                  onClick={() => setSelectedMobileCellBooking(null)}
-                  className="p-1 text-gray-400 hover:text-gray-700 rounded-lg"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-1.5 text-xs">
-                <div>
-                  <span className="text-3xs uppercase font-mono text-gray-400 block font-bold">Guest Name</span>
-                  <span className="font-extrabold text-sm text-gray-900">{selectedMobileCellBooking.booking.guestName}</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <div>
-                    <span className="text-3xs uppercase font-mono text-gray-400 block">Check In</span>
-                    <span className="font-bold text-gray-800">{formatDateHuman(selectedMobileCellBooking.booking.checkInDate)}</span>
-                  </div>
-                  <div>
-                    <span className="text-3xs uppercase font-mono text-gray-400 block">Check Out</span>
-                    <span className="font-bold text-gray-800">{formatDateHuman(selectedMobileCellBooking.booking.checkOutDate)}</span>
-                  </div>
-                </div>
-
-                <div className="pt-1">
-                  <span className="text-3xs uppercase font-mono text-gray-400 block">Status</span>
-                  <span className="inline-block px-2 py-0.5 text-2xs font-extrabold uppercase rounded bg-indigo-50 text-indigo-700 mt-0.5">
-                    {selectedMobileCellBooking.booking.status}
-                  </span>
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2">
-                <button
-                  onClick={() => setSelectedMobileCellBooking(null)}
-                  className="px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-lg"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={() => {
-                    const id = selectedMobileCellBooking.booking.id;
-                    setSelectedMobileCellBooking(null);
-                    onSelectBooking(id);
-                  }}
-                  className="px-3 py-1.5 text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-xs"
-                >
-                  Open Booking
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <MobileCalendar
+          rooms={rooms}
+          bookingList={bookingList}
+          currentMonth={currentMonth}
+          onChangeMonth={setCurrentMonth}
+          onSelectCell={onSelectCell}
+          onSelectBooking={onSelectBooking}
+          todayYMD={todayYMD}
+        />
       </div>
 
       {/* ========================================================= */}
