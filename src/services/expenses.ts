@@ -23,7 +23,7 @@ export const ExpenseService = {
       logQuery('inventory_expenses', 'SELECT', 'ALL');
       const { data, error } = await supabase
         .from('inventory_expenses')
-        .select('id, expense_date, category, amount, remarks, created_at')
+        .select('*')
         .order('expense_date', { ascending: false });
       logResponse(data, error);
 
@@ -34,14 +34,19 @@ export const ExpenseService = {
 
       if (!data) return [...localExpenses];
 
-      const mapped: Expense[] = data.map((item: any) => ({
-        id: String(item.id || `exp_${Date.now()}_${Math.random()}`),
-        expenseDate: String(item.expense_date || item.date || new Date().toISOString().split('T')[0]),
-        category: (item.category || 'Miscellaneous') as ExpenseCategory,
-        amount: Number(item.amount || item.cost || item.price || 0),
-        remarks: String(item.remarks || item.notes || ''),
-        createdAt: String(item.created_at || new Date().toISOString()),
-      }));
+      const mapped: Expense[] = data.map((item: any) => {
+        const cat = (item.category || 'Miscellaneous') as ExpenseCategory;
+        const nameVal = String(item.item_name || item.name || cat).trim() || cat;
+        return {
+          id: String(item.id || `exp_${Date.now()}_${Math.random()}`),
+          expenseDate: String(item.expense_date || item.date || new Date().toISOString().split('T')[0]),
+          category: cat,
+          itemName: nameVal,
+          amount: Number(item.amount || item.cost || item.price || 0),
+          remarks: String(item.remarks || item.notes || ''),
+          createdAt: String(item.created_at || new Date().toISOString()),
+        };
+      });
 
       return mapped;
     } catch (err) {
@@ -55,8 +60,11 @@ export const ExpenseService = {
   ): Promise<Expense> {
     const id = `exp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     const nowIso = new Date().toISOString();
+    const finalItemName = (expenseData.itemName || '').trim() || expenseData.category;
+
     const newExpense: Expense = {
       ...expenseData,
+      itemName: finalItemName,
       id,
       createdAt: nowIso,
     };
@@ -68,26 +76,33 @@ export const ExpenseService = {
     }
 
     if (isSupabaseConfigured) {
-      // Strictly insert only expense_date, category, amount, remarks
-      const payload = {
+      const payload: Record<string, any> = {
         expense_date: expenseData.expenseDate,
         category: expenseData.category,
+        item_name: finalItemName,
         amount: Number(expenseData.amount || 0),
         remarks: expenseData.remarks || '',
       };
 
       logQuery('inventory_expenses', 'INSERT', 'N/A', payload);
-      console.log('TABLE:\npublic.inventory_expenses');
-      console.log('PAYLOAD:\n', JSON.stringify(payload, null, 2));
 
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('inventory_expenses')
         .insert(payload)
         .select()
         .single();
 
-      console.log('SUPABASE RESPONSE:\n', JSON.stringify(data, null, 2));
-      console.log('SUPABASE ERROR:\n', JSON.stringify(error, null, 2));
+      // If item_name column doesn't exist yet in Supabase table, try fallback without item_name
+      if (error && (error.message?.includes('item_name') || error.code === 'PGRST204')) {
+        delete payload.item_name;
+        const retryRes = await supabase
+          .from('inventory_expenses')
+          .insert(payload)
+          .select()
+          .single();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
 
       if (error) {
         console.error('Supabase inventory_expenses INSERT returned error:', error);
@@ -112,6 +127,9 @@ export const ExpenseService = {
       const payload: Record<string, any> = {};
       if (expenseData.expenseDate !== undefined) payload.expense_date = expenseData.expenseDate;
       if (expenseData.category !== undefined) payload.category = expenseData.category;
+      if (expenseData.itemName !== undefined || expenseData.category !== undefined) {
+        payload.item_name = (expenseData.itemName || '').trim() || expenseData.category;
+      }
       if (expenseData.amount !== undefined) payload.amount = Number(expenseData.amount);
       if (expenseData.remarks !== undefined) payload.remarks = expenseData.remarks;
 
@@ -119,11 +137,23 @@ export const ExpenseService = {
       const targetId = !isNaN(numId) ? numId : id;
 
       logQuery('inventory_expenses', 'UPDATE', `id = ${targetId}`, payload);
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('inventory_expenses')
         .update(payload)
         .eq('id', targetId)
         .select();
+
+      if (error && (error.message?.includes('item_name') || error.code === 'PGRST204')) {
+        delete payload.item_name;
+        const retryRes = await supabase
+          .from('inventory_expenses')
+          .update(payload)
+          .eq('id', targetId)
+          .select();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
+
       logResponse(data, error);
 
       if (error) {

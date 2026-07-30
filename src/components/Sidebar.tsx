@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Calendar, Package, TrendingUp, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Calendar, Package, TrendingUp, Wallet, Menu, X } from 'lucide-react';
+
+export type AppTab = 'dashboard' | 'calendar' | 'inventory' | 'salary-rent' | 'analytics';
 
 interface SidebarProps {
-  currentTab: 'dashboard' | 'calendar' | 'inventory' | 'analytics';
-  onTabChange: (tab: 'dashboard' | 'calendar' | 'inventory' | 'analytics') => void;
+  currentTab: AppTab;
+  onTabChange: (tab: AppTab) => void;
 }
 
 export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
@@ -13,10 +15,11 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'calendar', label: 'Booking Calendar', icon: Calendar },
     { id: 'inventory', label: 'Inventory', icon: Package },
+    { id: 'salary-rent', label: 'Salary / Rent', icon: Wallet },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   ] as const;
 
-  const handleSelectTab = (tab: 'dashboard' | 'calendar' | 'inventory' | 'analytics') => {
+  const handleSelectTab = (tab: AppTab) => {
     onTabChange(tab);
     setIsMobileDrawerOpen(false);
   };
@@ -68,7 +71,7 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
                   return (
                     <button
                       key={item.id}
-                      onClick={() => handleSelectTab(item.id)}
+                      onClick={() => handleSelectTab(item.id as AppTab)}
                       className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-xs font-bold transition duration-150 cursor-pointer ${
                         isActive
                           ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20'
@@ -110,7 +113,7 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
               return (
                 <button
                   key={item.id}
-                  onClick={() => onTabChange(item.id)}
+                  onClick={() => onTabChange(item.id as AppTab)}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition duration-150 cursor-pointer ${
                     isActive
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/10'
@@ -128,6 +131,3 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     </>
   );
 }
-
-
-

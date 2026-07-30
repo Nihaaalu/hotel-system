@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import Sidebar from './components/Sidebar';
+import Sidebar, { AppTab } from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import BookingCalendar from './components/BookingCalendar';
 import BookingModal from './components/BookingModal';
 import Inventory from './components/Inventory';
+import SalaryRent from './components/SalaryRent';
 import Analytics from './components/Analytics';
 import { useHotelData } from './context/HotelContext';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'calendar' | 'inventory' | 'analytics'>('dashboard');
+  const [currentTab, setCurrentTab] = useState<AppTab>('dashboard');
   const { refreshData } = useHotelData();
 
   // Modal controllers
@@ -67,7 +68,7 @@ export default function App() {
       
       {/* 1. Sidebar Panel */}
       <Sidebar currentTab={currentTab} onTabChange={setCurrentTab} />
- 
+
       {/* 2. Main Desk Container */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden" id="desk_viewport">
         
@@ -77,8 +78,9 @@ export default function App() {
             <h1 className="text-base sm:text-lg font-extrabold text-gray-900 tracking-tight capitalize select-none truncate">
               {currentTab === 'dashboard' && 'Dashboard'}
               {currentTab === 'calendar' && 'Booking Calendar'}
-              {currentTab === 'inventory' && 'Inventory & Expenses'}
-              {currentTab === 'analytics' && 'Financial Analytics'}
+              {currentTab === 'inventory' && 'Inventory & Operational Items'}
+              {currentTab === 'salary-rent' && 'Employee Salary & Property Rent'}
+              {currentTab === 'analytics' && 'Financial Analytics & Expense Breakdown'}
             </h1>
           </div>
 
@@ -132,6 +134,10 @@ export default function App() {
               <Inventory />
             )}
 
+            {currentTab === 'salary-rent' && (
+              <SalaryRent />
+            )}
+
             {currentTab === 'analytics' && (
               <Analytics />
             )}
@@ -154,4 +160,3 @@ export default function App() {
     </div>
   );
 }
-

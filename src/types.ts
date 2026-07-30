@@ -55,17 +55,77 @@ export type ExpenseCategory =
   | 'Meat'
   | 'Groceries'
   | 'Cleaning'
-  | 'Miscellaneous'
-  | 'Salary'
   | 'Electricity Bill'
-  | 'Laundry';
+  | 'Laundry'
+  | 'Raw Materials'
+  | 'Electrical Items'
+  | 'Furniture'
+  | 'Improvement'
+  | 'Miscellaneous';
 
 export interface Expense {
   id: string;
   expenseDate: string; // YYYY-MM-DD
   category: ExpenseCategory;
+  itemName?: string;   // optional item name field. If empty, falls back to category
   amount: number;
   remarks: string;
+  createdAt: string;
+}
+
+export interface SalaryEmployee {
+  id: string;
+  name: string;
+  role: string;
+  baseSalary: number;
+  effectiveMonth: string; // YYYY-MM
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface SalaryHistory {
+  id: string;
+  employeeId: string;
+  baseSalary: number;
+  effectiveMonth: string; // YYYY-MM
+  createdAt: string;
+}
+
+export interface EmployeeSalaryAdjustment {
+  id: string;
+  employeeId: string;
+  month: string; // YYYY-MM
+  type: 'bonus' | 'cut';
+  amount: number;
+  remarks: string;
+  createdAt: string;
+}
+
+export interface SalaryPayment {
+  id: string;
+  employeeId: string;
+  month: string; // YYYY-MM
+  amount: number;
+  paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking';
+  remarks: string;
+  paymentDate: string; // YYYY-MM-DD
+  createdAt: string;
+}
+
+export interface RentSetting {
+  id: string;
+  monthlyAmount: number;
+  effectiveMonth: string; // YYYY-MM
+  createdAt: string;
+}
+
+export interface RentPayment {
+  id: string;
+  month: string; // YYYY-MM
+  amount: number;
+  paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking';
+  remarks: string;
+  paymentDate: string; // YYYY-MM-DD
   createdAt: string;
 }
 

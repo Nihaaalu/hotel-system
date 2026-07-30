@@ -109,6 +109,7 @@ export default function BookingModal({
   const [activeReplaceStep, setActiveReplaceStep] = useState<ReplaceStep | null>(null);
   const [pendingChain, setPendingChain] = useState<ChainAssignment[]>([]);
   const [conflictPrompt, setConflictPrompt] = useState<ConflictPrompt | null>(null);
+  const [isChainReplaceMode, setIsChainReplaceMode] = useState<boolean>(false);
 
   // Guest Information Edit State
   const [isEditingGuest, setIsEditingGuest] = useState(false);
@@ -511,6 +512,7 @@ export default function BookingModal({
       setActiveReplaceStep(null);
       setPendingChain([]);
       setConflictPrompt(null);
+      setIsChainReplaceMode(false);
 
       await refreshData();
       onSuccess();
@@ -543,10 +545,37 @@ export default function BookingModal({
       ];
       executeBatchReplacement(finalChain);
     } else if (status.type === 'allocated' && status.booking) {
-      setConflictPrompt({
-        targetRoomNumber: roomNumber,
-        conflictingBooking: status.booking,
-      });
+      if (!isChainReplaceMode) {
+        // First conflict: ask the admin [ Switch Rooms ] or [ Replace Room ]
+        setConflictPrompt({
+          targetRoomNumber: roomNumber,
+          conflictingBooking: status.booking,
+        });
+      } else {
+        // Already in Replace Mode: automatically continue Replace Mode without asking
+        const targetRoom = roomNumber;
+        const conflicting = status.booking;
+
+        const newChain = [
+          ...pendingChain,
+          {
+            roomBookingId: activeReplaceStep.roomBookingId,
+            guestName: activeReplaceStep.guestName,
+            fromRoomNumber: activeReplaceStep.fromRoomNumber,
+            toRoomNumber: targetRoom,
+          },
+        ];
+        setPendingChain(newChain);
+
+        setActiveReplaceStep({
+          roomBookingId: conflicting.id,
+          guestName: conflicting.guestName,
+          fromRoomNumber: targetRoom,
+          checkInDate: conflicting.checkInDate,
+          checkOutDate: conflicting.checkOutDate,
+          bookingGroupId: conflicting.bookingGroupId || conflicting.id,
+        });
+      }
     }
   };
 
@@ -594,6 +623,7 @@ export default function BookingModal({
       },
     ];
     setPendingChain(newChain);
+    setIsChainReplaceMode(true); // Enter Replace Mode
 
     setActiveReplaceStep({
       roomBookingId: conflicting.id,
@@ -963,6 +993,7 @@ export default function BookingModal({
                             });
                             setPendingChain([]);
                             setConflictPrompt(null);
+                            setIsChainReplaceMode(false);
                           }}
                           className="px-2 py-1 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold text-[11px] rounded-lg transition cursor-pointer flex items-center gap-1"
                         >
@@ -1586,6 +1617,7 @@ export default function BookingModal({
                   setActiveReplaceStep(null);
                   setPendingChain([]);
                   setConflictPrompt(null);
+                  setIsChainReplaceMode(false);
                 }}
                 className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer"
               >
@@ -1689,6 +1721,7 @@ export default function BookingModal({
                   setActiveReplaceStep(null);
                   setPendingChain([]);
                   setConflictPrompt(null);
+                  setIsChainReplaceMode(false);
                 }}
                 className="px-3.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
               >
