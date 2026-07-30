@@ -227,9 +227,9 @@ export default function Dashboard({
 
       {/* SECTION 1: COMPACT KPI CARDS */}
       <div className="space-y-2 sm:space-y-3">
-        {/* Room Status Cards */}
+        {/* Room Status & Balance Cards */}
         <section 
-          className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3"
+          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3"
           id="dashboard_top_summary"
         >
           {/* Available Rooms */}
@@ -271,49 +271,14 @@ export default function Dashboard({
             </div>
             <LogOut className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 shrink-0" />
           </div>
-        </section>
-
-        {/* Financial & Expenses KPI Cards */}
-        <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
-          {/* Total Booking Amount */}
-          <div className="py-2 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px]">
-            <div>
-              <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Total Amount</span>
-              <span className="text-sm sm:text-base font-black text-gray-900 font-mono leading-none">₹{(stats.totalBookingAmount || 0).toLocaleString()}</span>
-            </div>
-          </div>
-
-          {/* Advance Paid */}
-          <div className="py-2 px-3 sm:px-4 bg-emerald-50/30 border border-emerald-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px]">
-            <div>
-              <span className="text-[9px] sm:text-[10px] text-emerald-700 font-bold uppercase tracking-wider block">Advance Paid</span>
-              <span className="text-sm sm:text-base font-black text-emerald-700 font-mono leading-none">₹{(stats.totalAdvancePaid || 0).toLocaleString()}</span>
-            </div>
-          </div>
 
           {/* Balance Pending */}
-          <div className="py-2 px-3 sm:px-4 bg-rose-50/30 border border-rose-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px]">
+          <div className="py-2 px-3 sm:px-4 bg-rose-50/30 border border-rose-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] col-span-2 sm:col-span-1">
             <div>
               <span className="text-[9px] sm:text-[10px] text-rose-700 font-bold uppercase tracking-wider block">Balance</span>
               <span className="text-sm sm:text-base font-black text-rose-700 font-mono leading-none">₹{(stats.totalPendingBalance || 0).toLocaleString()}</span>
             </div>
             <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
-          </div>
-
-          {/* Today's Expenses */}
-          <div className="py-2 px-3 sm:px-4 bg-amber-50/30 border border-amber-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px]">
-            <div>
-              <span className="text-[9px] sm:text-[10px] text-amber-800 font-bold uppercase tracking-wider block">Today's Expense</span>
-              <span className="text-sm sm:text-base font-black text-amber-800 font-mono leading-none">₹{(stats.todayExpenses || 0).toLocaleString()}</span>
-            </div>
-          </div>
-
-          {/* This Month Expenses */}
-          <div className="py-2 px-3 sm:px-4 bg-purple-50/30 border border-purple-200 rounded-xl flex items-center justify-between shadow-2xs h-[52px] sm:h-[64px] col-span-2 sm:col-span-1">
-            <div>
-              <span className="text-[9px] sm:text-[10px] text-purple-800 font-bold uppercase tracking-wider block">Month Expenses</span>
-              <span className="text-sm sm:text-base font-black text-purple-800 font-mono leading-none">₹{(stats.monthExpenses || 0).toLocaleString()}</span>
-            </div>
           </div>
         </section>
       </div>

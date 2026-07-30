@@ -128,7 +128,7 @@ export default function MobileCalendar({
     return (
       bookingList.find((b) => {
         if (b.roomNumber !== roomNumber) return false;
-        if (b.status === 'cancelled' || b.status === 'checked-out') return false;
+        if (b.status === 'cancelled') return false;
         return dateYMD >= b.checkInDate && dateYMD < b.checkOutDate;
       }) || null
     );
@@ -346,20 +346,20 @@ export default function MobileCalendar({
               <span className="text-amber-300">Reserved (Yellow)</span>
             </div>
             <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-xs border border-[#1565C0] bg-[#1E88E5]"></span>
+              <span className="text-blue-400">Checked In (Blue)</span>
+            </div>
+            <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-xs border border-[#B71C1C] bg-[#E53935]"></span>
-              <span className="text-red-400">Checked In (Red)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#8A8A8A] bg-[#BDBDBD]"></span>
-              <span className="text-slate-300">Checked Out (Grey)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#BDBDBD] bg-[#ECECEC]"></span>
-              <span className="text-slate-400">Cancelled (Light Grey)</span>
+              <span className="text-red-400">Checked Out (Red)</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-xs border border-[#3A3A3A] bg-[#FFF4D6]"></span>
-              <span className="text-amber-200">Couple Room (Cream)</span>
+              <span className="text-amber-200">First Fl Cream</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-xs border border-[#3A3A3A] bg-[#EDE0D4]"></span>
+              <span className="text-amber-100">Second Fl Coffee</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-xs border border-[#B71C1C] bg-[#D32F2F]"></span>
@@ -396,15 +396,26 @@ export default function MobileCalendar({
 
               {/* Room Numbers Header Row */}
               {rooms.map((room) => {
-                const isCouple = COUPLE_ROOMS.has(Number(room.number));
+                const rNum = Number(room.number);
+                let headerBg = '#1E293B';
+                let headerColor = '#FFFFFF';
+
+                if ([101, 102, 103].includes(rNum)) {
+                  headerBg = '#FFF4D6'; // First Floor Cream
+                  headerColor = '#000000';
+                } else if ([201, 202, 203, 204, 205].includes(rNum)) {
+                  headerBg = '#EDE0D4'; // Second Floor Coffee
+                  headerColor = '#000000';
+                }
+
                 return (
                   <th
                     key={room.number}
                     style={{
                       width: `${cellWidth}px`,
                       height: `${ROOM_ROW_HEIGHT}px`,
-                      backgroundColor: isCouple ? '#FFF4D6' : '#1E293B',
-                      color: isCouple ? '#000000' : '#FFFFFF',
+                      backgroundColor: headerBg,
+                      color: headerColor,
                       borderColor: '#3A3A3A',
                     }}
                     className="sticky top-0 z-20 border-r border-b-2 p-0 text-center align-middle font-extrabold text-[10px] font-mono"
@@ -458,10 +469,9 @@ export default function MobileCalendar({
                   {/* Room Status Cells */}
                   {rooms.map((room) => {
                     const booking = getBookingForRoomAndDate(room.number, day.ymd);
-                    const isCouple = COUPLE_ROOMS.has(Number(room.number));
 
-                    // Default available styling (Couple room gets light cream #FFF4D6, normal gets #FFFFFF)
-                    let bg = isCouple ? '#FFF4D6' : '#FFFFFF';
+                    // Default available styling: White (#FFFFFF)
+                    let bg = '#FFFFFF';
                     let textColor = '#444444';
                     let cellBorderColor = '#3A3A3A';
                     let textDecoration = 'none';
@@ -469,20 +479,15 @@ export default function MobileCalendar({
 
                     if (booking) {
                       if (booking.status === 'checked-in') {
+                        bg = '#1E88E5'; // Blue
+                        textColor = '#FFFFFF';
+                        cellBorderColor = '#1565C0';
+                        statusTitle = 'Checked In';
+                      } else if (booking.status === 'checked-out') {
                         bg = '#E53935'; // Red
                         textColor = '#FFFFFF';
                         cellBorderColor = '#B71C1C';
-                        statusTitle = 'Checked In';
-                      } else if (booking.status === 'checked-out') {
-                        bg = '#BDBDBD'; // Grey
-                        textColor = '#FFFFFF';
-                        cellBorderColor = '#8A8A8A';
                         statusTitle = 'Checked Out';
-                      } else if (booking.status === 'cancelled') {
-                        bg = '#ECECEC'; // Light Grey
-                        textColor = '#666666';
-                        cellBorderColor = '#BDBDBD';
-                        statusTitle = 'Cancelled';
                       } else {
                         // Reserved (booked)
                         bg = '#FFD54F'; // Yellow

@@ -115,7 +115,7 @@ export default function BookingCalendar({
     return (
       bookingList.find((b) => {
         if (b.roomNumber !== roomNumber) return false;
-        if (b.status === 'cancelled' || b.status === 'checked-out') return false;
+        if (b.status === 'cancelled') return false;
         return dateYMD >= b.checkInDate && dateYMD < b.checkOutDate;
       }) || null
     );
@@ -149,7 +149,7 @@ export default function BookingCalendar({
     return bookingList
       .filter((b) => {
         if (b.roomNumber !== roomNumber) return false;
-        if (b.status === 'cancelled' || b.status === 'checked-out') return false;
+        if (b.status === 'cancelled') return false;
         return b.checkInDate <= monthEndStr && b.checkOutDate >= monthStartStr;
       })
       .map((b) => {
@@ -182,19 +182,19 @@ export default function BookingCalendar({
         const leftPx = (startDay - 1) * COL_WIDTH;
         const widthPx = spanCols * COL_WIDTH;
 
-        let colorClass = 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600';
+        let colorClass = 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 font-bold';
         let statusLabel = 'Reserved';
 
         if (b.status === 'checked-in') {
           if (b.checkOutDate === todayYMD) {
-            colorClass = 'bg-rose-600 hover:bg-rose-700 text-white border-rose-700 font-black animate-pulse';
+            colorClass = 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 font-black animate-pulse';
             statusLabel = 'Departure Day';
           } else {
             colorClass = 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 font-bold';
             statusLabel = 'Checked In';
           }
         } else if (b.status === 'checked-out') {
-          colorClass = 'bg-slate-600 hover:bg-slate-700 text-white border-slate-700';
+          colorClass = 'bg-red-600 hover:bg-red-700 text-white border-red-700 font-bold';
           statusLabel = 'Checked Out';
         } else if (b.status === 'booked') {
           colorClass = 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 font-bold';
@@ -354,16 +354,24 @@ export default function BookingCalendar({
             <div className="divide-y divide-slate-300 text-xs text-slate-700">
               {rooms.map((room) => {
                 const bars = getRoomBookingsForMonth(room.number);
+                const rNum = Number(room.number);
+
+                let headerBgClass = 'bg-white group-hover:bg-slate-50';
+                if ([101, 102, 103].includes(rNum)) {
+                  headerBgClass = 'bg-[#FFFBEB] group-hover:bg-[#FEF3C7] border-l-4 border-l-amber-400';
+                } else if ([201, 202, 203, 204, 205].includes(rNum)) {
+                  headerBgClass = 'bg-[#F5EBE0] group-hover:bg-[#E6CCB2] border-l-4 border-l-[#A68A70]';
+                }
 
                 return (
                   <div key={room.number} className="flex h-14 group hover:bg-slate-50/40 relative">
                     {/* Sticky Left Room Number */}
                     <div
                       style={{ width: `${ROOM_COL_WIDTH}px` }}
-                      className="shrink-0 px-3 font-semibold sticky left-0 z-30 bg-white group-hover:bg-slate-50 border-r border-slate-300 flex flex-col justify-center shadow-[2px_0_5px_rgba(0,0,0,0.04)] select-none"
+                      className={`shrink-0 px-3 font-semibold sticky left-0 z-30 border-r border-slate-300 flex flex-col justify-center shadow-[2px_0_5px_rgba(0,0,0,0.04)] select-none ${headerBgClass}`}
                     >
                       <span className="text-sm font-black text-slate-900 leading-tight">Room {room.number}</span>
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight mt-0.5">
+                      <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight mt-0.5">
                         Fl {room.floor} • {room.type}
                       </span>
                     </div>
@@ -434,28 +442,28 @@ export default function BookingCalendar({
         <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-700 select-none">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-3.5 rounded bg-emerald-100 border border-emerald-300 inline-block"></span>
-              <span>Available</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-3.5 rounded bg-blue-600 inline-block"></span>
-              <span>Checked In / Occupied</span>
+              <span className="w-3.5 h-3.5 rounded bg-white border border-slate-300 inline-block"></span>
+              <span>Available (White)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-3.5 h-3.5 rounded bg-amber-500 inline-block"></span>
-              <span>Arrival / Booked</span>
+              <span>Reserved (Yellow)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-3.5 rounded bg-rose-600 inline-block"></span>
-              <span>Departure / Checked Out</span>
+              <span className="w-3.5 h-3.5 rounded bg-blue-600 inline-block"></span>
+              <span>Checked In (Blue)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-3.5 rounded bg-slate-200 inline-block"></span>
-              <span>Past Dates</span>
+              <span className="w-3.5 h-3.5 rounded bg-red-600 inline-block"></span>
+              <span>Checked Out (Red)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-3.5 rounded bg-purple-600 ring-2 ring-purple-400 inline-block"></span>
-              <span>Today</span>
+              <span className="w-3.5 h-3.5 rounded bg-[#FFFBEB] border border-amber-300 inline-block"></span>
+              <span>First Fl Cream</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded bg-[#F5EBE0] border border-[#A68A70] inline-block"></span>
+              <span>Second Fl Coffee</span>
             </div>
           </div>
 
