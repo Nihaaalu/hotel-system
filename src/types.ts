@@ -61,7 +61,10 @@ export type ExpenseCategory =
   | 'Electrical Items'
   | 'Furniture'
   | 'Improvement'
-  | 'Miscellaneous';
+  | 'Miscellaneous'
+  | 'Salary'
+  | 'Rent'
+  | 'Other';
 
 export interface Expense {
   id: string;

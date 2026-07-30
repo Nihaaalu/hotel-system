@@ -35,15 +35,26 @@ export const ExpenseService = {
       if (!data) return [...localExpenses];
 
       const mapped: Expense[] = data.map((item: any) => {
-        const cat = (item.category || 'Miscellaneous') as ExpenseCategory;
-        const nameVal = String(item.item_name || item.name || cat).trim() || cat;
+        let cat = (item.category || 'Miscellaneous') as ExpenseCategory;
+        const itemNameRaw = String(item.item_name || item.name || '').trim();
+        const remarksRaw = String(item.remarks || item.notes || '').trim();
+
+        if (cat === 'Miscellaneous' || (cat as string) === 'Other') {
+          if (itemNameRaw.toLowerCase().includes('rent') || remarksRaw.toLowerCase().includes('rent')) {
+            cat = 'Rent';
+          } else if (itemNameRaw.toLowerCase().includes('salary') || remarksRaw.toLowerCase().includes('salary')) {
+            cat = 'Salary';
+          }
+        }
+
+        const nameVal = itemNameRaw || cat;
         return {
           id: String(item.id || `exp_${Date.now()}_${Math.random()}`),
           expenseDate: String(item.expense_date || item.date || new Date().toISOString().split('T')[0]),
           category: cat,
           itemName: nameVal,
           amount: Number(item.amount || item.cost || item.price || 0),
-          remarks: String(item.remarks || item.notes || ''),
+          remarks: remarksRaw,
           createdAt: String(item.created_at || new Date().toISOString()),
         };
       });
@@ -91,6 +102,19 @@ export const ExpenseService = {
         .insert(payload)
         .select()
         .single();
+
+      // If category constraint error (e.g. 23514), fallback to category 'Miscellaneous'
+      if (error && error.code === '23514') {
+        payload.category = 'Miscellaneous';
+        payload.item_name = finalItemName || 'Rent Payment';
+        const retryRes = await supabase
+          .from('inventory_expenses')
+          .insert(payload)
+          .select()
+          .single();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
 
       // If item_name column doesn't exist yet in Supabase table, try fallback without item_name
       if (error && (error.message?.includes('item_name') || error.code === 'PGRST204')) {

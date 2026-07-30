@@ -7,62 +7,12 @@ import {
   RentPayment,
 } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-
-// Local Memory State for fallback / offline execution
-let localEmployees: SalaryEmployee[] = [
-  {
-    id: 'emp_1',
-    name: 'Salman',
-    role: 'Chef',
-    baseSalary: 35000,
-    effectiveMonth: '2026-01',
-    isActive: true,
-    createdAt: '2026-01-01T00:00:00.000Z',
-  },
-  {
-    id: 'emp_2',
-    name: 'Chef',
-    role: 'Senior Chef',
-    baseSalary: 30000,
-    effectiveMonth: '2026-01',
-    isActive: true,
-    createdAt: '2026-01-01T00:00:00.000Z',
-  },
-  {
-    id: 'emp_3',
-    name: 'Nagaland Workers',
-    role: 'Operations & Maintenance',
-    baseSalary: 53000,
-    effectiveMonth: '2026-01',
-    isActive: true,
-    createdAt: '2026-01-01T00:00:00.000Z',
-  },
-];
-
-let localSalaryHistory: SalaryHistory[] = [
-  { id: 'sh_1', employeeId: 'emp_1', baseSalary: 35000, effectiveMonth: '2026-01', createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'sh_2', employeeId: 'emp_2', baseSalary: 30000, effectiveMonth: '2026-01', createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'sh_3', employeeId: 'emp_3', baseSalary: 53000, effectiveMonth: '2026-01', createdAt: '2026-01-01T00:00:00.000Z' },
-];
-
-let localAdjustments: EmployeeSalaryAdjustment[] = [];
-let localSalaryPayments: SalaryPayment[] = [];
-
-let localRentSettings: RentSetting[] = [
-  {
-    id: 'rent_set_1',
-    monthlyAmount: 160000,
-    effectiveMonth: '2026-01',
-    createdAt: '2026-01-01T00:00:00.000Z',
-  },
-];
-
-let localRentPayments: RentPayment[] = [];
+import { ExpenseService } from './expenses';
 
 export const SalaryRentService = {
   // --- EMPLOYEES ---
   async getEmployees(): Promise<SalaryEmployee[]> {
-    if (!isSupabaseConfigured) return [...localEmployees];
+    if (!isSupabaseConfigured) return [];
 
     try {
       const { data, error } = await supabase
@@ -70,132 +20,108 @@ export const SalaryRentService = {
         .select('*')
         .order('created_at', { ascending: true });
 
-      if (error || !data || data.length === 0) {
-        return [...localEmployees];
-      }
+      if (error || !data) return [];
 
-      const mapped: SalaryEmployee[] = data.map((e: any) => ({
-        id: String(e.id),
-        name: String(e.name || 'Employee'),
-        role: String(e.role || ''),
-        baseSalary: Number(e.base_salary || 0),
-        effectiveMonth: String(e.effective_month || '2026-01'),
-        isActive: e.is_active !== false,
-        createdAt: String(e.created_at || new Date().toISOString()),
-      }));
-
-      return mapped;
-    } catch {
-      return [...localEmployees];
+      return data
+        .filter((e: any) => e.is_active !== false)
+        .map((e: any) => ({
+          id: String(e.id),
+          name: String(e.employee_name || e.name || 'Employee'),
+          role: String(e.role || ''),
+          baseSalary: Number(e.monthly_salary || e.base_salary || 0),
+          effectiveMonth: String(e.effective_from || e.effective_month || '').substring(0, 7) || '2026-07',
+          isActive: Boolean(e.is_active !== false),
+          createdAt: String(e.created_at || new Date().toISOString()),
+        }));
+    } catch (err) {
+      console.error('Error fetching salary_employees:', err);
+      return [];
     }
   },
 
-  async addEmployee(name: string, role: string, baseSalary: number, effectiveMonth: string): Promise<SalaryEmployee> {
-    const id = `emp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const nowIso = new Date().toISOString();
-    const newEmp: SalaryEmployee = {
-      id,
-      name: name.trim(),
-      role: role.trim(),
-      baseSalary: Number(baseSalary || 0),
-      effectiveMonth: effectiveMonth || new Date().toISOString().substring(0, 7),
-      isActive: true,
-      createdAt: nowIso,
+  async addEmployee(
+    name: string,
+    role: string,
+    baseSalary: number,
+    effectiveMonth: string
+  ): Promise<SalaryEmployee> {
+    const monthStr = effectiveMonth || new Date().toISOString().substring(0, 7);
+    const effectiveFrom = `${monthStr}-01`;
+    const payload = {
+      employee_name: name.trim(),
+      monthly_salary: Number(baseSalary || 0),
+      is_active: true,
+      effective_from: effectiveFrom,
     };
 
-    localEmployees.push(newEmp);
-    localSalaryHistory.push({
-      id: `sh_${Date.now()}`,
-      employeeId: id,
-      baseSalary: Number(baseSalary || 0),
-      effectiveMonth: newEmp.effectiveMonth,
-      createdAt: nowIso,
-    });
+    const { data, error } = await supabase
+      .from('salary_employees')
+      .insert(payload)
+      .select()
+      .single();
 
-    if (isSupabaseConfigured) {
-      try {
-        const payload = {
-          name: newEmp.name,
-          role: newEmp.role,
-          base_salary: newEmp.baseSalary,
-          effective_month: newEmp.effectiveMonth,
-          is_active: true,
-        };
-        const { data } = await supabase.from('salary_employees').insert(payload).select().single();
-        if (data && data.id) {
-          newEmp.id = String(data.id);
-        }
-        await supabase.from('salary_history').insert({
-          employee_id: newEmp.id,
-          base_salary: newEmp.baseSalary,
-          effective_month: newEmp.effectiveMonth,
-        });
-      } catch (err) {
-        console.warn('Supabase addEmployee fallback to local state:', err);
-      }
+    if (error) {
+      console.error('Error adding employee to Supabase:', error);
+      throw new Error(error.message || 'Failed to add employee to Supabase');
     }
 
-    return newEmp;
+    return {
+      id: String(data.id),
+      name: String(data.employee_name || name.trim()),
+      role: role.trim(),
+      baseSalary: Number(data.monthly_salary || baseSalary),
+      effectiveMonth: monthStr,
+      isActive: true,
+      createdAt: String(data.created_at || new Date().toISOString()),
+    };
   },
 
-  async updateEmployeeName(id: string, name: string, role?: string): Promise<void> {
-    localEmployees = localEmployees.map((e) =>
-      e.id === id ? { ...e, name: name.trim(), role: role !== undefined ? role.trim() : e.role } : e
-    );
+  async updateEmployeeName(id: string, name: string, _role?: string): Promise<void> {
+    const numId = Number(id);
+    const targetId = !isNaN(numId) ? numId : id;
 
-    if (isSupabaseConfigured) {
-      try {
-        await supabase
-          .from('salary_employees')
-          .update({ name: name.trim(), ...(role !== undefined ? { role: role.trim() } : {}) })
-          .eq('id', id);
-      } catch (err) {
-        console.warn('Supabase updateEmployeeName error:', err);
-      }
+    const { error } = await supabase
+      .from('salary_employees')
+      .update({ employee_name: name.trim() })
+      .eq('id', targetId);
+
+    if (error) {
+      console.error('Error updating employee name:', error);
+      throw new Error(error.message || 'Failed to update employee name');
     }
   },
 
   async updateEmployeeSalary(id: string, newBaseSalary: number, effectiveMonth: string): Promise<void> {
-    localEmployees = localEmployees.map((e) =>
-      e.id === id ? { ...e, baseSalary: Number(newBaseSalary) } : e
-    );
+    const monthStr = effectiveMonth || new Date().toISOString().substring(0, 7);
+    const effectiveFrom = `${monthStr}-01`;
+    const numId = Number(id);
+    const targetId = !isNaN(numId) ? numId : id;
 
-    const sh: SalaryHistory = {
-      id: `sh_${Date.now()}`,
-      employeeId: id,
-      baseSalary: Number(newBaseSalary),
-      effectiveMonth,
-      createdAt: new Date().toISOString(),
-    };
-    localSalaryHistory.push(sh);
+    const { error } = await supabase
+      .from('salary_employees')
+      .update({
+        monthly_salary: Number(newBaseSalary),
+        effective_from: effectiveFrom,
+      })
+      .eq('id', targetId);
 
-    if (isSupabaseConfigured) {
-      try {
-        await supabase
-          .from('salary_employees')
-          .update({ base_salary: Number(newBaseSalary) })
-          .eq('id', id);
-
-        await supabase.from('salary_history').insert({
-          employee_id: id,
-          base_salary: Number(newBaseSalary),
-          effective_month: effectiveMonth,
-        });
-      } catch (err) {
-        console.warn('Supabase updateEmployeeSalary error:', err);
-      }
+    if (error) {
+      console.error('Error updating employee salary:', error);
+      throw new Error(error.message || 'Failed to update employee salary');
     }
   },
 
   async deleteEmployee(id: string): Promise<void> {
-    localEmployees = localEmployees.filter((e) => e.id !== id);
+    const numId = Number(id);
+    const targetId = !isNaN(numId) ? numId : id;
 
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.from('salary_employees').delete().eq('id', id);
-      } catch (err) {
-        console.warn('Supabase deleteEmployee error:', err);
-      }
+    const { error } = await supabase
+      .from('salary_employees')
+      .update({ is_active: false })
+      .eq('id', targetId);
+
+    if (error) {
+      await supabase.from('salary_employees').delete().eq('id', targetId);
     }
   },
 
@@ -207,37 +133,89 @@ export const SalaryRentService = {
     amount: number,
     remarks: string
   ): Promise<EmployeeSalaryAdjustment> {
-    const newAdj: EmployeeSalaryAdjustment = {
-      id: `adj_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      employeeId,
-      month,
-      type,
-      amount: Number(amount || 0),
-      remarks: remarks.trim(),
-      createdAt: new Date().toISOString(),
-    };
+    const salaryMonth = `${month}-01`;
+    const adjAmount = Number(amount || 0);
+    const cleanRemarks = remarks.trim();
+    const targetEmpId = !isNaN(Number(employeeId)) ? Number(employeeId) : employeeId;
 
-    localAdjustments.push(newAdj);
+    // Fetch employee details
+    const { data: empData } = await supabase
+      .from('salary_employees')
+      .select('*')
+      .eq('id', targetEmpId)
+      .maybeSingle();
 
-    if (isSupabaseConfigured) {
-      try {
-        const payload = {
-          employee_id: employeeId,
-          month,
-          type,
-          amount: newAdj.amount,
-          remarks: newAdj.remarks,
-        };
-        const { data } = await supabase.from('salary_adjustments').insert(payload).select().single();
-        if (data && data.id) {
-          newAdj.id = String(data.id);
-        }
-      } catch (err) {
-        console.warn('Supabase addSalaryAdjustment error:', err);
+    const empName = empData ? (empData.employee_name || empData.name || 'Employee') : 'Employee';
+    const monthlySalary = empData ? Number(empData.monthly_salary || 0) : 0;
+
+    // Check existing transaction
+    const { data: existingTx } = await supabase
+      .from('salary_transactions')
+      .select('*')
+      .eq('employee_id', targetEmpId)
+      .eq('salary_month', salaryMonth)
+      .maybeSingle();
+
+    if (existingTx) {
+      const newBonus = type === 'bonus' ? Number(existingTx.bonus || 0) + adjAmount : Number(existingTx.bonus || 0);
+      const newCut = type === 'cut' ? Number(existingTx.salary_cut || 0) + adjAmount : Number(existingTx.salary_cut || 0);
+      const updatedRemarks = cleanRemarks
+        ? (existingTx.remarks ? `${existingTx.remarks}; ${type === 'bonus' ? 'Bonus' : 'Cut'}: ${cleanRemarks}` : cleanRemarks)
+        : (existingTx.remarks || `${type === 'bonus' ? 'Bonus' : 'Salary Cut'}`);
+
+      const { error: updErr } = await supabase
+        .from('salary_transactions')
+        .update({
+          bonus: newBonus,
+          salary_cut: newCut,
+          remarks: updatedRemarks,
+        })
+        .eq('id', existingTx.id);
+
+      if (updErr) {
+        console.error('Error updating salary adjustment:', updErr);
+        throw new Error(updErr.message || 'Failed to update salary adjustment');
+      }
+    } else {
+      const { error: insErr } = await supabase
+        .from('salary_transactions')
+        .insert({
+          employee_id: targetEmpId,
+          salary_month: salaryMonth,
+          salary_amount: monthlySalary,
+          paid_amount: 0,
+          salary_cut: type === 'cut' ? adjAmount : 0,
+          bonus: type === 'bonus' ? adjAmount : 0,
+          carry_forward: 0,
+          remarks: cleanRemarks || (type === 'bonus' ? 'Bonus' : 'Salary Cut'),
+        });
+
+      if (insErr) {
+        console.error('Error inserting salary adjustment:', insErr);
+        throw new Error(insErr.message || 'Failed to record salary adjustment');
       }
     }
 
-    return newAdj;
+    // If bonus is added, log as an expense in inventory_expenses so analytics registers it immediately
+    if (type === 'bonus' && adjAmount > 0) {
+      await ExpenseService.addExpense({
+        category: 'Salary',
+        itemName: `${empName} (Bonus)`,
+        amount: adjAmount,
+        expenseDate: new Date().toISOString().substring(0, 10),
+        remarks: cleanRemarks || `Bonus for ${month}`,
+      }).catch((e) => console.warn('Could not auto-log inventory expense for bonus:', e));
+    }
+
+    return {
+      id: `adj_${Date.now()}`,
+      employeeId,
+      month,
+      type,
+      amount: adjAmount,
+      remarks: cleanRemarks,
+      createdAt: new Date().toISOString(),
+    };
   },
 
   // --- SALARY PAYMENTS ---
@@ -249,68 +227,120 @@ export const SalaryRentService = {
     remarks: string,
     paymentDate: string
   ): Promise<SalaryPayment> {
-    const newPay: SalaryPayment = {
-      id: `sp_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      employeeId,
-      month,
-      amount: Number(amount || 0),
-      paymentMethod,
-      remarks: remarks.trim(),
-      paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
-      createdAt: new Date().toISOString(),
-    };
+    const salaryMonth = `${month}-01`;
+    const payAmount = Number(amount || 0);
+    const pDate = paymentDate || new Date().toISOString().substring(0, 10);
+    const cleanRemarks = remarks.trim();
+    const targetEmpId = !isNaN(Number(employeeId)) ? Number(employeeId) : employeeId;
 
-    localSalaryPayments.push(newPay);
+    // Fetch employee
+    const { data: empData } = await supabase
+      .from('salary_employees')
+      .select('*')
+      .eq('id', targetEmpId)
+      .maybeSingle();
 
-    if (isSupabaseConfigured) {
-      try {
-        const payload = {
-          employee_id: employeeId,
-          month,
-          amount: newPay.amount,
-          payment_method: paymentMethod,
-          remarks: newPay.remarks,
-          payment_date: newPay.paymentDate,
-        };
-        const { data } = await supabase.from('salary_payments').insert(payload).select().single();
-        if (data && data.id) {
-          newPay.id = String(data.id);
-        }
-      } catch (err) {
-        console.warn('Supabase addSalaryPayment error:', err);
+    const empName = empData ? (empData.employee_name || empData.name || 'Employee') : 'Employee';
+    const monthlySalary = empData ? Number(empData.monthly_salary || 0) : payAmount;
+
+    // Check existing transaction
+    const { data: existingTx } = await supabase
+      .from('salary_transactions')
+      .select('*')
+      .eq('employee_id', targetEmpId)
+      .eq('salary_month', salaryMonth)
+      .maybeSingle();
+
+    let txId = '';
+    if (existingTx) {
+      txId = String(existingTx.id);
+      const updatedPaid = Number(existingTx.paid_amount || 0) + payAmount;
+      const updatedRemarks = cleanRemarks
+        ? (existingTx.remarks ? `${existingTx.remarks}; ${cleanRemarks}` : cleanRemarks)
+        : (existingTx.remarks || 'Salary Payment');
+
+      const { error: updErr } = await supabase
+        .from('salary_transactions')
+        .update({
+          paid_amount: updatedPaid,
+          remarks: updatedRemarks,
+        })
+        .eq('id', existingTx.id);
+
+      if (updErr) {
+        console.error('Error updating salary transaction:', updErr);
+        throw new Error(updErr.message || 'Failed to update salary transaction');
       }
+    } else {
+      const { data: newTx, error: insErr } = await supabase
+        .from('salary_transactions')
+        .insert({
+          employee_id: targetEmpId,
+          salary_month: salaryMonth,
+          salary_amount: monthlySalary,
+          paid_amount: payAmount,
+          salary_cut: 0,
+          bonus: 0,
+          carry_forward: 0,
+          remarks: cleanRemarks || 'Salary Payment',
+        })
+        .select()
+        .single();
+
+      if (insErr) {
+        console.error('Error inserting salary transaction:', insErr);
+        throw new Error(insErr.message || 'Failed to record salary transaction');
+      }
+      txId = String(newTx.id);
     }
 
-    return newPay;
+    // Auto-log into inventory_expenses as Salary expense for Analytics
+    await ExpenseService.addExpense({
+      category: 'Salary',
+      itemName: empName,
+      amount: payAmount,
+      expenseDate: pDate,
+      remarks: cleanRemarks || `Salary Payment for ${month}`,
+    }).catch((e) => console.warn('Could not auto-log inventory expense for salary:', e));
+
+    return {
+      id: txId,
+      employeeId,
+      month,
+      amount: payAmount,
+      paymentMethod,
+      remarks: cleanRemarks,
+      paymentDate: pDate,
+      createdAt: new Date().toISOString(),
+    };
   },
 
   // --- RENT SETTINGS ---
   async updateRentAmount(monthlyAmount: number, effectiveMonth: string): Promise<RentSetting> {
-    const newSetting: RentSetting = {
-      id: `rent_set_${Date.now()}`,
-      monthlyAmount: Number(monthlyAmount),
-      effectiveMonth,
-      createdAt: new Date().toISOString(),
-    };
+    const monthStr = effectiveMonth || new Date().toISOString().substring(0, 7);
+    const effectiveFrom = `${monthStr}-01`;
+    const rentVal = Number(monthlyAmount || 0);
 
-    localRentSettings.push(newSetting);
+    const { data, error } = await supabase
+      .from('rent_settings')
+      .insert({
+        monthly_rent: rentVal,
+        effective_from: effectiveFrom,
+      })
+      .select()
+      .single();
 
-    if (isSupabaseConfigured) {
-      try {
-        const payload = {
-          monthly_amount: newSetting.monthlyAmount,
-          effective_month: effectiveMonth,
-        };
-        const { data } = await supabase.from('rent_settings').insert(payload).select().single();
-        if (data && data.id) {
-          newSetting.id = String(data.id);
-        }
-      } catch (err) {
-        console.warn('Supabase updateRentAmount error:', err);
-      }
+    if (error) {
+      console.error('Error inserting rent_setting:', error);
+      throw new Error(error.message || 'Failed to update rent amount');
     }
 
-    return newSetting;
+    return {
+      id: String(data.id),
+      monthlyAmount: rentVal,
+      effectiveMonth: monthStr,
+      createdAt: String(data.created_at || new Date().toISOString()),
+    };
   },
 
   // --- RENT PAYMENTS ---
@@ -321,144 +351,244 @@ export const SalaryRentService = {
     remarks: string,
     paymentDate: string
   ): Promise<RentPayment> {
-    const newPay: RentPayment = {
-      id: `rp_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      month,
-      amount: Number(amount || 0),
-      paymentMethod,
-      remarks: remarks.trim(),
-      paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
-      createdAt: new Date().toISOString(),
-    };
+    const rentMonth = `${month}-01`;
+    const payAmount = Number(amount || 0);
+    const pDate = paymentDate || new Date().toISOString().substring(0, 10);
+    const cleanRemarks = remarks.trim();
 
-    localRentPayments.push(newPay);
+    // Fetch latest effective rent setting
+    const { data: rentSets } = await supabase
+      .from('rent_settings')
+      .select('*')
+      .order('effective_from', { ascending: false })
+      .limit(1);
 
-    if (isSupabaseConfigured) {
-      try {
-        const payload = {
-          month,
-          amount: newPay.amount,
-          payment_method: paymentMethod,
-          remarks: newPay.remarks,
-          payment_date: newPay.paymentDate,
-        };
-        const { data } = await supabase.from('rent_payments').insert(payload).select().single();
-        if (data && data.id) {
-          newPay.id = String(data.id);
-        }
-      } catch (err) {
-        console.warn('Supabase addRentPayment error:', err);
+    const effectiveRent = rentSets && rentSets.length > 0 ? Number(rentSets[0].monthly_rent || 160000) : 160000;
+
+    // Check existing transaction
+    const { data: existingRt } = await supabase
+      .from('rent_transactions')
+      .select('*')
+      .eq('rent_month', rentMonth)
+      .maybeSingle();
+
+    let rtId = '';
+    if (existingRt) {
+      rtId = String(existingRt.id);
+      const updatedPaid = Number(existingRt.paid_amount || 0) + payAmount;
+      const updatedRemarks = cleanRemarks
+        ? (existingRt.remarks ? `${existingRt.remarks}; ${cleanRemarks}` : cleanRemarks)
+        : (existingRt.remarks || 'Rent Payment');
+
+      const { error: updErr } = await supabase
+        .from('rent_transactions')
+        .update({
+          paid_amount: updatedPaid,
+          remarks: updatedRemarks,
+        })
+        .eq('id', existingRt.id);
+
+      if (updErr) {
+        console.error('Error updating rent transaction:', updErr);
+        throw new Error(updErr.message || 'Failed to update rent transaction');
       }
+    } else {
+      const { data: newRt, error: insErr } = await supabase
+        .from('rent_transactions')
+        .insert({
+          rent_month: rentMonth,
+          rent_amount: effectiveRent,
+          paid_amount: payAmount,
+          carry_forward: 0,
+          remarks: cleanRemarks || 'Rent Payment',
+        })
+        .select()
+        .single();
+
+      if (insErr) {
+        console.error('Error inserting rent transaction:', insErr);
+        throw new Error(insErr.message || 'Failed to record rent transaction');
+      }
+      rtId = String(newRt.id);
     }
 
-    return newPay;
-  },
-
-  // --- FETCH & COMBINE ALL DATA ---
-  async fetchAllData() {
-    let emps = [...localEmployees];
-    let shs = [...localSalaryHistory];
-    let adjs = [...localAdjustments];
-    let sps = [...localSalaryPayments];
-    let rsets = [...localRentSettings];
-    let rps = [...localRentPayments];
-
-    if (isSupabaseConfigured) {
-      try {
-        const [eRes, shRes, aRes, spRes, rRes, rpRes] = await Promise.all([
-          supabase.from('salary_employees').select('*'),
-          supabase.from('salary_history').select('*'),
-          supabase.from('salary_adjustments').select('*'),
-          supabase.from('salary_payments').select('*'),
-          supabase.from('rent_settings').select('*'),
-          supabase.from('rent_payments').select('*'),
-        ]);
-
-        if (eRes.data && eRes.data.length > 0) {
-          emps = eRes.data.map((e: any) => ({
-            id: String(e.id),
-            name: String(e.name || ''),
-            role: String(e.role || ''),
-            baseSalary: Number(e.base_salary || 0),
-            effectiveMonth: String(e.effective_month || '2026-01'),
-            isActive: e.is_active !== false,
-            createdAt: String(e.created_at || new Date().toISOString()),
-          }));
-          localEmployees = emps;
-        }
-
-        if (shRes.data && shRes.data.length > 0) {
-          shs = shRes.data.map((h: any) => ({
-            id: String(h.id),
-            employeeId: String(h.employee_id),
-            baseSalary: Number(h.base_salary || 0),
-            effectiveMonth: String(h.effective_month || '2026-01'),
-            createdAt: String(h.created_at || new Date().toISOString()),
-          }));
-          localSalaryHistory = shs;
-        }
-
-        if (aRes.data) {
-          adjs = aRes.data.map((a: any) => ({
-            id: String(a.id),
-            employeeId: String(a.employee_id),
-            month: String(a.month),
-            type: a.type as 'bonus' | 'cut',
-            amount: Number(a.amount || 0),
-            remarks: String(a.remarks || ''),
-            createdAt: String(a.created_at || new Date().toISOString()),
-          }));
-          localAdjustments = adjs;
-        }
-
-        if (spRes.data) {
-          sps = spRes.data.map((p: any) => ({
-            id: String(p.id),
-            employeeId: String(p.employee_id),
-            month: String(p.month),
-            amount: Number(p.amount || 0),
-            paymentMethod: (p.payment_method || 'cash') as any,
-            remarks: String(p.remarks || ''),
-            paymentDate: String(p.payment_date || p.created_at || '').substring(0, 10),
-            createdAt: String(p.created_at || new Date().toISOString()),
-          }));
-          localSalaryPayments = sps;
-        }
-
-        if (rRes.data && rRes.data.length > 0) {
-          rsets = rRes.data.map((r: any) => ({
-            id: String(r.id),
-            monthlyAmount: Number(r.monthly_amount || 160000),
-            effectiveMonth: String(r.effective_month || '2026-01'),
-            createdAt: String(r.created_at || new Date().toISOString()),
-          }));
-          localRentSettings = rsets;
-        }
-
-        if (rpRes.data) {
-          rps = rpRes.data.map((p: any) => ({
-            id: String(p.id),
-            month: String(p.month),
-            amount: Number(p.amount || 0),
-            paymentMethod: (p.payment_method || 'cash') as any,
-            remarks: String(p.remarks || ''),
-            paymentDate: String(p.payment_date || p.created_at || '').substring(0, 10),
-            createdAt: String(p.created_at || new Date().toISOString()),
-          }));
-          localRentPayments = rps;
-        }
-      } catch (err) {
-        console.warn('Exception loading salary/rent data from Supabase:', err);
-      }
-    }
+    // Auto-log into inventory_expenses as Rent expense for Analytics
+    await ExpenseService.addExpense({
+      category: 'Rent',
+      itemName: 'Monthly Rent',
+      amount: payAmount,
+      expenseDate: pDate,
+      remarks: cleanRemarks || `Rent Payment for ${month}`,
+    }).catch((e) => console.warn('Could not auto-log inventory expense for rent:', e));
 
     return {
-      employees: emps,
-      salaryHistory: shs,
-      salaryAdjustments: adjs,
-      salaryPayments: sps,
-      rentSettings: rsets,
-      rentPayments: rps,
+      id: rtId,
+      month,
+      amount: payAmount,
+      paymentMethod,
+      remarks: cleanRemarks,
+      paymentDate: pDate,
+      createdAt: new Date().toISOString(),
     };
+  },
+
+  // --- FETCH ALL DATA FROM SUPABASE ---
+  async fetchAllData() {
+    if (!isSupabaseConfigured) {
+      return {
+        employees: [],
+        salaryHistory: [],
+        salaryAdjustments: [],
+        salaryPayments: [],
+        rentSettings: [],
+        rentPayments: [],
+      };
+    }
+
+    try {
+      const [eRes, stRes, rSetRes, rtRes] = await Promise.all([
+        supabase.from('salary_employees').select('*').order('created_at', { ascending: true }),
+        supabase.from('salary_transactions').select('*').order('created_at', { ascending: true }),
+        supabase.from('rent_settings').select('*').order('effective_from', { ascending: false }),
+        supabase.from('rent_transactions').select('*').order('created_at', { ascending: true }),
+      ]);
+
+      const employees: SalaryEmployee[] = [];
+      const salaryHistory: SalaryHistory[] = [];
+
+      if (eRes.data) {
+        eRes.data
+          .filter((e: any) => e.is_active !== false)
+          .forEach((e: any) => {
+            const empId = String(e.id);
+            const name = String(e.employee_name || e.name || 'Employee');
+            const role = String(e.role || '');
+            const baseSalary = Number(e.monthly_salary || e.base_salary || 0);
+            const effectiveMonth = String(e.effective_from || e.effective_month || '').substring(0, 7) || '2026-07';
+
+            employees.push({
+              id: empId,
+              name,
+              role,
+              baseSalary,
+              effectiveMonth,
+              isActive: true,
+              createdAt: String(e.created_at || new Date().toISOString()),
+            });
+
+            salaryHistory.push({
+              id: `sh_${empId}`,
+              employeeId: empId,
+              baseSalary,
+              effectiveMonth,
+              createdAt: String(e.created_at || new Date().toISOString()),
+            });
+          });
+      }
+
+      const salaryPayments: SalaryPayment[] = [];
+      const salaryAdjustments: EmployeeSalaryAdjustment[] = [];
+
+      if (stRes.data) {
+        stRes.data.forEach((st: any) => {
+          const empId = String(st.employee_id);
+          const mStr = String(st.salary_month || '').substring(0, 7);
+          const paidAmt = Number(st.paid_amount || 0);
+          const bonusAmt = Number(st.bonus || 0);
+          const cutAmt = Number(st.salary_cut || 0);
+          const remarks = String(st.remarks || '');
+          const createdAt = String(st.created_at || new Date().toISOString());
+          const paymentDate = createdAt.substring(0, 10);
+
+          if (paidAmt > 0) {
+            salaryPayments.push({
+              id: String(st.id),
+              employeeId: empId,
+              month: mStr,
+              amount: paidAmt,
+              paymentMethod: 'cash',
+              remarks,
+              paymentDate,
+              createdAt,
+            });
+          }
+
+          if (bonusAmt > 0) {
+            salaryAdjustments.push({
+              id: `bonus_${st.id}`,
+              employeeId: empId,
+              month: mStr,
+              type: 'bonus',
+              amount: bonusAmt,
+              remarks,
+              createdAt,
+            });
+          }
+
+          if (cutAmt > 0) {
+            salaryAdjustments.push({
+              id: `cut_${st.id}`,
+              employeeId: empId,
+              month: mStr,
+              type: 'cut',
+              amount: cutAmt,
+              remarks,
+              createdAt,
+            });
+          }
+        });
+      }
+
+      const rentSettings: RentSetting[] = [];
+      if (rSetRes.data && rSetRes.data.length > 0) {
+        rSetRes.data.forEach((rs: any) => {
+          rentSettings.push({
+            id: String(rs.id),
+            monthlyAmount: Number(rs.monthly_rent || 0),
+            effectiveMonth: String(rs.effective_from || '').substring(0, 7) || '2026-07',
+            createdAt: String(rs.created_at || new Date().toISOString()),
+          });
+        });
+      }
+
+      const rentPayments: RentPayment[] = [];
+      if (rtRes.data) {
+        rtRes.data.forEach((rt: any) => {
+          const paidAmt = Number(rt.paid_amount || 0);
+          if (paidAmt > 0) {
+            const mStr = String(rt.rent_month || '').substring(0, 7);
+            const createdAt = String(rt.created_at || new Date().toISOString());
+            rentPayments.push({
+              id: String(rt.id),
+              month: mStr,
+              amount: paidAmt,
+              paymentMethod: 'cash',
+              remarks: String(rt.remarks || ''),
+              paymentDate: createdAt.substring(0, 10),
+              createdAt,
+            });
+          }
+        });
+      }
+
+      return {
+        employees,
+        salaryHistory,
+        salaryAdjustments,
+        salaryPayments,
+        rentSettings,
+        rentPayments,
+      };
+    } catch (err) {
+      console.error('Error fetching all salary/rent data from Supabase:', err);
+      return {
+        employees: [],
+        salaryHistory: [],
+        salaryAdjustments: [],
+        salaryPayments: [],
+        rentSettings: [],
+        rentPayments: [],
+      };
+    }
   },
 };

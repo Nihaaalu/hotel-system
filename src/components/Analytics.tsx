@@ -134,6 +134,8 @@ export default function Analytics() {
     let totalInventoryExp = 0;
     let todayExp = 0;
     let monthInventoryExp = 0;
+    let monthSalaryInExp = 0;
+    let monthRentInExp = 0;
 
     expenses.forEach((e) => {
       const amt = Number(e.amount || 0);
@@ -143,10 +145,17 @@ export default function Analytics() {
       }
       if (e.expenseDate && e.expenseDate.startsWith(currentMonthStr)) {
         monthInventoryExp += amt;
+        if (e.category === 'Salary') monthSalaryInExp += amt;
+        if (e.category === 'Rent') monthRentInExp += amt;
       }
     });
 
-    const totalMonthAllExp = monthInventoryExp + salaryTotalThisMonth + rentTotalThisMonth;
+    const addSalaryExtra = monthSalaryInExp > 0 ? 0 : salaryTotalThisMonth;
+    const addRentExtra = monthRentInExp > 0 ? 0 : rentTotalThisMonth;
+    const effectiveSalaryMonthExp = monthSalaryInExp > 0 ? monthSalaryInExp : salaryTotalThisMonth;
+    const effectiveRentMonthExp = monthRentInExp > 0 ? monthRentInExp : rentTotalThisMonth;
+
+    const totalMonthAllExp = monthInventoryExp + addSalaryExtra + addRentExtra;
     const outstandingBalance = Math.max(0, totalRev - totalAdv);
     const netIncome = monthRev - totalMonthAllExp;
 
@@ -156,8 +165,8 @@ export default function Analytics() {
       outstandingBalance,
       totalInventoryExpenses: totalInventoryExp,
       monthInventoryExp,
-      monthSalaryExp: salaryTotalThisMonth,
-      monthRentExp: rentTotalThisMonth,
+      monthSalaryExp: effectiveSalaryMonthExp,
+      monthRentExp: effectiveRentMonthExp,
       totalMonthAllExp,
       netIncome,
       todayRevenue: todayRev,
@@ -216,10 +225,10 @@ export default function Analytics() {
       catMap[catKey] = (catMap[catKey] || 0) + amt;
     });
 
-    if (salaryTotalThisMonth > 0) {
+    if (!catMap['Salary'] && salaryTotalThisMonth > 0) {
       catMap['Salary'] = salaryTotalThisMonth;
     }
-    if (rentTotalThisMonth > 0) {
+    if (!catMap['Rent'] && rentTotalThisMonth > 0) {
       catMap['Rent'] = rentTotalThisMonth;
     }
 
