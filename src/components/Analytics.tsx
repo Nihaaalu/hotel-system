@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useHotelData } from '../context/HotelContext';
 import { SalaryRentService } from '../services/salaryRent';
+import { getISTDateStr, getISTMonthStr } from '../utils/formatters';
 import { SalaryPayment, RentPayment } from '../types';
 import {
   DollarSign,
   TrendingUp,
-  CreditCard,
   Receipt,
   Wallet,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Building2,
   Users,
   Package,
@@ -17,6 +18,9 @@ import {
   RotateCcw,
   ArrowUpRight,
   ArrowDownRight,
+  ZoomIn,
+  ZoomOut,
+  Info,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -58,19 +62,175 @@ function formatMonthLabel(monthStr: string) {
   return `${MONTH_NAMES[monthIdx] || ''} ${y}`;
 }
 
+// Number counting animation component (using clean, modern sans-serif typography)
+const AnimatedNumber = React.memo(({ value, prefix = '₹', className = '' }: { value: number; prefix?: string; className?: string }) => {
+  const [displayValue, setDisplayValue] = useState(0);
+
+  useEffect(() => {
+    let startTimestamp: number | null = null;
+    const duration = 600;
+    const startValue = displayValue;
+    const endValue = value;
+
+    if (startValue === endValue) {
+      setDisplayValue(endValue);
+      return;
+    }
+
+    let animId: number;
+    const step = (timestamp: number) => {
+      if (!startTimestamp) startTimestamp = timestamp;
+      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+      const easeProgress = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+      const current = Math.round(startValue + (endValue - startValue) * easeProgress);
+      setDisplayValue(current);
+
+      if (progress < 1) {
+        animId = requestAnimationFrame(step);
+      }
+    };
+
+    animId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(animId);
+  }, [value]);
+
+  const isNegative = displayValue < 0;
+  const formatted = `${prefix}${isNegative ? '-' : ''}${Math.abs(displayValue).toLocaleString('en-IN')}`;
+  return <span className={className}>{formatted}</span>;
+});
+
+// Custom Tooltip for 12-Month Yearly Chart
+const YearlyChartTooltip = React.memo(({ active, payload }: any) => {
+  if (!active || !payload || !payload.length) return null;
+
+  const data = payload[0].payload;
+  const monthFull = formatMonthLabel(data.monthKey);
+  const rev = data.revenue || 0;
+  const inv = data.inventory || 0;
+  const sal = data.salary || 0;
+  const rnt = data.rent || 0;
+  const netProfit = rev - (inv + sal + rnt);
+
+  if (typeof window !== 'undefined' && navigator.vibrate) {
+    try { navigator.vibrate(8); } catch {}
+  }
+
+  return (
+    <div className="bg-slate-900/95 backdrop-blur-md text-white p-3.5 rounded-2xl shadow-xl border border-slate-700/80 text-xs min-w-[210px] space-y-2.5 z-50">
+      <div className="font-extrabold text-slate-100 border-b border-slate-800 pb-1.5 flex items-center justify-between">
+        <span className="text-sm tracking-tight">{monthFull}</span>
+      </div>
+      <div className="space-y-1.5 font-sans">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Room Revenue</span>
+          <span className="font-extrabold text-emerald-400 font-sans">₹{rev.toLocaleString('en-IN')}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Inventory</span>
+          <span className="font-extrabold text-amber-400 font-sans">₹{inv.toLocaleString('en-IN')}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Salary</span>
+          <span className="font-extrabold text-indigo-400 font-sans">₹{sal.toLocaleString('en-IN')}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Rent</span>
+          <span className="font-extrabold text-lime-400 font-sans">₹{rnt.toLocaleString('en-IN')}</span>
+        </div>
+        <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-3">
+          <span className="text-slate-200 font-black">Net Profit</span>
+          <span className={`font-black font-sans text-xs sm:text-sm ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            ₹{netProfit.toLocaleString('en-IN')}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// Custom Tooltip for Daily Charts
+const DailyChartTooltip = React.memo(({ active, payload, metrics, chartType }: any) => {
+  if (!active || !payload || !payload.length) return null;
+
+  const data = payload[0].payload;
+  if (!data || !data.hasValue || data.revenue === null) return null;
+
+  const rev = data.revenue || 0;
+  const inv = data.expenses || 0;
+  const daysInMonth = data.totalDaysInMonth || 30;
+  const sal = metrics.monthSalaryExp > 0 ? Math.round(metrics.monthSalaryExp / daysInMonth) : 0;
+  const rnt = metrics.monthRentExp > 0 ? Math.round(metrics.monthRentExp / daysInMonth) : 0;
+  const netProfit = rev - inv;
+
+  const prevVal = chartType === 'revenue' ? data.previousDayRevenue : data.previousDayExpenses;
+  const currentVal = chartType === 'revenue' ? rev : inv;
+  const diff = currentVal - prevVal;
+
+  if (typeof window !== 'undefined' && navigator.vibrate) {
+    try { navigator.vibrate(8); } catch {}
+  }
+
+  return (
+    <div className="bg-slate-900/95 backdrop-blur-md text-white p-3.5 rounded-2xl shadow-xl border border-slate-700/80 text-xs min-w-[210px] space-y-2 z-50">
+      <div className="font-black text-slate-100 border-b border-slate-800 pb-1.5 flex items-center justify-between">
+        <span className="text-sm tracking-tight">{data.label}</span>
+      </div>
+      <div className="space-y-1.5 font-sans">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Revenue</span>
+          <span className="font-extrabold text-emerald-400 font-sans">₹{rev.toLocaleString('en-IN')}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Inventory</span>
+          <span className="font-extrabold text-amber-400 font-sans">₹{inv.toLocaleString('en-IN')}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Salary (Avg Day)</span>
+          <span className="font-extrabold text-indigo-400 font-sans">₹{sal.toLocaleString('en-IN')}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Rent (Avg Day)</span>
+          <span className="font-extrabold text-lime-400 font-sans">₹{rnt.toLocaleString('en-IN')}</span>
+        </div>
+        <div className="pt-1.5 border-t border-slate-800 flex items-center justify-between gap-3">
+          <span className="text-slate-200 font-bold">Profit (Rev - Inv)</span>
+          <span className={`font-black font-sans ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            ₹{netProfit.toLocaleString('en-IN')}
+          </span>
+        </div>
+        <div className="pt-1.5 border-t border-slate-800 space-y-1 text-[11px]">
+          <div className="flex items-center justify-between gap-3 text-slate-400">
+            <span>Previous Day</span>
+            <span className="font-bold text-slate-300 font-sans">₹{prevVal.toLocaleString('en-IN')}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-slate-400">Difference</span>
+            <span className={`font-black font-sans ${diff >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {diff >= 0 ? '+' : ''}₹{diff.toLocaleString('en-IN')}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export default function Analytics() {
   const { bookings, expenses, isLoading } = useHotelData();
 
-  const today = useMemo(() => new Date(), []);
-  const currentYearNum = today.getFullYear();
-  const currentMonthNumStr = String(today.getMonth() + 1).padStart(2, '0');
-  const defaultMonthStr = `${currentYearNum}-${currentMonthNumStr}`;
+  const currentISTDateStr = useMemo(() => getISTDateStr(), []);
+  const defaultMonthStr = useMemo(() => getISTMonthStr(), []);
+  const currentYearNum = useMemo(() => Number(defaultMonthStr.split('-')[0]) || 2026, [defaultMonthStr]);
 
   const [selectedMonth, setSelectedMonth] = useState<string>(defaultMonthStr);
   const [selectedYear, setSelectedYear] = useState<number>(currentYearNum);
 
   const [allSalaryPayments, setAllSalaryPayments] = useState<SalaryPayment[]>([]);
   const [allRentPayments, setAllRentPayments] = useState<RentPayment[]>([]);
+
+  // Zoom levels for Daily Charts (1x, 1.5x, 2x)
+  const [revChartZoom, setRevChartZoom] = useState<number>(1);
+  const [invChartZoom, setInvChartZoom] = useState<number>(1);
 
   useEffect(() => {
     async function loadSalaryRentAnalytics() {
@@ -104,24 +264,16 @@ export default function Analytics() {
     setSelectedYear(newY);
   };
 
-  const handlePrevYear = () => {
-    const newY = selectedYear - 1;
-    const m = selectedMonth.split('-')[1];
-    setSelectedYear(newY);
-    setSelectedMonth(`${newY}-${m}`);
-  };
-
-  const handleNextYear = () => {
-    const newY = selectedYear + 1;
-    const m = selectedMonth.split('-')[1];
-    setSelectedYear(newY);
-    setSelectedMonth(`${newY}-${m}`);
-  };
-
   const handleCurrentMonth = () => {
     setSelectedYear(currentYearNum);
     setSelectedMonth(defaultMonthStr);
   };
+
+  // Dynamic list of years for selector
+  const yearOptions = useMemo(() => {
+    const startYr = currentYearNum - 2;
+    return [startYr, startYr + 1, startYr + 2, startYr + 3, startYr + 4];
+  }, [currentYearNum]);
 
   // 1. Process Unique Bookings (prevent duplicating group booking totals)
   const uniqueBookingsMap = useMemo(() => {
@@ -251,77 +403,154 @@ export default function Analytics() {
     return list;
   }, [selectedYear, uniqueBookingsMap, expenses, allSalaryPayments, allRentPayments]);
 
-  // 4. Daily Revenue & Expenses Data for Full Selected Month
+  // 4. Progressive Daily Data for Full Selected Month
+  // Shows ALL days of the month (1..31) on the X-axis, but ONLY plots points/lines up to maxCompletedDay
   const dailyDataForMonth = useMemo(() => {
-    if (!selectedMonth || !selectedMonth.includes('-')) return [];
+    if (!selectedMonth || !selectedMonth.includes('-')) {
+      return {
+        daysList: [],
+        isFutureMonth: false,
+        isCurrentMonth: false,
+        completedDays: 0,
+        totalDaysInMonth: 0,
+        todayFormatted: '',
+        totalRevMonth: 0,
+        totalExpMonth: 0,
+      };
+    }
 
     const [yStr, mStr] = selectedMonth.split('-');
     const year = parseInt(yStr, 10);
     const month = parseInt(mStr, 10);
 
     const daysInMonth = new Date(year, month, 0).getDate();
-    const daysList = [];
-
     const monthShort = SHORT_MONTH_NAMES[month - 1] || '';
+
+    const isFutureMonth = selectedMonth > defaultMonthStr;
+    const isCurrentMonth = selectedMonth === defaultMonthStr;
+
+    let maxCompletedDay = daysInMonth;
+    if (isFutureMonth) {
+      maxCompletedDay = 0;
+    } else if (isCurrentMonth) {
+      const todayDayNum = parseInt(currentISTDateStr.split('-')[2], 10);
+      maxCompletedDay = Math.min(daysInMonth, todayDayNum);
+    }
+
+    const daysList = [];
+    let prevRevenue = 0;
+    let prevExpenses = 0;
+    let totalRevMonth = 0;
+    let totalExpMonth = 0;
 
     for (let day = 1; day <= daysInMonth; day++) {
       const dayStr = String(day).padStart(2, '0');
       const dateKey = `${selectedMonth}-${dayStr}`;
 
-      let rev = 0;
-      uniqueBookingsMap.forEach((b) => {
-        if (b.checkInDate === dateKey) {
-          rev += b.totalAmount;
-        }
-      });
-
-      let invExp = 0;
-      expenses.forEach((e) => {
-        if (e.expenseDate === dateKey) {
-          const amt = Number(e.amount || 0);
-          if (e.category !== 'Salary' && e.category !== 'Rent') {
-            invExp += amt;
+      if (day <= maxCompletedDay) {
+        let rev = 0;
+        uniqueBookingsMap.forEach((b) => {
+          if (b.checkInDate === dateKey) {
+            rev += b.totalAmount;
           }
-        }
-      });
+        });
 
-      daysList.push({
-        dayNum: day,
-        dateKey,
-        label: `${day} ${monthShort}`,
-        shortLabel: String(day),
-        revenue: rev,
-        expenses: invExp,
-      });
+        let invExp = 0;
+        expenses.forEach((e) => {
+          if (e.expenseDate === dateKey) {
+            const amt = Number(e.amount || 0);
+            if (e.category !== 'Salary' && e.category !== 'Rent') {
+              invExp += amt;
+            }
+          }
+        });
+
+        totalRevMonth += rev;
+        totalExpMonth += invExp;
+
+        const revDiff = day === 1 ? rev : rev - prevRevenue;
+        const expDiff = day === 1 ? invExp : invExp - prevExpenses;
+
+        daysList.push({
+          dayNum: day,
+          dateKey,
+          label: `${day} ${monthShort} ${year}`,
+          shortLabel: String(day),
+          revenue: rev,
+          expenses: invExp,
+          previousDayRevenue: prevRevenue,
+          previousDayExpenses: prevExpenses,
+          revenueDiff: revDiff,
+          expensesDiff: expDiff,
+          totalDaysInMonth: daysInMonth,
+          hasValue: true,
+        });
+
+        prevRevenue = rev;
+        prevExpenses = invExp;
+      } else {
+        // Days past maxCompletedDay: Keep in array so X-axis shows full month 1..31, but set value to null!
+        daysList.push({
+          dayNum: day,
+          dateKey,
+          label: `${day} ${monthShort} ${year}`,
+          shortLabel: String(day),
+          revenue: null,
+          expenses: null,
+          previousDayRevenue: 0,
+          previousDayExpenses: 0,
+          revenueDiff: 0,
+          expensesDiff: 0,
+          totalDaysInMonth: daysInMonth,
+          hasValue: false,
+        });
+      }
     }
 
-    return daysList;
-  }, [selectedMonth, uniqueBookingsMap, expenses]);
+    const [tY, tM, tD] = currentISTDateStr.split('-');
+    const todayFormatted = `${tD}/${tM}/${tY}`;
+
+    return {
+      daysList,
+      isFutureMonth,
+      isCurrentMonth,
+      completedDays: maxCompletedDay,
+      totalDaysInMonth: daysInMonth,
+      todayFormatted,
+      totalRevMonth,
+      totalExpMonth,
+    };
+  }, [selectedMonth, defaultMonthStr, currentISTDateStr, uniqueBookingsMap, expenses]);
 
   if (isLoading) {
     return (
-      <div className="p-6 text-center text-slate-500 font-medium text-xs">
-        Loading financial analytics data...
+      <div className="p-6 text-center text-slate-500 font-medium text-xs flex flex-col items-center justify-center space-y-2">
+        <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+        <span>Loading financial analytics data...</span>
       </div>
     );
   }
 
   return (
-    <div className="p-2 sm:p-5 space-y-3.5 max-w-7xl mx-auto">
-      {/* SYNCHRONIZED MONTH & YEAR CONTROLLER (NO HEADER BANNER) */}
-      <div className="bg-white border border-slate-200/80 rounded-xl p-2.5 sm:p-3 shadow-2xs flex flex-wrap items-center justify-between gap-2">
-        {/* Month Selector */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
+    <div className="p-2 sm:p-4 space-y-3.5 max-w-7xl mx-auto overflow-hidden">
+      {/* 1. THUMB-FRIENDLY MONTH & YEAR SELECTOR (Directly at top, saving mobile screen space) */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-2xs space-y-2">
+        <div className="flex items-center justify-between gap-1.5 sm:gap-2">
+          {/* Previous Month */}
           <button
             onClick={handlePrevMonth}
-            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer transition"
+            className="p-2 sm:p-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 rounded-xl cursor-pointer transition touch-manipulation min-w-[38px] min-h-[38px] flex items-center justify-center shrink-0"
             title="Previous Month"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="w-5 h-5" />
           </button>
-          
-          <div className="flex items-center gap-1 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg">
-            <CalendarIcon className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+
+          {/* Month Picker / Label Overlay */}
+          <div className="relative flex-1 flex items-center justify-center px-2.5 py-2 bg-indigo-50/80 border border-indigo-200/90 rounded-xl cursor-pointer hover:bg-indigo-100/80 transition text-center min-h-[38px] touch-manipulation">
+            <CalendarIcon className="w-4 h-4 text-indigo-600 shrink-0 mr-1.5" />
+            <span className="font-extrabold text-slate-900 text-xs sm:text-base tracking-tight truncate">
+              {formatMonthLabel(selectedMonth)}
+            </span>
             <input
               type="month"
               value={selectedMonth}
@@ -331,260 +560,432 @@ export default function Analytics() {
                   setSelectedYear(parseInt(e.target.value.split('-')[0], 10));
                 }
               }}
-              className="font-black text-slate-900 text-xs sm:text-sm bg-transparent cursor-pointer focus:outline-none"
+              className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
             />
           </div>
 
+          {/* Next Month */}
           <button
             onClick={handleNextMonth}
-            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer transition"
+            className="p-2 sm:p-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 rounded-xl cursor-pointer transition touch-manipulation min-w-[38px] min-h-[38px] flex items-center justify-center shrink-0"
             title="Next Month"
           >
-            <ChevronRight className="w-4 h-4" />
+            <ChevronRight className="w-5 h-5" />
           </button>
 
-          {selectedMonth !== defaultMonthStr && (
+          {/* Year Dropdown */}
+          <div className="relative flex items-center shrink-0">
+            <select
+              value={selectedYear}
+              onChange={(e) => {
+                const newY = parseInt(e.target.value, 10);
+                const m = selectedMonth.split('-')[1];
+                setSelectedYear(newY);
+                setSelectedMonth(`${newY}-${m}`);
+              }}
+              className="appearance-none font-sans font-extrabold text-xs sm:text-sm text-slate-900 bg-slate-100 border border-slate-200 rounded-xl px-2.5 py-2 pr-6 cursor-pointer hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[38px] touch-manipulation"
+            >
+              {yearOptions.map((yr) => (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-2 pointer-events-none" />
+          </div>
+        </div>
+
+        {/* Return to Current Month Shortcut */}
+        {selectedMonth !== defaultMonthStr && (
+          <div className="flex justify-center pt-0.5">
             <button
               onClick={handleCurrentMonth}
-              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg text-[11px] cursor-pointer transition flex items-center gap-1"
+              className="px-3 py-1 bg-indigo-600 active:bg-indigo-700 text-white font-bold rounded-lg text-[11px] cursor-pointer shadow-2xs transition flex items-center gap-1"
             >
               <RotateCcw className="w-3 h-3" />
-              <span>Current</span>
+              <span>Back to Current Month</span>
             </button>
+          </div>
+        )}
+      </div>
+
+      {/* 2. SUMMARY CARDS (Strict 4-Row Layout & Clean Modern Typography) */}
+      <div className="space-y-2 sm:space-y-3">
+        {/* Row 1: Rent & Salary (Equal Width) */}
+        <div className="grid grid-cols-2 gap-2 sm:gap-3">
+          {/* Rent */}
+          <div className="p-3 sm:p-3.5 bg-lime-50/90 border border-lime-200/80 rounded-2xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <div className="flex items-center justify-between text-lime-900">
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-wide flex items-center gap-1">
+                <Building2 className="w-3.5 h-3.5 text-lime-700 shrink-0" /> Rent
+              </span>
+              <span className="text-[9px] font-sans font-extrabold bg-lime-200/80 text-lime-950 px-1.5 py-0.5 rounded-md">
+                Lease
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl font-extrabold font-sans tracking-tight text-lime-950 my-0.5">
+              <AnimatedNumber value={metrics.monthRentExp} />
+            </p>
+            <p className="text-[10px] font-semibold text-lime-800/90 truncate">
+              {formatMonthLabel(selectedMonth)} property
+            </p>
+          </div>
+
+          {/* Salary */}
+          <div className="p-3 sm:p-3.5 bg-indigo-50/90 border border-indigo-200/80 rounded-2xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <div className="flex items-center justify-between text-indigo-900">
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-wide flex items-center gap-1">
+                <Users className="w-3.5 h-3.5 text-indigo-700 shrink-0" /> Salary
+              </span>
+              <span className="text-[9px] font-sans font-extrabold bg-indigo-200/80 text-indigo-950 px-1.5 py-0.5 rounded-md">
+                Staff
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl font-extrabold font-sans tracking-tight text-indigo-950 my-0.5">
+              <AnimatedNumber value={metrics.monthSalaryExp} />
+            </p>
+            <p className="text-[10px] font-semibold text-indigo-800/90 truncate">
+              {formatMonthLabel(selectedMonth)} staff
+            </p>
+          </div>
+        </div>
+
+        {/* Row 2: Inventory & Ops (Full Width) */}
+        <div className="p-3 sm:p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-2xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+          <div className="flex items-center justify-between text-amber-900">
+            <span className="text-[10px] sm:text-xs font-black uppercase tracking-wide flex items-center gap-1">
+              <Package className="w-3.5 h-3.5 text-amber-700 shrink-0" /> Inventory &amp; Ops
+            </span>
+            <span className="text-[9px] font-sans font-extrabold bg-amber-200/80 text-amber-950 px-1.5 py-0.5 rounded-md">
+              Operations
+            </span>
+          </div>
+          <p className="text-xl sm:text-2xl font-extrabold font-sans tracking-tight text-amber-950 my-0.5">
+            <AnimatedNumber value={metrics.monthInventoryExp} />
+          </p>
+          <p className="text-[10px] font-semibold text-amber-800/90 truncate">
+            Inventory &amp; operational expenses for {formatMonthLabel(selectedMonth)}
+          </p>
+        </div>
+
+        {/* Row 3: Total Revenue & Outstanding Dues (Equal Width) */}
+        <div className="grid grid-cols-2 gap-2 sm:gap-3">
+          {/* Total Revenue */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/80 rounded-2xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <div className="flex items-center justify-between text-slate-500">
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider">Total Revenue</span>
+              <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg">
+                <DollarSign className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className="text-xl sm:text-2xl font-extrabold font-sans tracking-tight text-slate-900 my-0.5">
+              <AnimatedNumber value={metrics.monthRevenue} />
+            </p>
+            <p className="text-[10px] font-semibold text-slate-500 truncate">
+              {formatMonthLabel(selectedMonth)} bookings
+            </p>
+          </div>
+
+          {/* Outstanding Dues */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/80 rounded-2xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <div className="flex items-center justify-between text-slate-500">
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider">Outstanding Dues</span>
+              <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg">
+                <Wallet className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className="text-xl sm:text-2xl font-extrabold font-sans tracking-tight text-amber-600 my-0.5">
+              <AnimatedNumber value={metrics.outstandingBalance} />
+            </p>
+            <p className="text-[10px] font-semibold text-slate-500 truncate">Pending guest balance</p>
+          </div>
+        </div>
+
+        {/* Row 4: Month Net Profit (Full Width - Most Prominent Card) */}
+        <div className="p-3.5 sm:p-4 bg-slate-900 text-white rounded-2xl shadow-md border border-slate-800 flex flex-col justify-between min-h-[102px]">
+          <div className="flex items-center justify-between text-slate-300">
+            <span className="text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5">
+              <Receipt className="w-4 h-4 text-emerald-400 shrink-0" /> Month Net Profit
+            </span>
+            <span className="text-[10px] font-sans font-bold bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700">
+              Net Bottomline
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between my-1">
+            <p className="text-2xl sm:text-3xl font-black font-sans tracking-tight">
+              <AnimatedNumber
+                value={metrics.netIncome}
+                className={metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'}
+              />
+            </p>
+            <span className="text-[11px] font-semibold text-slate-400">
+              Revenue - All Expenses
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-400 font-medium truncate">
+            Net Profit for {formatMonthLabel(selectedMonth)}
+          </p>
+        </div>
+      </div>
+
+      {/* 3. FULL YEAR 12-MONTH CHART (All 12 Months Always Present) */}
+      <div className="bg-white p-3 sm:p-4 border border-slate-200/80 rounded-2xl shadow-2xs space-y-2">
+        <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-2 gap-2">
+          <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+            <TrendingUp className="w-4 h-4 text-indigo-600 shrink-0" />
+            Monthly Revenue vs Operating Expenses ({selectedYear})
+          </h3>
+          <div className="text-[10px] text-slate-400 font-medium flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">
+            <Info className="w-3 h-3 text-slate-400" />
+            <span>Swipe horizontally to view all months</span>
+          </div>
+        </div>
+
+        <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 pb-1">
+          <div className="min-w-[580px] sm:min-w-full h-64 sm:h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={yearly12MonthsData} margin={{ top: 12, right: 10, left: -15, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fontWeight: 700 }} stroke="#475569" interval={0} />
+                <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                <Tooltip content={<YearlyChartTooltip />} wrapperStyle={{ zIndex: 50 }} />
+                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+                <Bar dataKey="revenue" name="Room Revenue" fill="#10B981" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={900} />
+                <Bar dataKey="inventory" name="Inventory" fill="#F59E0B" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={900} />
+                <Bar dataKey="salary" name="Salary" fill="#6366F1" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={900} />
+                <Bar dataKey="rent" name="Rent" fill="#84CC16" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={900} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* 4. PROGRESSIVE DAILY CHARTS SECTION */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+        {/* CHART 1: DAILY ROOM REVENUE */}
+        <div className="bg-white p-3 sm:p-4 border border-slate-200/80 rounded-2xl shadow-2xs space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-2 gap-2">
+            <div>
+              <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+                <ArrowUpRight className="w-4 h-4 text-emerald-600 shrink-0" />
+                Daily Room Revenue ({formatMonthLabel(selectedMonth)})
+              </h3>
+              <div className="text-[11px] font-medium text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
+                <span>Today: {dailyDataForMonth.todayFormatted}</span>
+                <span className="text-slate-300">•</span>
+                <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[10px]">
+                  {dailyDataForMonth.isFutureMonth
+                    ? 'Future Month'
+                    : `Completed: ${dailyDataForMonth.completedDays} of ${dailyDataForMonth.totalDaysInMonth} days`}
+                </span>
+              </div>
+            </div>
+
+            {/* Zoom Controls */}
+            {!dailyDataForMonth.isFutureMonth && (
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+                <button
+                  onClick={() => setRevChartZoom((z) => Math.min(2.5, z + 0.5))}
+                  className="p-1 hover:bg-white rounded text-slate-600 cursor-pointer"
+                  title="Zoom In"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-[10px] font-sans font-extrabold text-slate-700 px-1">
+                  {revChartZoom}x
+                </span>
+                <button
+                  onClick={() => setRevChartZoom((z) => Math.max(1, z - 0.5))}
+                  className="p-1 hover:bg-white rounded text-slate-600 cursor-pointer"
+                  title="Zoom Out"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                {revChartZoom > 1 && (
+                  <button
+                    onClick={() => setRevChartZoom(1)}
+                    className="p-1 hover:bg-white rounded text-indigo-600 font-bold text-[10px] cursor-pointer"
+                    title="Reset Zoom"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Chart Body or Clean Empty States */}
+          {dailyDataForMonth.isFutureMonth ? (
+            <div className="h-56 sm:h-64 w-full flex flex-col items-center justify-center p-6 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
+              <CalendarIcon className="w-8 h-8 text-slate-300" />
+              <p className="font-bold text-slate-700 text-xs sm:text-sm">No bookings recorded yet</p>
+              <p className="text-[11px] text-slate-400">Start creating bookings to generate analytics.</p>
+            </div>
+          ) : dailyDataForMonth.totalRevMonth === 0 ? (
+            <div className="h-56 sm:h-64 w-full flex flex-col items-center justify-center p-6 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
+              <Package className="w-8 h-8 text-slate-300" />
+              <p className="font-bold text-slate-700 text-xs sm:text-sm">No bookings recorded yet</p>
+              <p className="text-[11px] text-slate-400">Start creating bookings to generate analytics.</p>
+            </div>
+          ) : (
+            <div
+              className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 pb-1"
+              onDoubleClick={() => setRevChartZoom(1)}
+            >
+              <div
+                className="h-56 sm:h-64 transition-all duration-300"
+                style={{ width: `${revChartZoom * 100}%`, minWidth: '100%' }}
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={dailyDataForMonth.daysList}
+                    margin={{ top: 12, right: 12, left: -20, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis
+                      dataKey="shortLabel"
+                      tick={{ fontSize: 10, fontWeight: 700 }}
+                      stroke="#64748b"
+                      interval={0}
+                    />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                    <Tooltip
+                      content={<DailyChartTooltip metrics={metrics} chartType="revenue" />}
+                      wrapperStyle={{ zIndex: 50 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="revenue"
+                      name="Revenue"
+                      stroke="#10B981"
+                      strokeWidth={3}
+                      dot={{ r: 4, fill: '#10B981', strokeWidth: 2, stroke: '#ffffff' }}
+                      activeDot={{ r: 7, fill: '#059669', stroke: '#ffffff', strokeWidth: 2.5 }}
+                      connectNulls={false}
+                      isAnimationActive={true}
+                      animationDuration={1200}
+                      animationEasing="ease-in-out"
+                      key={`rev-line-${selectedMonth}-${revChartZoom}`}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           )}
         </div>
 
-        {/* Year Controls */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] uppercase font-extrabold text-slate-400">Year:</span>
-          <button
-            onClick={handlePrevYear}
-            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer transition"
-            title="Previous Year"
-          >
-            <ChevronLeft className="w-3.5 h-3.5" />
-          </button>
-          <span className="font-mono font-black text-xs sm:text-sm text-slate-900 px-2 py-1 bg-slate-100 rounded-lg">
-            {selectedYear}
-          </span>
-          <button
-            onClick={handleNextYear}
-            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer transition"
-            title="Next Year"
-          >
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* THREE MAJOR EXPENSE PILLARS KPI GRID */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
-        {/* Monthly Rent */}
-        <div className="p-3 sm:p-3.5 bg-lime-50/90 border border-lime-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
-          <div className="flex items-center justify-between text-lime-900">
-            <span className="text-[11px] font-black uppercase tracking-wide flex items-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5 text-lime-700 shrink-0" /> Rent
-            </span>
-            <span className="text-[9px] font-mono bg-lime-200/80 text-lime-950 px-1.5 py-0.5 rounded-md font-extrabold">
-              Property
-            </span>
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-lime-950 font-mono">₹{metrics.monthRentExp.toLocaleString()}</p>
-          <p className="text-[10px] font-semibold text-lime-800/90 truncate">Property lease for {formatMonthLabel(selectedMonth)}</p>
-        </div>
-
-        {/* Monthly Salary */}
-        <div className="p-3 sm:p-3.5 bg-indigo-50/90 border border-indigo-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
-          <div className="flex items-center justify-between text-indigo-900">
-            <span className="text-[11px] font-black uppercase tracking-wide flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-indigo-700 shrink-0" /> Salary
-            </span>
-            <span className="text-[9px] font-mono bg-indigo-200/80 text-indigo-950 px-1.5 py-0.5 rounded-md font-extrabold">
-              Staff
-            </span>
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-indigo-950 font-mono">₹{metrics.monthSalaryExp.toLocaleString()}</p>
-          <p className="text-[10px] font-semibold text-indigo-800/90 truncate">Staff payouts for {formatMonthLabel(selectedMonth)}</p>
-        </div>
-
-        {/* Monthly Inventory */}
-        <div className="p-3 sm:p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
-          <div className="flex items-center justify-between text-amber-900">
-            <span className="text-[11px] font-black uppercase tracking-wide flex items-center gap-1.5">
-              <Package className="w-3.5 h-3.5 text-amber-700 shrink-0" /> Inventory & Ops
-            </span>
-            <span className="text-[9px] font-mono bg-amber-200/80 text-amber-950 px-1.5 py-0.5 rounded-md font-extrabold">
-              Items
-            </span>
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-amber-950 font-mono">₹{metrics.monthInventoryExp.toLocaleString()}</p>
-          <p className="text-[10px] font-semibold text-amber-800/90 truncate">Inventory & bills for {formatMonthLabel(selectedMonth)}</p>
-        </div>
-      </div>
-
-      {/* Primary KPI Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-        {/* Total Revenue */}
-        <div className="p-3 sm:p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
-          <div className="flex items-center justify-between text-slate-500">
-            <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider">Total Revenue</span>
-            <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg">
-              <DollarSign className="w-3.5 h-3.5" />
+        {/* CHART 2: DAILY INVENTORY EXPENSES */}
+        <div className="bg-white p-3 sm:p-4 border border-slate-200/80 rounded-2xl shadow-2xs space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-2 gap-2">
+            <div>
+              <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+                <ArrowDownRight className="w-4 h-4 text-rose-600 shrink-0" />
+                Daily Inventory Expenses ({formatMonthLabel(selectedMonth)})
+              </h3>
+              <div className="text-[11px] font-medium text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
+                <span>Today: {dailyDataForMonth.todayFormatted}</span>
+                <span className="text-slate-300">•</span>
+                <span className="font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded text-[10px]">
+                  {dailyDataForMonth.isFutureMonth
+                    ? 'Future Month'
+                    : `Completed: ${dailyDataForMonth.completedDays} of ${dailyDataForMonth.totalDaysInMonth} days`}
+                </span>
+              </div>
             </div>
-          </div>
-          <p className="text-lg sm:text-xl font-black text-slate-900 font-mono">₹{metrics.monthRevenue.toLocaleString()}</p>
-          <p className="text-[10px] font-semibold text-slate-500 truncate">{formatMonthLabel(selectedMonth)} room bookings</p>
-        </div>
 
-        {/* Advance Received */}
-        <div className="p-3 sm:p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
-          <div className="flex items-center justify-between text-slate-500">
-            <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider">Advance Received</span>
-            <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
-              <CreditCard className="w-3.5 h-3.5" />
+            {/* Zoom Controls */}
+            {!dailyDataForMonth.isFutureMonth && (
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+                <button
+                  onClick={() => setInvChartZoom((z) => Math.min(2.5, z + 0.5))}
+                  className="p-1 hover:bg-white rounded text-slate-600 cursor-pointer"
+                  title="Zoom In"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-[10px] font-sans font-extrabold text-slate-700 px-1">
+                  {invChartZoom}x
+                </span>
+                <button
+                  onClick={() => setInvChartZoom((z) => Math.max(1, z - 0.5))}
+                  className="p-1 hover:bg-white rounded text-slate-600 cursor-pointer"
+                  title="Zoom Out"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                {invChartZoom > 1 && (
+                  <button
+                    onClick={() => setInvChartZoom(1)}
+                    className="p-1 hover:bg-white rounded text-indigo-600 font-bold text-[10px] cursor-pointer"
+                    title="Reset Zoom"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Chart Body or Clean Empty States */}
+          {dailyDataForMonth.isFutureMonth ? (
+            <div className="h-56 sm:h-64 w-full flex flex-col items-center justify-center p-6 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
+              <CalendarIcon className="w-8 h-8 text-slate-300" />
+              <p className="font-bold text-slate-700 text-xs sm:text-sm">No inventory expenses recorded yet.</p>
+              <p className="text-[11px] text-slate-400">Future dates have not occurred yet.</p>
             </div>
-          </div>
-          <p className="text-lg sm:text-xl font-black text-blue-700 font-mono">₹{metrics.advanceReceived.toLocaleString()}</p>
-          <p className="text-[10px] font-semibold text-slate-500 truncate">Upfront collections</p>
-        </div>
-
-        {/* Outstanding Dues */}
-        <div className="p-3 sm:p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
-          <div className="flex items-center justify-between text-slate-500">
-            <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider">Outstanding Dues</span>
-            <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg">
-              <Wallet className="w-3.5 h-3.5" />
+          ) : dailyDataForMonth.totalExpMonth === 0 ? (
+            <div className="h-56 sm:h-64 w-full flex flex-col items-center justify-center p-6 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
+              <Receipt className="w-8 h-8 text-slate-300" />
+              <p className="font-bold text-slate-700 text-xs sm:text-sm">No inventory expenses recorded yet.</p>
+              <p className="text-[11px] text-slate-400">Log expenses in Inventory to track daily usage.</p>
             </div>
-          </div>
-          <p className="text-lg sm:text-xl font-black text-amber-600 font-mono">₹{metrics.outstandingBalance.toLocaleString()}</p>
-          <p className="text-[10px] font-semibold text-slate-500 truncate">Pending guest balance</p>
-        </div>
-
-        {/* Month Net Profit */}
-        <div className="p-3 sm:p-3.5 bg-slate-900 text-white rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
-          <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider">Month Net Profit</span>
-            <div className="p-1.5 bg-slate-800 text-emerald-400 rounded-lg">
-              <Receipt className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <p className={`text-lg sm:text-xl font-black font-mono ${metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-            ₹{metrics.netIncome.toLocaleString()}
-          </p>
-          <p className="text-[10px] font-semibold text-slate-400 truncate">Revenue - All Expenses</p>
-        </div>
-      </div>
-
-      {/* FULL YEAR 12-MONTH CHART (Span Full Width) */}
-      <div className="bg-white p-3.5 sm:p-4 border border-slate-200/80 rounded-xl shadow-2xs space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-          <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
-            <TrendingUp className="w-4 h-4 text-indigo-600" />
-            Monthly Revenue vs Operating Expenses ({selectedYear})
-          </h3>
-          <div className="flex items-center gap-1 text-[11px] font-bold text-slate-500">
-            <button
-              onClick={handlePrevYear}
-              className="p-1 hover:bg-slate-100 rounded cursor-pointer"
-              title="Previous Year"
+          ) : (
+            <div
+              className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 pb-1"
+              onDoubleClick={() => setInvChartZoom(1)}
             >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <span className="font-mono text-slate-900">{selectedYear}</span>
-            <button
-              onClick={handleNextYear}
-              className="p-1 hover:bg-slate-100 rounded cursor-pointer"
-              title="Next Year"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-        <div className="h-64 sm:h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={yearly12MonthsData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="#94a3b8" />
-              <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
-              <Tooltip
-                formatter={(value: any) => [`₹${Number(value).toLocaleString()}`, '']}
-                contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '11px' }}
-              />
-              <Legend wrapperStyle={{ fontSize: '11px' }} />
-              <Bar dataKey="revenue" name="Room Revenue" fill="#10B981" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="inventory" name="Inventory" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="salary" name="Salary" fill="#6366F1" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="rent" name="Rent" fill="#84CC16" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* DAILY CHARTS SECTION FOR FULL SELECTED MONTH */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-        {/* Chart 1: Daily Revenue */}
-        <div className="bg-white p-3.5 sm:p-4 border border-slate-200/80 rounded-xl shadow-2xs space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-            <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
-              <ArrowUpRight className="w-4 h-4 text-emerald-600" />
-              Daily Room Revenue ({formatMonthLabel(selectedMonth)})
-            </h3>
-            <span className="text-[10px] font-mono text-slate-400">{dailyDataForMonth.length} Days</span>
-          </div>
-          <div className="h-56 sm:h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dailyDataForMonth} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="shortLabel" tick={{ fontSize: 9 }} stroke="#94a3b8" interval={0} />
-                <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
-                <Tooltip
-                  formatter={(val: any) => [`₹${Number(val).toLocaleString()}`, 'Revenue']}
-                  labelFormatter={(label, items) => {
-                    if (items && items[0] && items[0].payload) {
-                      return items[0].payload.label;
-                    }
-                    return label;
-                  }}
-                  contentStyle={{ borderRadius: '10px', fontSize: '11px' }}
-                />
-                <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#10B981" strokeWidth={2} dot={{ r: 2 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Chart 2: Daily Inventory Expenses */}
-        <div className="bg-white p-3.5 sm:p-4 border border-slate-200/80 rounded-xl shadow-2xs space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-            <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
-              <ArrowDownRight className="w-4 h-4 text-rose-600" />
-              Daily Inventory Expenses ({formatMonthLabel(selectedMonth)})
-            </h3>
-            <span className="text-[10px] font-mono text-slate-400">{dailyDataForMonth.length} Days</span>
-          </div>
-          <div className="h-56 sm:h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dailyDataForMonth} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="shortLabel" tick={{ fontSize: 9 }} stroke="#94a3b8" interval={0} />
-                <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
-                <Tooltip
-                  formatter={(val: any) => [`₹${Number(val).toLocaleString()}`, 'Inventory Expenses']}
-                  labelFormatter={(label, items) => {
-                    if (items && items[0] && items[0].payload) {
-                      return items[0].payload.label;
-                    }
-                    return label;
-                  }}
-                  contentStyle={{ borderRadius: '10px', fontSize: '11px' }}
-                />
-                <Line type="monotone" dataKey="expenses" name="Inventory Expenses" stroke="#f43f5e" strokeWidth={2} dot={{ r: 2 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+              <div
+                className="h-56 sm:h-64 transition-all duration-300"
+                style={{ width: `${invChartZoom * 100}%`, minWidth: '100%' }}
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={dailyDataForMonth.daysList}
+                    margin={{ top: 12, right: 12, left: -20, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis
+                      dataKey="shortLabel"
+                      tick={{ fontSize: 10, fontWeight: 700 }}
+                      stroke="#64748b"
+                      interval={0}
+                    />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                    <Tooltip
+                      content={<DailyChartTooltip metrics={metrics} chartType="expenses" />}
+                      wrapperStyle={{ zIndex: 50 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="expenses"
+                      name="Inventory Expenses"
+                      stroke="#f43f5e"
+                      strokeWidth={3}
+                      dot={{ r: 4, fill: '#f43f5e', strokeWidth: 2, stroke: '#ffffff' }}
+                      activeDot={{ r: 7, fill: '#e11d48', stroke: '#ffffff', strokeWidth: 2.5 }}
+                      connectNulls={false}
+                      isAnimationActive={true}
+                      animationDuration={1200}
+                      animationEasing="ease-in-out"
+                      key={`exp-line-${selectedMonth}-${invChartZoom}`}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
-

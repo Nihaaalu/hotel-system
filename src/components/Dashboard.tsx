@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Booking, DashboardStats, Room } from '../types';
 import { useHotelData } from '../context/HotelContext';
-import { formatDateDDMMYYYY } from '../utils/formatters';
+import { formatDateDDMMYYYY, getISTDateStr } from '../utils/formatters';
 import {
   BedSingle,
   DoorOpen,
@@ -38,7 +38,7 @@ export default function Dashboard({
   const { rooms, bookings, payments, expenses, isLoading, error: errorMsg, refreshData: loadDashboardStats } = useHotelData();
 
   const { stats, roomStatuses } = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getISTDateStr();
     const currentYearMonth = todayStr.substring(0, 7);
 
     // Filter active bookings for TODAY (checkInDate <= todayStr)
@@ -176,7 +176,7 @@ export default function Dashboard({
   }, [rooms, bookings, payments, expenses]);
 
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getISTDateStr();
 
   const formatDateShort = (dateStr: string) => {
     return formatDateDDMMYYYY(dateStr);

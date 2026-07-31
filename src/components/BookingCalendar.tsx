@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Booking } from '../types';
 import { useHotelData } from '../context/HotelContext';
-import { formatDateHuman } from '../utils/formatters';
+import { formatDateHuman, getISTDateStr } from '../utils/formatters';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, X, RefreshCw, AlertCircle } from 'lucide-react';
 import MobileCalendar from './MobileCalendar';
 import ExportOccupancyButton from './ExportOccupancyButton';
@@ -21,10 +21,11 @@ export default function BookingCalendar({
 }: BookingCalendarProps) {
   const { rooms, bookings: bookingList, isLoading, error: errorMsg, refreshData: loadCalendarData } = useHotelData();
 
-  // Selected month (first day of month)
+  // Selected month (first day of month in IST)
   const [currentMonth, setCurrentMonth] = useState<Date>(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
+    const istStr = getISTDateStr();
+    const [y, m] = istStr.split('-').map(Number);
+    return new Date(y, m - 1, 1);
   });
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -75,8 +76,7 @@ export default function BookingCalendar({
     return `${y}-${mm}-${dd}`;
   };
 
-  const todayObj = new Date();
-  const todayYMD = formatYMD(todayObj.getFullYear(), todayObj.getMonth(), todayObj.getDate());
+  const todayYMD = getISTDateStr();
 
   // Generate days array for current month
   const monthDays = [];
@@ -106,8 +106,9 @@ export default function BookingCalendar({
   const goToPrevMonth = () => setCurrentMonth(prevMonthObj);
   const goToNextMonth = () => setCurrentMonth(nextMonthObj);
   const goToToday = () => {
-    const now = new Date();
-    setCurrentMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+    const istStr = getISTDateStr();
+    const [y, m] = istStr.split('-').map(Number);
+    setCurrentMonth(new Date(y, m - 1, 1));
   };
 
   // Helper to find booking for a room on a specific YYYY-MM-DD date
@@ -124,13 +125,13 @@ export default function BookingCalendar({
   // Auto-scroll to today if current month is selected (Desktop)
   useEffect(() => {
     const timer = setTimeout(() => {
+      const [todayYear, todayMonthNum, todayDay] = todayYMD.split('-').map(Number);
       if (
-        todayObj.getFullYear() === year &&
-        todayObj.getMonth() === month &&
+        todayYear === year &&
+        todayMonthNum - 1 === month &&
         scrollContainerRef.current
       ) {
-        const todayNum = todayObj.getDate();
-        const targetX = (todayNum - 1) * COL_WIDTH;
+        const targetX = (todayDay - 1) * COL_WIDTH;
         const containerWidth = scrollContainerRef.current.clientWidth - ROOM_COL_WIDTH;
         scrollContainerRef.current.scrollTo({
           left: Math.max(0, targetX - containerWidth / 2 + COL_WIDTH / 2),
@@ -139,7 +140,7 @@ export default function BookingCalendar({
       }
     }, 120);
     return () => clearTimeout(timer);
-  }, [currentMonth, year, month]);
+  }, [currentMonth, year, month, todayYMD]);
 
   // Compute booking bar placement for desktop
   const getRoomBookingsForMonth = (roomNumber: number) => {

@@ -1,3 +1,28 @@
+export const getISTDateStr = (): string => {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return formatter.format(new Date()); // Returns YYYY-MM-DD in Asia/Kolkata
+  } catch {
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + istOffset);
+    return istDate.toISOString().substring(0, 10);
+  }
+};
+
+export const getISTMonthStr = (): string => getISTDateStr().substring(0, 7);
+
+export const getISTDate = (): Date => {
+  const dateStr = getISTDateStr();
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
 export const formatDateDDMMYYYY = (dateInput: string | Date | number | null | undefined): string => {
   if (!dateInput) return '';
   

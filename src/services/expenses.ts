@@ -1,5 +1,6 @@
 import { Expense, ExpenseCategory } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { getISTDateStr } from '../utils/formatters';
 
 function logQuery(table: string, action: string, where: string, payload?: any) {
   console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
@@ -50,7 +51,7 @@ export const ExpenseService = {
         const nameVal = itemNameRaw || cat;
         return {
           id: String(item.id || `exp_${Date.now()}_${Math.random()}`),
-          expenseDate: String(item.expense_date || item.date || new Date().toISOString().split('T')[0]),
+          expenseDate: String(item.expense_date || item.date || getISTDateStr()),
           category: cat,
           itemName: nameVal,
           amount: Number(item.amount || item.cost || item.price || 0),

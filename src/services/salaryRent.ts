@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ExpenseService } from './expenses';
+import { getISTDateStr, getISTMonthStr } from '../utils/formatters';
 
 export const SalaryRentService = {
   // --- WALLET METHODS ---
@@ -100,7 +101,7 @@ export const SalaryRentService = {
     if (!isSupabaseConfigured) return;
 
     const targetEmpId = !isNaN(Number(tx.employeeId)) ? Number(tx.employeeId) : tx.employeeId;
-    const monthStr = tx.salaryMonth ? tx.salaryMonth.substring(0, 7) : new Date().toISOString().substring(0, 7);
+    const monthStr = tx.salaryMonth ? tx.salaryMonth.substring(0, 7) : getISTMonthStr();
     const salaryMonth = `${monthStr}-01`;
 
     const payload = {
@@ -172,7 +173,7 @@ export const SalaryRentService = {
     baseSalary: number,
     effectiveMonth: string
   ): Promise<SalaryEmployee> {
-    const monthStr = effectiveMonth || new Date().toISOString().substring(0, 7);
+    const monthStr = effectiveMonth || getISTMonthStr();
     const effectiveFrom = `${monthStr}-01`;
     const payload = {
       employee_name: name.trim(),
@@ -232,7 +233,7 @@ export const SalaryRentService = {
   },
 
   async updateEmployeeSalary(id: string, newBaseSalary: number, effectiveMonth: string): Promise<void> {
-    const monthStr = effectiveMonth || new Date().toISOString().substring(0, 7);
+    const monthStr = effectiveMonth || getISTMonthStr();
     const effectiveFrom = `${monthStr}-01`;
     const numId = Number(id);
     const targetId = !isNaN(numId) ? numId : id;
@@ -351,7 +352,7 @@ export const SalaryRentService = {
         category: 'Salary',
         itemName: `${empName} (Bonus)`,
         amount: adjAmount,
-        expenseDate: new Date().toISOString().substring(0, 10),
+        expenseDate: getISTDateStr(),
         remarks: cleanRemarks || `Bonus for ${month}`,
       }).catch((e) => console.warn('Could not auto-log inventory expense for bonus:', e));
     }
@@ -378,7 +379,7 @@ export const SalaryRentService = {
   ): Promise<SalaryPayment> {
     const salaryMonth = `${month}-01`;
     const payAmount = Number(amount || 0);
-    const pDate = paymentDate || new Date().toISOString().substring(0, 10);
+    const pDate = paymentDate || getISTDateStr();
     const cleanRemarks = remarks.trim();
     const targetEmpId = !isNaN(Number(employeeId)) ? Number(employeeId) : employeeId;
 
@@ -476,7 +477,7 @@ export const SalaryRentService = {
 
   // --- RENT SETTINGS ---
   async updateRentAmount(monthlyAmount: number, effectiveMonth: string): Promise<RentSetting> {
-    const monthStr = effectiveMonth || new Date().toISOString().substring(0, 7);
+    const monthStr = effectiveMonth || getISTMonthStr();
     const effectiveFrom = `${monthStr}-01`;
     const rentVal = Number(monthlyAmount || 0);
 
@@ -512,7 +513,7 @@ export const SalaryRentService = {
   ): Promise<RentPayment> {
     const rentMonth = `${month}-01`;
     const payAmount = Number(amount || 0);
-    const pDate = paymentDate || new Date().toISOString().substring(0, 10);
+    const pDate = paymentDate || getISTDateStr();
     const cleanRemarks = remarks.trim();
 
     // Fetch latest effective rent setting
