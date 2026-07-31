@@ -104,6 +104,22 @@ export interface EmployeeSalaryAdjustment {
   createdAt: string;
 }
 
+export interface EmployeeWalletBalance {
+  employeeId: string;
+  walletBalance: number;
+}
+
+export interface EmployeeWalletTransaction {
+  id: string;
+  employeeId: string;
+  salaryMonth: string;
+  transactionType: 'monthly_salary' | 'bonus' | 'salary_cut' | 'payment' | 'manual_adjustment';
+  amount: number;
+  paymentMethod?: string;
+  remarks?: string;
+  createdAt: string;
+}
+
 export interface SalaryPayment {
   id: string;
   employeeId: string;

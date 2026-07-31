@@ -5,11 +5,138 @@ import {
   SalaryPayment,
   RentSetting,
   RentPayment,
+  EmployeeWalletBalance,
+  EmployeeWalletTransaction,
 } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ExpenseService } from './expenses';
 
 export const SalaryRentService = {
+  // --- WALLET METHODS ---
+  async getWalletBalances(): Promise<EmployeeWalletBalance[]> {
+    if (!isSupabaseConfigured) return [];
+    try {
+      const { data, error } = await supabase
+        .from('employee_wallet_balance')
+        .select('*');
+
+      if (error) {
+        console.warn('Could not query employee_wallet_balance view:', error);
+        // Fallback calculation directly from employee_wallet_transactions
+        const { data: txs } = await supabase
+          .from('employee_wallet_transactions')
+          .select('*');
+        if (!txs) return [];
+
+        const map = new Map<string, number>();
+        txs.forEach((t: any) => {
+          const empId = String(t.employee_id);
+          const type = String(t.transaction_type || '');
+          const amt = Number(t.amount || 0);
+          const curr = map.get(empId) || 0;
+          if (type === 'monthly_salary' || type === 'bonus' || type === 'manual_adjustment') {
+            map.set(empId, curr + amt);
+          } else if (type === 'salary_cut' || type === 'payment') {
+            map.set(empId, curr - amt);
+          }
+        });
+        return Array.from(map.entries()).map(([employeeId, walletBalance]) => ({
+          employeeId,
+          walletBalance,
+        }));
+      }
+
+      if (!data) return [];
+      return data.map((b: any) => ({
+        employeeId: String(b.employee_id),
+        walletBalance: Number(b.wallet_balance || 0),
+      }));
+    } catch (err) {
+      console.error('Error in getWalletBalances:', err);
+      return [];
+    }
+  },
+
+  async getWalletTransactions(employeeId?: string): Promise<EmployeeWalletTransaction[]> {
+    if (!isSupabaseConfigured) return [];
+    try {
+      let query = supabase
+        .from('employee_wallet_transactions')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (employeeId) {
+        const targetEmpId = !isNaN(Number(employeeId)) ? Number(employeeId) : employeeId;
+        query = query.eq('employee_id', targetEmpId);
+      }
+
+      const { data, error } = await query;
+      if (error || !data) return [];
+
+      return data.map((t: any) => ({
+        id: String(t.id),
+        employeeId: String(t.employee_id),
+        salaryMonth: String(t.salary_month || '').substring(0, 7),
+        transactionType: t.transaction_type as any,
+        amount: Number(t.amount || 0),
+        paymentMethod: String(t.payment_method || ''),
+        remarks: String(t.remarks || ''),
+        createdAt: String(t.created_at || ''),
+      }));
+    } catch (err) {
+      console.error('Error in getWalletTransactions:', err);
+      return [];
+    }
+  },
+
+  async recordWalletTransaction(tx: {
+    employeeId: string;
+    salaryMonth: string;
+    transactionType: 'monthly_salary' | 'bonus' | 'salary_cut' | 'payment' | 'manual_adjustment';
+    amount: number;
+    paymentMethod?: string;
+    remarks?: string;
+  }): Promise<void> {
+    if (!isSupabaseConfigured) return;
+
+    const targetEmpId = !isNaN(Number(tx.employeeId)) ? Number(tx.employeeId) : tx.employeeId;
+    const monthStr = tx.salaryMonth ? tx.salaryMonth.substring(0, 7) : new Date().toISOString().substring(0, 7);
+    const salaryMonth = `${monthStr}-01`;
+
+    const payload = {
+      employee_id: targetEmpId,
+      salary_month: salaryMonth,
+      transaction_type: tx.transactionType,
+      amount: Number(tx.amount || 0),
+      payment_method: tx.paymentMethod || '',
+      remarks: tx.remarks || '',
+    };
+
+    const { error } = await supabase
+      .from('employee_wallet_transactions')
+      .insert(payload);
+
+    if (error) {
+      console.error('Error inserting employee_wallet_transaction:', error);
+      throw new Error(error.message || 'Failed to record wallet transaction');
+    }
+  },
+
+  async addManualAdjustment(
+    employeeId: string,
+    month: string,
+    amount: number,
+    remarks: string
+  ): Promise<void> {
+    await this.recordWalletTransaction({
+      employeeId,
+      salaryMonth: month,
+      transactionType: 'manual_adjustment',
+      amount: Number(amount || 0),
+      remarks: remarks.trim() || 'Manual Adjustment',
+    });
+  },
+
   // --- EMPLOYEES ---
   async getEmployees(): Promise<SalaryEmployee[]> {
     if (!isSupabaseConfigured) return [];
@@ -65,8 +192,21 @@ export const SalaryRentService = {
       throw new Error(error.message || 'Failed to add employee to Supabase');
     }
 
+    const empId = String(data.id);
+
+    // Record initial monthly_salary transaction in employee_wallet_transactions
+    if (baseSalary > 0) {
+      await this.recordWalletTransaction({
+        employeeId: empId,
+        salaryMonth: monthStr,
+        transactionType: 'monthly_salary',
+        amount: Number(baseSalary),
+        remarks: `Initial Monthly Salary for ${monthStr}`,
+      }).catch((err) => console.warn('Could not record initial monthly_salary:', err));
+    }
+
     return {
-      id: String(data.id),
+      id: empId,
       name: String(data.employee_name || name.trim()),
       role: role.trim(),
       baseSalary: Number(data.monthly_salary || baseSalary),
@@ -196,6 +336,15 @@ export const SalaryRentService = {
       }
     }
 
+    // Record in employee_wallet_transactions
+    await this.recordWalletTransaction({
+      employeeId,
+      salaryMonth: month,
+      transactionType: type === 'bonus' ? 'bonus' : 'salary_cut',
+      amount: adjAmount,
+      remarks: cleanRemarks || (type === 'bonus' ? 'Bonus' : 'Salary Cut'),
+    }).catch((e) => console.warn('Could not record wallet transaction for adjustment:', e));
+
     // If bonus is added, log as an expense in inventory_expenses so analytics registers it immediately
     if (type === 'bonus' && adjAmount > 0) {
       await ExpenseService.addExpense({
@@ -293,6 +442,16 @@ export const SalaryRentService = {
       }
       txId = String(newTx.id);
     }
+
+    // Record in employee_wallet_transactions
+    await this.recordWalletTransaction({
+      employeeId,
+      salaryMonth: month,
+      transactionType: 'payment',
+      amount: payAmount,
+      paymentMethod,
+      remarks: cleanRemarks || 'Salary Payment',
+    }).catch((e) => console.warn('Could not record wallet transaction for payment:', e));
 
     // Auto-log into inventory_expenses as Salary expense for Analytics
     await ExpenseService.addExpense({
@@ -446,11 +605,13 @@ export const SalaryRentService = {
     }
 
     try {
-      const [eRes, stRes, rSetRes, rtRes] = await Promise.all([
+      const [eRes, stRes, rSetRes, rtRes, walletBalances, walletTransactions] = await Promise.all([
         supabase.from('salary_employees').select('*').order('created_at', { ascending: true }),
         supabase.from('salary_transactions').select('*').order('created_at', { ascending: true }),
         supabase.from('rent_settings').select('*').order('effective_from', { ascending: false }),
         supabase.from('rent_transactions').select('*').order('created_at', { ascending: true }),
+        this.getWalletBalances(),
+        this.getWalletTransactions(),
       ]);
 
       const employees: SalaryEmployee[] = [];
@@ -578,6 +739,8 @@ export const SalaryRentService = {
         salaryPayments,
         rentSettings,
         rentPayments,
+        walletBalances,
+        walletTransactions,
       };
     } catch (err) {
       console.error('Error fetching all salary/rent data from Supabase:', err);
@@ -588,6 +751,8 @@ export const SalaryRentService = {
         salaryPayments: [],
         rentSettings: [],
         rentPayments: [],
+        walletBalances: [],
+        walletTransactions: [],
       };
     }
   },

@@ -7,8 +7,12 @@ import {
   SalaryPayment,
   RentSetting,
   RentPayment,
+  EmployeeWalletBalance,
+  EmployeeWalletTransaction,
 } from '../types';
 import { SalaryRentService } from '../services/salaryRent';
+import { formatDateDDMMYYYY } from '../utils/formatters';
+import { calculatePayroll } from '../utils/payroll';
 import {
   Building2,
   Users,
@@ -29,6 +33,8 @@ import {
   UserPlus,
   Receipt,
   FileText,
+  Wallet,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 export default function SalaryRent() {
@@ -45,6 +51,8 @@ export default function SalaryRent() {
   const [salaryPayments, setSalaryPayments] = useState<SalaryPayment[]>([]);
   const [rentSettings, setRentSettings] = useState<RentSetting[]>([]);
   const [rentPayments, setRentPayments] = useState<RentPayment[]>([]);
+  const [walletBalances, setWalletBalances] = useState<EmployeeWalletBalance[]>([]);
+  const [walletTransactions, setWalletTransactions] = useState<EmployeeWalletTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Navigation & Carousel State
@@ -131,6 +139,12 @@ export default function SalaryRent() {
   const [adjAmountInput, setAdjAmountInput] = useState<number | ''>('');
   const [adjRemarksInput, setAdjRemarksInput] = useState('');
 
+  // Manual Adjustment Modal
+  const [isManualAdjModalOpen, setIsManualAdjModalOpen] = useState(false);
+  const [manualAdjTargetEmp, setManualAdjTargetEmp] = useState<SalaryEmployee | null>(null);
+  const [manualAdjAmountInput, setManualAdjAmountInput] = useState<number | ''>('');
+  const [manualAdjRemarksInput, setManualAdjRemarksInput] = useState('');
+
   // Pay Salary Modal
   const [isSalaryPayModalOpen, setIsSalaryPayModalOpen] = useState(false);
   const [payTargetEmp, setPayTargetEmp] = useState<SalaryEmployee | null>(null);
@@ -155,6 +169,8 @@ export default function SalaryRent() {
       setSalaryPayments(res.salaryPayments);
       setRentSettings(res.rentSettings);
       setRentPayments(res.rentPayments);
+      setWalletBalances(res.walletBalances || []);
+      setWalletTransactions(res.walletTransactions || []);
       await refreshData();
     } catch (err) {
       console.error('Error loading salary/rent data:', err);
@@ -162,6 +178,15 @@ export default function SalaryRent() {
       setIsLoading(false);
     }
   }, [refreshData]);
+
+  // Fetch employee_wallet_balance matched by employee_id
+  const getEmployeeWalletBalance = useCallback(
+    (empId: string): number => {
+      const matched = walletBalances.find((w) => String(w.employeeId) === String(empId));
+      return matched ? matched.walletBalance : 0;
+    },
+    [walletBalances]
+  );
 
   useEffect(() => {
     loadData();
@@ -226,16 +251,23 @@ export default function SalaryRent() {
       );
       const paidThisMonth = monthPays.reduce((sum, p) => sum + p.amount, 0);
 
-      const totalDueThisMonth = baseSalary + totalBonus - totalCut;
-      const remainingBalance = Math.max(0, totalDueThisMonth - paidThisMonth);
+      // Shared payroll formula calculation
+      const payroll = calculatePayroll({
+        monthlySalary: baseSalary,
+        bonus: totalBonus,
+        salaryCut: totalCut,
+        payments: paidThisMonth,
+        previousWallet: 0,
+      });
 
       return {
-        baseSalary,
-        totalBonus,
-        totalCut,
-        totalDueThisMonth,
-        paidThisMonth,
-        remainingBalance,
+        baseSalary: payroll.monthlySalary,
+        totalBonus: payroll.bonus,
+        totalCut: payroll.salaryCut,
+        totalDueThisMonth: payroll.finalSalary,
+        paidThisMonth: payroll.payments,
+        remainingBalance: Math.max(0, payroll.finalSalary - payroll.payments),
+        inventoryExpense: payroll.inventoryExpense,
         monthPays,
         monthAdjs,
       };
@@ -412,6 +444,30 @@ export default function SalaryRent() {
       showToast(`✓ Salary ${adjType} recorded`);
     } catch (err: any) {
       alert(err.message || 'Failed to record adjustment');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleManualAdjustment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualAdjTargetEmp || !manualAdjAmountInput || Number(manualAdjAmountInput) === 0) return;
+    setIsSubmitting(true);
+    try {
+      await SalaryRentService.addManualAdjustment(
+        manualAdjTargetEmp.id,
+        selectedMonth,
+        Number(manualAdjAmountInput),
+        manualAdjRemarksInput
+      );
+      await loadData();
+      setIsManualAdjModalOpen(false);
+      setManualAdjTargetEmp(null);
+      setManualAdjAmountInput('');
+      setManualAdjRemarksInput('');
+      showToast('✓ Manual wallet adjustment recorded');
+    } catch (err: any) {
+      alert(err.message || 'Failed to record manual adjustment');
     } finally {
       setIsSubmitting(false);
     }
@@ -720,8 +776,24 @@ export default function SalaryRent() {
                       </span>
                     </div>
 
-                    {/* Salary Details Grid */}
+                    {/* Salary & Wallet Details Grid */}
                     <div className="space-y-2 text-xs">
+                      {/* Wallet Balance (Derived directly from employee_wallet_balance view) */}
+                      {(() => {
+                        const walletBal = getEmployeeWalletBalance(emp.id);
+                        return (
+                          <div className="flex items-center justify-between p-2.5 bg-indigo-50/90 rounded-xl border border-indigo-100">
+                            <div className="flex items-center gap-1.5 font-bold text-indigo-900 text-[11px]">
+                              <Wallet className="w-4 h-4 text-indigo-600 shrink-0" />
+                              <span>Wallet Balance</span>
+                            </div>
+                            <span className={`font-mono font-black text-sm ${walletBal >= 0 ? 'text-indigo-950' : 'text-rose-600'}`}>
+                              ₹{walletBal.toLocaleString()}
+                            </span>
+                          </div>
+                        );
+                      })()}
+
                       <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-100">
                         <span className="font-semibold text-slate-500 text-[11px]">Monthly Salary</span>
                         <span className="font-mono font-black text-slate-900 text-sm">₹{calc.baseSalary.toLocaleString()}</span>
@@ -783,7 +855,7 @@ export default function SalaryRent() {
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-1.5 text-xs">
+                      <div className="grid grid-cols-4 gap-1.5 text-xs">
                         {/* Edit */}
                         <button
                           onClick={() => {
@@ -794,9 +866,9 @@ export default function SalaryRent() {
                             setEditEmpEffectiveMonthInput(selectedMonth);
                             setIsEditEmpModalOpen(true);
                           }}
-                          className="h-8 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1 text-[11px]"
+                          className="h-8 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1 text-[10px]"
                         >
-                          <Edit2 className="w-3 h-3 text-slate-500" />
+                          <Edit2 className="w-3 h-3 text-slate-500 shrink-0" />
                           <span>Edit</span>
                         </button>
 
@@ -809,18 +881,33 @@ export default function SalaryRent() {
                             setAdjRemarksInput('');
                             setIsSalaryAdjModalOpen(true);
                           }}
-                          className="h-8 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1 text-[11px]"
+                          className="h-8 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1 text-[10px]"
                         >
-                          <PlusCircle className="w-3 h-3 text-emerald-600" />
+                          <PlusCircle className="w-3 h-3 text-emerald-600 shrink-0" />
                           <span>Bonus/Cut</span>
+                        </button>
+
+                        {/* Manual Adj */}
+                        <button
+                          onClick={() => {
+                            setManualAdjTargetEmp(emp);
+                            setManualAdjAmountInput('');
+                            setManualAdjRemarksInput('');
+                            setIsManualAdjModalOpen(true);
+                          }}
+                          className="h-8 bg-slate-50 border border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 text-indigo-700 font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1 text-[10px]"
+                          title="Manual Wallet Adjustment"
+                        >
+                          <SlidersHorizontal className="w-3 h-3 text-indigo-600 shrink-0" />
+                          <span>Adj</span>
                         </button>
 
                         {/* Delete */}
                         <button
                           onClick={() => handleDeleteEmployee(emp)}
-                          className="h-8 bg-slate-50 border border-slate-200 hover:bg-rose-50 hover:border-rose-200 text-rose-600 font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1 text-[11px]"
+                          className="h-8 bg-slate-50 border border-slate-200 hover:bg-rose-50 hover:border-rose-200 text-rose-600 font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1 text-[10px]"
                         >
-                          <Trash2 className="w-3 h-3 text-rose-500" />
+                          <Trash2 className="w-3 h-3 text-rose-500 shrink-0" />
                           <span>Delete</span>
                         </button>
                       </div>
@@ -899,7 +986,7 @@ export default function SalaryRent() {
                           {p.cut > 0 ? `-₹${p.cut.toLocaleString()}` : '-'}
                         </td>
                         <td className="py-3 px-4 text-slate-600">{p.remarks || '-'}</td>
-                        <td className="py-3 px-4 font-mono font-bold text-slate-600">{p.paymentDate}</td>
+                        <td className="py-3 px-4 font-mono font-bold text-slate-600">{formatDateDDMMYYYY(p.paymentDate)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1028,7 +1115,7 @@ export default function SalaryRent() {
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
                   {currentRentCalc.monthPayments.map((p) => (
                     <tr key={p.id} className="hover:bg-slate-50/80 transition">
-                      <td className="py-3 px-4 font-mono font-bold text-slate-600">{p.paymentDate}</td>
+                      <td className="py-3 px-4 font-mono font-bold text-slate-600">{formatDateDDMMYYYY(p.paymentDate)}</td>
                       <td className="py-3 px-4 uppercase font-extrabold text-indigo-700 text-[11px]">{p.paymentMethod}</td>
                       <td className="py-3 px-4 text-right font-mono font-black text-emerald-700 text-sm">₹{p.amount.toLocaleString()}</td>
                       <td className="py-3 px-4 text-slate-600">{p.remarks || '-'}</td>
@@ -1538,14 +1625,81 @@ export default function SalaryRent() {
         </div>
       )}
 
-      {/* 7. INDIVIDUAL EMPLOYEE HISTORY MODAL */}
+      {/* 7. MANUAL WALLET ADJUSTMENT MODAL */}
+      {isManualAdjModalOpen && manualAdjTargetEmp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-sm my-auto overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+              <h3 className="font-extrabold text-xs text-slate-900 uppercase">
+                Manual Wallet Adjustment • {manualAdjTargetEmp.name}
+              </h3>
+              <button onClick={() => setIsManualAdjModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleManualAdjustment} className="p-4 space-y-3.5 text-xs">
+              <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-between">
+                <span className="text-[11px] font-bold text-indigo-900">Current Wallet Balance:</span>
+                <span className="font-mono font-black text-sm text-indigo-950">
+                  ₹{getEmployeeWalletBalance(manualAdjTargetEmp.id).toLocaleString()}
+                </span>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Adjustment Amount (₹) *</label>
+                <input
+                  type="number"
+                  required
+                  value={manualAdjAmountInput}
+                  onChange={(e) => setManualAdjAmountInput(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="e.g. 500 or -500"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Positive adds to wallet balance, negative reduces it.</p>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Remarks / Reason *</label>
+                <input
+                  type="text"
+                  required
+                  value={manualAdjRemarksInput}
+                  onChange={(e) => setManualAdjRemarksInput(e.target.value)}
+                  placeholder="e.g. Opening balance adjustment"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsManualAdjModalOpen(false)}
+                  className="flex-1 py-2.5 border border-slate-200 font-bold text-slate-700 rounded-xl hover:bg-slate-50 cursor-pointer min-h-[42px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl shadow-xs cursor-pointer min-h-[42px]"
+                >
+                  {isSubmitting ? 'Saving...' : 'Record Adjustment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 8. INDIVIDUAL EMPLOYEE HISTORY MODAL */}
       {isEmpHistoryModalOpen && historyEmp && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs animate-fade-in overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-auto overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
               <div>
                 <h3 className="font-extrabold text-xs text-slate-900 uppercase">
-                  Salary History • {historyEmp.name}
+                  Employee Ledger & History • {historyEmp.name}
                 </h3>
                 <p className="text-[11px] text-slate-500">{historyEmp.role || 'Staff Employee'}</p>
               </div>
@@ -1554,27 +1708,87 @@ export default function SalaryRent() {
               </button>
             </div>
 
-            <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto text-xs">
-              {salaryPayments.filter((p) => p.employeeId === historyEmp.id).length === 0 ? (
-                <p className="text-center text-slate-400 py-6 font-medium">No payment history recorded for {historyEmp.name}.</p>
-              ) : (
-                <div className="space-y-2">
-                  {salaryPayments
-                    .filter((p) => p.employeeId === historyEmp.id)
-                    .map((p) => (
-                      <div key={p.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200/60 flex items-center justify-between gap-3">
-                        <div>
-                          <div className="font-mono font-bold text-slate-900">{formatMonthName(p.month)}</div>
-                          <div className="text-[10px] text-slate-500">{p.paymentDate} • {p.remarks || 'Salary Payment'}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-mono font-black text-emerald-700 text-sm">₹{p.amount.toLocaleString()}</div>
-                          <div className="text-[10px] uppercase font-extrabold text-indigo-600">{p.paymentMethod}</div>
-                        </div>
-                      </div>
-                    ))}
+            <div className="p-4 space-y-4 max-h-[65vh] overflow-y-auto text-xs">
+              {/* Wallet Balance Header */}
+              <div className="p-3 bg-indigo-50/90 border border-indigo-100 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Wallet className="w-4 h-4 text-indigo-600" />
+                  <span className="font-bold text-indigo-900">Current Wallet Balance</span>
                 </div>
-              )}
+                <span className="font-mono font-black text-base text-indigo-950">
+                  ₹{getEmployeeWalletBalance(historyEmp.id).toLocaleString()}
+                </span>
+              </div>
+
+              {/* Wallet Transactions Ledger */}
+              <div className="space-y-2">
+                <h4 className="font-extrabold text-[11px] text-slate-500 uppercase tracking-wider">
+                  Wallet Transactions Ledger (employee_wallet_transactions)
+                </h4>
+                {walletTransactions.filter((wt) => String(wt.employeeId) === String(historyEmp.id)).length === 0 ? (
+                  <p className="text-slate-400 italic py-2 text-center">No ledger transactions found.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {walletTransactions
+                      .filter((wt) => String(wt.employeeId) === String(historyEmp.id))
+                      .map((wt) => {
+                        const typeColors: Record<string, string> = {
+                          monthly_salary: 'bg-blue-50 text-blue-700 border-blue-200',
+                          bonus: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                          salary_cut: 'bg-rose-50 text-rose-700 border-rose-200',
+                          payment: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                          manual_adjustment: 'bg-purple-50 text-purple-700 border-purple-200',
+                        };
+
+                        return (
+                          <div key={wt.id} className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/60 flex items-center justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded-md border text-[9px] font-mono font-bold uppercase ${typeColors[wt.transactionType] || 'bg-slate-100 text-slate-700'}`}>
+                                  {wt.transactionType.replace('_', ' ')}
+                                </span>
+                                <span className="font-mono font-bold text-slate-800 text-[11px]">{formatMonthName(wt.salaryMonth)}</span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 mt-0.5">{formatDateDDMMYYYY(wt.createdAt.substring(0, 10))} • {wt.remarks || '-'}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className={`font-mono font-black text-sm ${['salary_cut', 'payment'].includes(wt.transactionType) ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                {['salary_cut', 'payment'].includes(wt.transactionType) ? '-' : '+'}₹{wt.amount.toLocaleString()}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+
+              {/* Salary Payment History */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <h4 className="font-extrabold text-[11px] text-slate-500 uppercase tracking-wider">
+                  Payment History
+                </h4>
+                {salaryPayments.filter((p) => p.employeeId === historyEmp.id).length === 0 ? (
+                  <p className="text-slate-400 italic py-2 text-center">No payment history recorded for {historyEmp.name}.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {salaryPayments
+                      .filter((p) => p.employeeId === historyEmp.id)
+                      .map((p) => (
+                        <div key={p.id} className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/60 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="font-mono font-bold text-slate-900">{formatMonthName(p.month)}</div>
+                            <div className="text-[10px] text-slate-500">{formatDateDDMMYYYY(p.paymentDate)} • {p.remarks || 'Salary Payment'}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-mono font-black text-emerald-700 text-sm">₹{p.amount.toLocaleString()}</div>
+                            <div className="text-[10px] uppercase font-extrabold text-indigo-600">{p.paymentMethod}</div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="p-3 bg-slate-50 border-t border-slate-100 flex justify-end">

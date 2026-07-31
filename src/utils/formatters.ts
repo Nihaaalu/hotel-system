@@ -1,32 +1,57 @@
-export const formatDateHuman = (dateStr: string | null | undefined): string => {
-  if (!dateStr) return '';
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const formatDateDDMMYYYY = (dateInput: string | Date | number | null | undefined): string => {
+  if (!dateInput) return '';
   
-  // Clean string to YYYY-MM-DD
-  const cleanStr = String(dateStr).split('T')[0].trim();
-  const parts = cleanStr.split('-');
-  if (parts.length === 3) {
-    const year = parts[0];
-    const monthIdx = parseInt(parts[1], 10) - 1;
-    const day = parseInt(parts[2], 10);
-    if (!isNaN(monthIdx) && monthIdx >= 0 && monthIdx < 12 && !isNaN(day)) {
-      return `${day} ${months[monthIdx]} ${year}`;
+  if (typeof dateInput === 'string') {
+    const trimmed = dateInput.trim();
+    if (!trimmed) return '';
+
+    // If already in DD/MM/YYYY format
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+      return trimmed;
+    }
+
+    // Check YYYY-MM-DD or YYYY-MM-DDThh:mm... or YYYY/MM/DD
+    const datePart = trimmed.split('T')[0].trim();
+    const ymdMatch = datePart.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (ymdMatch) {
+      const year = ymdMatch[1];
+      const month = ymdMatch[2].padStart(2, '0');
+      const day = ymdMatch[3].padStart(2, '0');
+      return `${day}/${month}/${year}`;
     }
   }
-  return dateStr;
+
+  // Otherwise convert using Date
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) {
+    return String(dateInput);
+  }
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
+export const formatDateHuman = (dateStr: string | null | undefined): string => {
+  return formatDateDDMMYYYY(dateStr);
 };
 
 export const formatDateHumanShort = (dateStr: string | null | undefined): string => {
-  if (!dateStr) return '';
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const cleanStr = String(dateStr).split('T')[0].trim();
-  const parts = cleanStr.split('-');
-  if (parts.length === 3) {
-    const monthIdx = parseInt(parts[1], 10) - 1;
-    const day = parseInt(parts[2], 10);
-    if (!isNaN(monthIdx) && monthIdx >= 0 && monthIdx < 12 && !isNaN(day)) {
-      return `${day} ${months[monthIdx]}`;
-    }
-  }
-  return dateStr;
+  return formatDateDDMMYYYY(dateStr);
 };
+
+export const formatDateTimeDDMMYYYY = (dateInput: string | Date | number | null | undefined): string => {
+  if (!dateInput) return '';
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) {
+    return formatDateDDMMYYYY(dateInput);
+  }
+  const dateFormatted = formatDateDDMMYYYY(d);
+  const timeFormatted = d.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${dateFormatted} ${timeFormatted}`;
+};
+

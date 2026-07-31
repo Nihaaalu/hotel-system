@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useHotelData } from '../context/HotelContext';
-import { ExpenseCategory } from '../types';
 import { SalaryRentService } from '../services/salaryRent';
+import { SalaryPayment, RentPayment } from '../types';
 import {
   DollarSign,
   TrendingUp,
   CreditCard,
-  PieChart as PieChartIcon,
   Receipt,
   Wallet,
-  Calendar,
-  ArrowUpRight,
-  ArrowDownRight,
+  ChevronLeft,
+  ChevronRight,
   Building2,
   Users,
   Package,
+  Calendar as CalendarIcon,
+  RotateCcw,
+  ArrowUpRight,
+  ArrowDownRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -25,9 +27,6 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  PieChart,
-  Pie,
-  Cell,
   LineChart,
   Line,
 } from 'recharts';
@@ -42,52 +41,87 @@ interface BookingSummaryItem {
   roomNumber: number;
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Meat: '#EF4444',
-  Groceries: '#10B981',
-  Cleaning: '#3B82F6',
-  'Electricity Bill': '#F59E0B',
-  Laundry: '#06B6D4',
-  'Raw Materials': '#8B5CF6',
-  'Electrical Items': '#EC4899',
-  Furniture: '#14B8A6',
-  Improvement: '#F97316',
-  Miscellaneous: '#6B7280',
-  Salary: '#6366F1',
-  Rent: '#84CC16',
-};
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+const SHORT_MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
+
+function formatMonthLabel(monthStr: string) {
+  if (!monthStr || !monthStr.includes('-')) return monthStr;
+  const [y, m] = monthStr.split('-');
+  const monthIdx = parseInt(m, 10) - 1;
+  return `${MONTH_NAMES[monthIdx] || ''} ${y}`;
+}
 
 export default function Analytics() {
   const { bookings, expenses, isLoading } = useHotelData();
-  const [salaryTotalThisMonth, setSalaryTotalThisMonth] = useState(0);
-  const [rentTotalThisMonth, setRentTotalThisMonth] = useState(0);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const currentMonthStr = todayStr.substring(0, 7);
+  const today = useMemo(() => new Date(), []);
+  const currentYearNum = today.getFullYear();
+  const currentMonthNumStr = String(today.getMonth() + 1).padStart(2, '0');
+  const defaultMonthStr = `${currentYearNum}-${currentMonthNumStr}`;
 
-  // Load Salary & Rent totals for analytics
+  const [selectedMonth, setSelectedMonth] = useState<string>(defaultMonthStr);
+  const [selectedYear, setSelectedYear] = useState<number>(currentYearNum);
+
+  const [allSalaryPayments, setAllSalaryPayments] = useState<SalaryPayment[]>([]);
+  const [allRentPayments, setAllRentPayments] = useState<RentPayment[]>([]);
+
   useEffect(() => {
     async function loadSalaryRentAnalytics() {
       try {
         const { salaryPayments, rentPayments } = await SalaryRentService.fetchAllData();
-        
-        // Rent payments paid in current month
-        const rentPaidSum = rentPayments
-          .filter((p) => p.month === currentMonthStr)
-          .reduce((sum, p) => sum + p.amount, 0);
-        setRentTotalThisMonth(rentPaidSum);
-
-        // Salary payments paid in current month
-        const salaryPaidSum = salaryPayments
-          .filter((p) => p.month === currentMonthStr)
-          .reduce((sum, p) => sum + p.amount, 0);
-        setSalaryTotalThisMonth(salaryPaidSum);
+        setAllSalaryPayments(salaryPayments || []);
+        setAllRentPayments(rentPayments || []);
       } catch (err) {
         console.error('Error fetching salary/rent analytics', err);
       }
     }
     loadSalaryRentAnalytics();
-  }, [currentMonthStr]);
+  }, []);
+
+  // Controls for Month & Year switching
+  const handlePrevMonth = () => {
+    const [y, m] = selectedMonth.split('-').map(Number);
+    const d = new Date(y, m - 2, 1);
+    const newY = d.getFullYear();
+    const newM = String(d.getMonth() + 1).padStart(2, '0');
+    setSelectedMonth(`${newY}-${newM}`);
+    setSelectedYear(newY);
+  };
+
+  const handleNextMonth = () => {
+    const [y, m] = selectedMonth.split('-').map(Number);
+    const d = new Date(y, m, 1);
+    const newY = d.getFullYear();
+    const newM = String(d.getMonth() + 1).padStart(2, '0');
+    setSelectedMonth(`${newY}-${newM}`);
+    setSelectedYear(newY);
+  };
+
+  const handlePrevYear = () => {
+    const newY = selectedYear - 1;
+    const m = selectedMonth.split('-')[1];
+    setSelectedYear(newY);
+    setSelectedMonth(`${newY}-${m}`);
+  };
+
+  const handleNextYear = () => {
+    const newY = selectedYear + 1;
+    const m = selectedMonth.split('-')[1];
+    setSelectedYear(newY);
+    setSelectedMonth(`${newY}-${m}`);
+  };
+
+  const handleCurrentMonth = () => {
+    setSelectedYear(currentYearNum);
+    setSelectedMonth(defaultMonthStr);
+  };
 
   // 1. Process Unique Bookings (prevent duplicating group booking totals)
   const uniqueBookingsMap = useMemo(() => {
@@ -112,406 +146,439 @@ export default function Analytics() {
     return map;
   }, [bookings]);
 
-  // 2. Calculate Core Metrics
+  // 2. Calculate Metrics for Selected Month
   const metrics = useMemo(() => {
-    let totalRev = 0;
-    let totalAdv = 0;
-    let todayRev = 0;
     let monthRev = 0;
+    let monthAdv = 0;
 
     uniqueBookingsMap.forEach((b) => {
-      totalRev += b.totalAmount;
-      totalAdv += b.advancePaid;
-
-      if (b.checkInDate === todayStr) {
-        todayRev += b.totalAmount;
-      }
-      if (b.checkInDate && b.checkInDate.startsWith(currentMonthStr)) {
+      if (b.checkInDate && b.checkInDate.startsWith(selectedMonth)) {
         monthRev += b.totalAmount;
+        monthAdv += b.advancePaid;
       }
     });
 
-    let totalInventoryExp = 0;
-    let todayExp = 0;
     let monthInventoryExp = 0;
     let monthSalaryInExp = 0;
     let monthRentInExp = 0;
 
     expenses.forEach((e) => {
       const amt = Number(e.amount || 0);
-      totalInventoryExp += amt;
-      if (e.expenseDate === todayStr) {
-        todayExp += amt;
-      }
-      if (e.expenseDate && e.expenseDate.startsWith(currentMonthStr)) {
-        monthInventoryExp += amt;
+      if (e.expenseDate && e.expenseDate.startsWith(selectedMonth)) {
         if (e.category === 'Salary') monthSalaryInExp += amt;
-        if (e.category === 'Rent') monthRentInExp += amt;
+        else if (e.category === 'Rent') monthRentInExp += amt;
+        else monthInventoryExp += amt;
       }
     });
 
-    const addSalaryExtra = monthSalaryInExp > 0 ? 0 : salaryTotalThisMonth;
-    const addRentExtra = monthRentInExp > 0 ? 0 : rentTotalThisMonth;
-    const effectiveSalaryMonthExp = monthSalaryInExp > 0 ? monthSalaryInExp : salaryTotalThisMonth;
-    const effectiveRentMonthExp = monthRentInExp > 0 ? monthRentInExp : rentTotalThisMonth;
+    const salaryPaidThisMonth = allSalaryPayments
+      .filter((p) => p.month === selectedMonth)
+      .reduce((sum, p) => sum + p.amount, 0);
 
-    const totalMonthAllExp = monthInventoryExp + addSalaryExtra + addRentExtra;
-    const outstandingBalance = Math.max(0, totalRev - totalAdv);
+    const rentPaidThisMonth = allRentPayments
+      .filter((p) => p.month === selectedMonth)
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    const effectiveSalaryMonthExp = monthSalaryInExp > 0 ? monthSalaryInExp : salaryPaidThisMonth;
+    const effectiveRentMonthExp = monthRentInExp > 0 ? monthRentInExp : rentPaidThisMonth;
+
+    const totalMonthAllExp = monthInventoryExp + effectiveSalaryMonthExp + effectiveRentMonthExp;
+    const outstandingBalance = Math.max(0, monthRev - monthAdv);
     const netIncome = monthRev - totalMonthAllExp;
 
     return {
-      totalRevenue: totalRev,
-      advanceReceived: totalAdv,
+      monthRevenue: monthRev,
+      advanceReceived: monthAdv,
       outstandingBalance,
-      totalInventoryExpenses: totalInventoryExp,
       monthInventoryExp,
       monthSalaryExp: effectiveSalaryMonthExp,
       monthRentExp: effectiveRentMonthExp,
       totalMonthAllExp,
       netIncome,
-      todayRevenue: todayRev,
-      todayExpenses: todayExp,
-      currentMonthRevenue: monthRev,
     };
-  }, [uniqueBookingsMap, expenses, todayStr, currentMonthStr, salaryTotalThisMonth, rentTotalThisMonth]);
+  }, [uniqueBookingsMap, expenses, selectedMonth, allSalaryPayments, allRentPayments]);
 
-  // 3. Monthly Revenue vs All Expenses Chart
-  const monthlyChartData = useMemo(() => {
-    const monthsMap = new Map<string, { month: string; revenue: number; inventory: number; salary: number; rent: number }>();
+  // 3. Entire Year View Chart Data (12 Months Jan - Dec for selectedYear)
+  const yearly12MonthsData = useMemo(() => {
+    const list = [];
 
-    // Seed last 6 months
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const mKey = d.toISOString().substring(0, 7);
-      const label = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-      monthsMap.set(mKey, { month: label, revenue: 0, inventory: 0, salary: 0, rent: 0 });
-    }
+    for (let m = 1; m <= 12; m++) {
+      const mStr = String(m).padStart(2, '0');
+      const mKey = `${selectedYear}-${mStr}`;
+      const monthLabel = SHORT_MONTH_NAMES[m - 1];
 
-    uniqueBookingsMap.forEach((b) => {
-      if (b.checkInDate) {
-        const mKey = b.checkInDate.substring(0, 7);
-        if (monthsMap.has(mKey)) {
-          monthsMap.get(mKey)!.revenue += b.totalAmount;
+      let rev = 0;
+      uniqueBookingsMap.forEach((b) => {
+        if (b.checkInDate && b.checkInDate.startsWith(mKey)) {
+          rev += b.totalAmount;
         }
-      }
-    });
+      });
 
-    expenses.forEach((e) => {
-      if (e.expenseDate) {
-        const mKey = e.expenseDate.substring(0, 7);
-        if (monthsMap.has(mKey)) {
-          monthsMap.get(mKey)!.inventory += Number(e.amount || 0);
+      let invExp = 0;
+      let salExpFromCat = 0;
+      let rentExpFromCat = 0;
+
+      expenses.forEach((e) => {
+        const amt = Number(e.amount || 0);
+        if (e.expenseDate && e.expenseDate.startsWith(mKey)) {
+          if (e.category === 'Salary') salExpFromCat += amt;
+          else if (e.category === 'Rent') rentExpFromCat += amt;
+          else invExp += amt;
         }
-      }
-    });
+      });
 
-    // Inject salary & rent into current month
-    if (monthsMap.has(currentMonthStr)) {
-      monthsMap.get(currentMonthStr)!.salary = salaryTotalThisMonth;
-      monthsMap.get(currentMonthStr)!.rent = rentTotalThisMonth;
+      const salPaid = allSalaryPayments
+        .filter((p) => p.month === mKey)
+        .reduce((sum, p) => sum + p.amount, 0);
+
+      const rentPaid = allRentPayments
+        .filter((p) => p.month === mKey)
+        .reduce((sum, p) => sum + p.amount, 0);
+
+      const finalSal = salExpFromCat > 0 ? salExpFromCat : salPaid;
+      const finalRent = rentExpFromCat > 0 ? rentExpFromCat : rentPaid;
+
+      list.push({
+        monthKey: mKey,
+        month: monthLabel,
+        revenue: rev,
+        inventory: invExp,
+        salary: finalSal,
+        rent: finalRent,
+      });
     }
 
-    return Array.from(monthsMap.values());
-  }, [uniqueBookingsMap, expenses, currentMonthStr, salaryTotalThisMonth, rentTotalThisMonth]);
+    return list;
+  }, [selectedYear, uniqueBookingsMap, expenses, allSalaryPayments, allRentPayments]);
 
-  // 4. Expense Breakdown Pie Chart (Includes Inventory Categories + Salary + Rent)
-  const categoryPieData = useMemo(() => {
-    const catMap: Record<string, number> = {};
+  // 4. Daily Revenue & Expenses Data for Full Selected Month
+  const dailyDataForMonth = useMemo(() => {
+    if (!selectedMonth || !selectedMonth.includes('-')) return [];
 
-    expenses.forEach((e) => {
-      const amt = Number(e.amount || 0);
-      const catKey = e.category || 'Miscellaneous';
-      catMap[catKey] = (catMap[catKey] || 0) + amt;
-    });
+    const [yStr, mStr] = selectedMonth.split('-');
+    const year = parseInt(yStr, 10);
+    const month = parseInt(mStr, 10);
 
-    if (!catMap['Salary'] && salaryTotalThisMonth > 0) {
-      catMap['Salary'] = salaryTotalThisMonth;
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const daysList = [];
+
+    const monthShort = SHORT_MONTH_NAMES[month - 1] || '';
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dayStr = String(day).padStart(2, '0');
+      const dateKey = `${selectedMonth}-${dayStr}`;
+
+      let rev = 0;
+      uniqueBookingsMap.forEach((b) => {
+        if (b.checkInDate === dateKey) {
+          rev += b.totalAmount;
+        }
+      });
+
+      let invExp = 0;
+      expenses.forEach((e) => {
+        if (e.expenseDate === dateKey) {
+          const amt = Number(e.amount || 0);
+          if (e.category !== 'Salary' && e.category !== 'Rent') {
+            invExp += amt;
+          }
+        }
+      });
+
+      daysList.push({
+        dayNum: day,
+        dateKey,
+        label: `${day} ${monthShort}`,
+        shortLabel: String(day),
+        revenue: rev,
+        expenses: invExp,
+      });
     }
-    if (!catMap['Rent'] && rentTotalThisMonth > 0) {
-      catMap['Rent'] = rentTotalThisMonth;
-    }
 
-    return Object.entries(catMap)
-      .map(([name, value]) => ({ name, value }))
-      .filter((item) => item.value > 0);
-  }, [expenses, salaryTotalThisMonth, rentTotalThisMonth]);
-
-  // 5. Daily Trends Chart Data (Last 14 days)
-  const dailyTrendsData = useMemo(() => {
-    const daysMap = new Map<string, { date: string; revenue: number; expenses: number }>();
-
-    const now = new Date();
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
-      const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      daysMap.set(dateStr, { date: label, revenue: 0, expenses: 0 });
-    }
-
-    uniqueBookingsMap.forEach((b) => {
-      if (b.checkInDate && daysMap.has(b.checkInDate)) {
-        daysMap.get(b.checkInDate)!.revenue += b.totalAmount;
-      }
-    });
-
-    expenses.forEach((e) => {
-      if (e.expenseDate && daysMap.has(e.expenseDate)) {
-        daysMap.get(e.expenseDate)!.expenses += Number(e.amount || 0);
-      }
-    });
-
-    return Array.from(daysMap.values());
-  }, [uniqueBookingsMap, expenses]);
+    return daysList;
+  }, [selectedMonth, uniqueBookingsMap, expenses]);
 
   if (isLoading) {
     return (
-      <div className="p-6 text-center text-gray-500 font-medium">
+      <div className="p-6 text-center text-slate-500 font-medium text-xs">
         Loading financial analytics data...
       </div>
     );
   }
 
   return (
-    <div className="p-2 sm:p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-100 pb-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-            <TrendingUp className="w-6 h-6 text-indigo-600" />
-            Financial Analytics & Expense Breakdown
-          </h1>
-          <p className="text-xs font-semibold text-gray-500 mt-1">
-            Real-time financial dashboard tracking Room Revenue, Rent, Salary, and Inventory Expenses
-          </p>
+    <div className="p-2 sm:p-5 space-y-3.5 max-w-7xl mx-auto">
+      {/* SYNCHRONIZED MONTH & YEAR CONTROLLER (NO HEADER BANNER) */}
+      <div className="bg-white border border-slate-200/80 rounded-xl p-2.5 sm:p-3 shadow-2xs flex flex-wrap items-center justify-between gap-2">
+        {/* Month Selector */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <button
+            onClick={handlePrevMonth}
+            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer transition"
+            title="Previous Month"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          
+          <div className="flex items-center gap-1 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg">
+            <CalendarIcon className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setSelectedMonth(e.target.value);
+                  setSelectedYear(parseInt(e.target.value.split('-')[0], 10));
+                }
+              }}
+              className="font-black text-slate-900 text-xs sm:text-sm bg-transparent cursor-pointer focus:outline-none"
+            />
+          </div>
+
+          <button
+            onClick={handleNextMonth}
+            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer transition"
+            title="Next Month"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+
+          {selectedMonth !== defaultMonthStr && (
+            <button
+              onClick={handleCurrentMonth}
+              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg text-[11px] cursor-pointer transition flex items-center gap-1"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Current</span>
+            </button>
+          )}
         </div>
-        <div className="text-right">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-bold rounded-full">
-            <Calendar className="w-3.5 h-3.5" />
-            Live DB Synchronized
+
+        {/* Year Controls */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] uppercase font-extrabold text-slate-400">Year:</span>
+          <button
+            onClick={handlePrevYear}
+            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer transition"
+            title="Previous Year"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <span className="font-mono font-black text-xs sm:text-sm text-slate-900 px-2 py-1 bg-slate-100 rounded-lg">
+            {selectedYear}
           </span>
+          <button
+            onClick={handleNextYear}
+            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer transition"
+            title="Next Year"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
-      {/* THREE MAJOR EXPENSE PILLARS KPI GRID: Rent, Salary, Inventory */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* 1. Monthly Rent */}
-        <div className="p-4 bg-lime-50/80 border border-lime-200 rounded-2xl shadow-2xs space-y-2">
+      {/* THREE MAJOR EXPENSE PILLARS KPI GRID */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
+        {/* Monthly Rent */}
+        <div className="p-3 sm:p-3.5 bg-lime-50/90 border border-lime-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
           <div className="flex items-center justify-between text-lime-900">
-            <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
-              <Building2 className="w-4 h-4 text-lime-700" /> Monthly Rent
+            <span className="text-[11px] font-black uppercase tracking-wide flex items-center gap-1.5">
+              <Building2 className="w-3.5 h-3.5 text-lime-700 shrink-0" /> Rent
             </span>
-            <span className="text-[10px] font-mono bg-lime-200 text-lime-900 px-2 py-0.5 rounded-full font-extrabold">
+            <span className="text-[9px] font-mono bg-lime-200/80 text-lime-950 px-1.5 py-0.5 rounded-md font-extrabold">
               Property
             </span>
           </div>
-          <p className="text-2xl font-black text-lime-950 font-mono">₹{metrics.monthRentExp.toLocaleString()}</p>
-          <p className="text-2xs font-semibold text-lime-800">Paid property lease for {currentMonthStr}</p>
+          <p className="text-xl sm:text-2xl font-black text-lime-950 font-mono">₹{metrics.monthRentExp.toLocaleString()}</p>
+          <p className="text-[10px] font-semibold text-lime-800/90 truncate">Property lease for {formatMonthLabel(selectedMonth)}</p>
         </div>
 
-        {/* 2. Monthly Salary */}
-        <div className="p-4 bg-indigo-50/80 border border-indigo-200 rounded-2xl shadow-2xs space-y-2">
+        {/* Monthly Salary */}
+        <div className="p-3 sm:p-3.5 bg-indigo-50/90 border border-indigo-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
           <div className="flex items-center justify-between text-indigo-900">
-            <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
-              <Users className="w-4 h-4 text-indigo-700" /> Employee Salary
+            <span className="text-[11px] font-black uppercase tracking-wide flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-indigo-700 shrink-0" /> Salary
             </span>
-            <span className="text-[10px] font-mono bg-indigo-200 text-indigo-900 px-2 py-0.5 rounded-full font-extrabold">
+            <span className="text-[9px] font-mono bg-indigo-200/80 text-indigo-950 px-1.5 py-0.5 rounded-md font-extrabold">
               Staff
             </span>
           </div>
-          <p className="text-2xl font-black text-indigo-950 font-mono">₹{metrics.monthSalaryExp.toLocaleString()}</p>
-          <p className="text-2xs font-semibold text-indigo-800">Staff payouts logged for {currentMonthStr}</p>
+          <p className="text-xl sm:text-2xl font-black text-indigo-950 font-mono">₹{metrics.monthSalaryExp.toLocaleString()}</p>
+          <p className="text-[10px] font-semibold text-indigo-800/90 truncate">Staff payouts for {formatMonthLabel(selectedMonth)}</p>
         </div>
 
-        {/* 3. Monthly Inventory */}
-        <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl shadow-2xs space-y-2">
+        {/* Monthly Inventory */}
+        <div className="p-3 sm:p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
           <div className="flex items-center justify-between text-amber-900">
-            <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
-              <Package className="w-4 h-4 text-amber-700" /> Inventory & Ops
+            <span className="text-[11px] font-black uppercase tracking-wide flex items-center gap-1.5">
+              <Package className="w-3.5 h-3.5 text-amber-700 shrink-0" /> Inventory & Ops
             </span>
-            <span className="text-[10px] font-mono bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-extrabold">
+            <span className="text-[9px] font-mono bg-amber-200/80 text-amber-950 px-1.5 py-0.5 rounded-md font-extrabold">
               Items
             </span>
           </div>
-          <p className="text-2xl font-black text-amber-950 font-mono">₹{metrics.monthInventoryExp.toLocaleString()}</p>
-          <p className="text-2xs font-semibold text-amber-800">Groceries, bills & materials for {currentMonthStr}</p>
+          <p className="text-xl sm:text-2xl font-black text-amber-950 font-mono">₹{metrics.monthInventoryExp.toLocaleString()}</p>
+          <p className="text-[10px] font-semibold text-amber-800/90 truncate">Inventory & bills for {formatMonthLabel(selectedMonth)}</p>
         </div>
       </div>
 
       {/* Primary KPI Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         {/* Total Revenue */}
-        <div className="p-5 bg-white border border-gray-100 rounded-2xl shadow-2xs space-y-2">
-          <div className="flex items-center justify-between text-gray-500">
-            <span className="text-xs font-bold uppercase tracking-wider">Total Revenue</span>
-            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
-              <DollarSign className="w-4 h-4" />
+        <div className="p-3 sm:p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
+          <div className="flex items-center justify-between text-slate-500">
+            <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider">Total Revenue</span>
+            <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg">
+              <DollarSign className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className="text-2xl font-black text-gray-900">₹{metrics.totalRevenue.toLocaleString()}</p>
-          <p className="text-2xs font-semibold text-gray-500 flex items-center gap-1">
-            <ArrowUpRight className="w-3 h-3 text-emerald-500" />
-            Cumulative room bookings
-          </p>
+          <p className="text-lg sm:text-xl font-black text-slate-900 font-mono">₹{metrics.monthRevenue.toLocaleString()}</p>
+          <p className="text-[10px] font-semibold text-slate-500 truncate">{formatMonthLabel(selectedMonth)} room bookings</p>
         </div>
 
         {/* Advance Received */}
-        <div className="p-5 bg-white border border-gray-100 rounded-2xl shadow-2xs space-y-2">
-          <div className="flex items-center justify-between text-gray-500">
-            <span className="text-xs font-bold uppercase tracking-wider">Advance Received</span>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
-              <CreditCard className="w-4 h-4" />
+        <div className="p-3 sm:p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
+          <div className="flex items-center justify-between text-slate-500">
+            <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider">Advance Received</span>
+            <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+              <CreditCard className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className="text-2xl font-black text-blue-700">₹{metrics.advanceReceived.toLocaleString()}</p>
-          <p className="text-2xs font-semibold text-gray-500">Total upfront collections</p>
+          <p className="text-lg sm:text-xl font-black text-blue-700 font-mono">₹{metrics.advanceReceived.toLocaleString()}</p>
+          <p className="text-[10px] font-semibold text-slate-500 truncate">Upfront collections</p>
         </div>
 
-        {/* Outstanding Balance */}
-        <div className="p-5 bg-white border border-gray-100 rounded-2xl shadow-2xs space-y-2">
-          <div className="flex items-center justify-between text-gray-500">
-            <span className="text-xs font-bold uppercase tracking-wider">Outstanding Dues</span>
-            <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
-              <Wallet className="w-4 h-4" />
+        {/* Outstanding Dues */}
+        <div className="p-3 sm:p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
+          <div className="flex items-center justify-between text-slate-500">
+            <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider">Outstanding Dues</span>
+            <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg">
+              <Wallet className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className="text-2xl font-black text-amber-600">₹{metrics.outstandingBalance.toLocaleString()}</p>
-          <p className="text-2xs font-semibold text-gray-500">Pending guest balance</p>
+          <p className="text-lg sm:text-xl font-black text-amber-600 font-mono">₹{metrics.outstandingBalance.toLocaleString()}</p>
+          <p className="text-[10px] font-semibold text-slate-500 truncate">Pending guest balance</p>
         </div>
 
-        {/* This Month Net Profit */}
-        <div className="p-5 bg-slate-900 text-white rounded-2xl shadow-2xs space-y-2">
+        {/* Month Net Profit */}
+        <div className="p-3 sm:p-3.5 bg-slate-900 text-white rounded-xl shadow-2xs flex flex-col justify-between h-[115px] sm:h-[125px]">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-xs font-bold uppercase tracking-wider">Month Net Profit</span>
-            <div className="p-2 bg-slate-800 text-emerald-400 rounded-xl">
-              <Receipt className="w-4 h-4" />
+            <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider">Month Net Profit</span>
+            <div className="p-1.5 bg-slate-800 text-emerald-400 rounded-lg">
+              <Receipt className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className={`text-2xl font-black ${metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+          <p className={`text-lg sm:text-xl font-black font-mono ${metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
             ₹{metrics.netIncome.toLocaleString()}
           </p>
-          <p className="text-2xs font-semibold text-slate-400">Revenue - (Rent + Salary + Inventory)</p>
+          <p className="text-[10px] font-semibold text-slate-400 truncate">Revenue - All Expenses</p>
         </div>
       </div>
 
-      {/* Main Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Chart 1: Revenue vs All Expense Streams (2 Cols) */}
-        <div className="lg:col-span-2 bg-white p-5 border border-gray-100 rounded-2xl shadow-2xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-50 pb-3">
-            <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-indigo-600" />
-              Monthly Revenue vs Operating Expenses
-            </h3>
-            <span className="text-2xs font-semibold text-gray-400 uppercase">Monthly Breakdown</span>
-          </div>
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthlyChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-                <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
-                <Tooltip
-                  formatter={(value: any) => [`₹${Number(value).toLocaleString()}`, '']}
-                  contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '12px' }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px' }} />
-                <Bar dataKey="revenue" name="Room Revenue" fill="#10B981" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="inventory" name="Inventory" fill="#F59E0B" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="salary" name="Salary" fill="#6366F1" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="rent" name="Rent" fill="#84CC16" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+      {/* FULL YEAR 12-MONTH CHART (Span Full Width) */}
+      <div className="bg-white p-3.5 sm:p-4 border border-slate-200/80 rounded-xl shadow-2xs space-y-3">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+          <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+            <TrendingUp className="w-4 h-4 text-indigo-600" />
+            Monthly Revenue vs Operating Expenses ({selectedYear})
+          </h3>
+          <div className="flex items-center gap-1 text-[11px] font-bold text-slate-500">
+            <button
+              onClick={handlePrevYear}
+              className="p-1 hover:bg-slate-100 rounded cursor-pointer"
+              title="Previous Year"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <span className="font-mono text-slate-900">{selectedYear}</span>
+            <button
+              onClick={handleNextYear}
+              className="p-1 hover:bg-slate-100 rounded cursor-pointer"
+              title="Next Year"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
-
-        {/* Chart 2: All Expenses Breakdown (Pie Chart) */}
-        <div className="bg-white p-5 border border-gray-100 rounded-2xl shadow-2xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-50 pb-3">
-            <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
-              <PieChartIcon className="w-4 h-4 text-emerald-600" />
-              Expense Distribution
-            </h3>
-            <span className="text-2xs font-semibold text-gray-400 uppercase">By Category</span>
-          </div>
-          <div className="h-72 w-full flex items-center justify-center">
-            {categoryPieData.length === 0 ? (
-              <p className="text-xs text-gray-400 italic">No expenses logged yet</p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={categoryPieData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                    innerRadius={45}
-                    paddingAngle={3}
-                  >
-                    {categoryPieData.map((entry) => (
-                      <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name] || '#6B7280'} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(val: any) => [`₹${Number(val).toLocaleString()}`, 'Amount']}
-                    contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '12px' }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: '11px' }} />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+        <div className="h-64 sm:h-72 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={yearly12MonthsData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="#94a3b8" />
+              <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
+              <Tooltip
+                formatter={(value: any) => [`₹${Number(value).toLocaleString()}`, '']}
+                contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '11px' }}
+              />
+              <Legend wrapperStyle={{ fontSize: '11px' }} />
+              <Bar dataKey="revenue" name="Room Revenue" fill="#10B981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="inventory" name="Inventory" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="salary" name="Salary" fill="#6366F1" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="rent" name="Rent" fill="#84CC16" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Daily Trends Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Chart 3: Daily Revenue Trend */}
-        <div className="bg-white p-5 border border-gray-100 rounded-2xl shadow-2xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-50 pb-3">
-            <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
-              <ArrowUpRight className="w-4 h-4 text-indigo-600" />
-              Daily Room Revenue Trend (14 Days)
+      {/* DAILY CHARTS SECTION FOR FULL SELECTED MONTH */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+        {/* Chart 1: Daily Revenue */}
+        <div className="bg-white p-3.5 sm:p-4 border border-slate-200/80 rounded-xl shadow-2xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+              <ArrowUpRight className="w-4 h-4 text-emerald-600" />
+              Daily Room Revenue ({formatMonthLabel(selectedMonth)})
             </h3>
+            <span className="text-[10px] font-mono text-slate-400">{dailyDataForMonth.length} Days</span>
           </div>
-          <div className="h-60 w-full">
+          <div className="h-56 sm:h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dailyTrendsData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <LineChart data={dailyDataForMonth} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#94a3b8" />
-                <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                <XAxis dataKey="shortLabel" tick={{ fontSize: 9 }} stroke="#94a3b8" interval={0} />
+                <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
                 <Tooltip
                   formatter={(val: any) => [`₹${Number(val).toLocaleString()}`, 'Revenue']}
-                  contentStyle={{ borderRadius: '12px', fontSize: '11px' }}
+                  labelFormatter={(label, items) => {
+                    if (items && items[0] && items[0].payload) {
+                      return items[0].payload.label;
+                    }
+                    return label;
+                  }}
+                  contentStyle={{ borderRadius: '10px', fontSize: '11px' }}
                 />
-                <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#10B981" strokeWidth={2.5} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#10B981" strokeWidth={2} dot={{ r: 2 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Chart 4: Daily Inventory Expense Trend */}
-        <div className="bg-white p-5 border border-gray-100 rounded-2xl shadow-2xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-50 pb-3">
-            <h3 className="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+        {/* Chart 2: Daily Inventory Expenses */}
+        <div className="bg-white p-3.5 sm:p-4 border border-slate-200/80 rounded-xl shadow-2xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
               <ArrowDownRight className="w-4 h-4 text-rose-600" />
-              Daily Inventory Expenses Trend (14 Days)
+              Daily Inventory Expenses ({formatMonthLabel(selectedMonth)})
             </h3>
+            <span className="text-[10px] font-mono text-slate-400">{dailyDataForMonth.length} Days</span>
           </div>
-          <div className="h-60 w-full">
+          <div className="h-56 sm:h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dailyTrendsData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <LineChart data={dailyDataForMonth} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#94a3b8" />
-                <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                <XAxis dataKey="shortLabel" tick={{ fontSize: 9 }} stroke="#94a3b8" interval={0} />
+                <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
                 <Tooltip
                   formatter={(val: any) => [`₹${Number(val).toLocaleString()}`, 'Inventory Expenses']}
-                  contentStyle={{ borderRadius: '12px', fontSize: '11px' }}
+                  labelFormatter={(label, items) => {
+                    if (items && items[0] && items[0].payload) {
+                      return items[0].payload.label;
+                    }
+                    return label;
+                  }}
+                  contentStyle={{ borderRadius: '10px', fontSize: '11px' }}
                 />
-                <Line type="monotone" dataKey="expenses" name="Inventory Expenses" stroke="#f43f5e" strokeWidth={2.5} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="expenses" name="Inventory Expenses" stroke="#f43f5e" strokeWidth={2} dot={{ r: 2 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -520,3 +587,4 @@ export default function Analytics() {
     </div>
   );
 }
+

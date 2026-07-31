@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Booking, DashboardStats, Room } from '../types';
 import { useHotelData } from '../context/HotelContext';
+import { formatDateDDMMYYYY } from '../utils/formatters';
 import {
   BedSingle,
   DoorOpen,
@@ -178,17 +179,7 @@ export default function Dashboard({
   const todayStr = new Date().toISOString().split('T')[0];
 
   const formatDateShort = (dateStr: string) => {
-    if (!dateStr) return '';
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const parts = dateStr.split('-');
-    if (parts.length === 3) {
-      const day = parseInt(parts[2], 10);
-      const monthIndex = parseInt(parts[1], 10) - 1;
-      if (monthIndex >= 0 && monthIndex < 12) {
-        return `${day} ${months[monthIndex]}`;
-      }
-    }
-    return dateStr;
+    return formatDateDDMMYYYY(dateStr);
   };
 
   const handleRoomClick = (mapping: RoomStatusMapping) => {

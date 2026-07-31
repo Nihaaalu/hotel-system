@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Expense, ExpenseCategory } from '../types';
 import { useHotelData } from '../context/HotelContext';
+import { formatDateDDMMYYYY } from '../utils/formatters';
 import {
   Package,
   Plus,
@@ -394,7 +395,7 @@ export default function Inventory() {
                   const displayName = exp.itemName || exp.category;
                   return (
                     <tr key={exp.id} className="hover:bg-gray-50/80 transition-colors">
-                      <td className="py-3 px-4 font-mono font-bold text-gray-600 whitespace-nowrap">{exp.expenseDate}</td>
+                      <td className="py-3 px-4 font-mono font-bold text-gray-600 whitespace-nowrap">{formatDateDDMMYYYY(exp.expenseDate)}</td>
                       <td className="py-3 px-4 font-black text-gray-900 whitespace-nowrap flex items-center gap-1.5">
                         <Tag className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                         <span>{displayName}</span>
