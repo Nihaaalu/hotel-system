@@ -6,10 +6,8 @@ import {
   ZoomIn,
   ZoomOut,
   X,
-  Plus,
   Info,
 } from 'lucide-react';
-import { formatDateHuman } from '../utils/formatters';
 import ExportOccupancyButton from './ExportOccupancyButton';
 
 interface MobileCalendarProps {
@@ -31,8 +29,13 @@ export default function MobileCalendar({
   onSelectBooking,
   todayYMD,
 }: MobileCalendarProps) {
-  // Zoom level state (0.25 to 2.5). Default 1.0 is "Fit to Screen"
+  // Zoom level state (0.75 to 2.5). Default 1.0 is "100% Fit to Screen"
   const [zoom, setZoom] = useState<number>(1.0);
+  const zoomRef = useRef<number>(zoom);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
   const [showLegendModal, setShowLegendModal] = useState<boolean>(false);
 
   // Dynamic height measurement for auto-fit calculations
@@ -63,19 +66,9 @@ export default function MobileCalendar({
     };
   }, []);
 
-  // Selected cell popover / modal state
-  const [selectedCellInfo, setSelectedCellInfo] = useState<{
-    roomNumber: number;
-    dateYMD: string;
-    booking: Booking | null;
-    isLongPress: boolean;
-  } | null>(null);
-
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth(); // 0-indexed
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  const COUPLE_ROOMS = useMemo(() => new Set([101, 102, 103, 201, 202, 203, 204, 205]), []);
 
   // Format YYYY-MM-DD
   const formatYMD = (y: number, m: number, d: number) => {
@@ -84,26 +77,42 @@ export default function MobileCalendar({
     return `${y}-${mm}-${dd}`;
   };
 
-  // Days array for current month
-  const monthDays = useMemo(() => {
+  // Days array: ALWAYS 31 rows allocated (1 to 31) regardless of month
+  const monthDays31 = useMemo(() => {
     const list = [];
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateObj = new Date(year, month, d);
-      const ymd = formatYMD(year, month, d);
-      const shortDayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
-      const dayOfWeek = dateObj.getDay(); // 0 = Sun, 5 = Fri, 6 = Sat
-      const isFriSatSun = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
-      const isToday = ymd === todayYMD;
-      const isPast = ymd < todayYMD;
-      list.push({
-        dayNum: d,
-        formattedDayNum: String(d).padStart(2, '0'),
-        ymd,
-        shortDayName,
-        isFriSatSun,
-        isToday,
-        isPast,
-      });
+    for (let d = 1; d <= 31; d++) {
+      const isActive = d <= daysInMonth;
+      if (isActive) {
+        const dateObj = new Date(year, month, d);
+        const ymd = formatYMD(year, month, d);
+        const shortDayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+        const dayOfWeek = dateObj.getDay(); // 0 = Sun, 5 = Fri, 6 = Sat
+        const isFriSatSun = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
+        const isToday = ymd === todayYMD;
+        const isPast = ymd < todayYMD;
+        list.push({
+          dayNum: d,
+          formattedDayNum: String(d).padStart(2, '0'),
+          ymd,
+          shortDayName,
+          isFriSatSun,
+          isToday,
+          isPast,
+          isActive: true,
+        });
+      } else {
+        // Disabled row for months with <31 days (e.g. Feb 29-31, Apr 31)
+        list.push({
+          dayNum: d,
+          formattedDayNum: String(d).padStart(2, '0'),
+          ymd: `disabled_${d}`,
+          shortDayName: '-',
+          isFriSatSun: false,
+          isToday: false,
+          isPast: false,
+          isActive: false,
+        });
+      }
     }
     return list;
   }, [year, month, daysInMonth, todayYMD]);
@@ -134,105 +143,113 @@ export default function MobileCalendar({
     );
   };
 
-  // Dynamic cell sizing:
-  // At zoom = 1.0 (Fit view), calculate cellHeight so ALL daysInMonth fit inside gridHeight without vertical scrollbar!
-  const ROOM_ROW_HEIGHT = 22; // sticky header height
-  const availableHeightForCells = Math.max(200, gridHeight - ROOM_ROW_HEIGHT - 2);
-  const fitCellHeight = Math.max(14, Math.floor(availableHeightForCells / daysInMonth));
+  // Dynamic cell sizing: ALWAYS fit 31 rows in available height at zoom = 1.0!
+  const ROOM_ROW_HEIGHT = 20; // sticky room header row height
+  const availableHeightForCells = Math.max(180, gridHeight - ROOM_ROW_HEIGHT - 2);
+  const fitCellHeight = Math.max(12, Math.floor(availableHeightForCells / 31));
 
-  // Actual cell dimensions
-  const cellHeight = Math.round(fitCellHeight * zoom);
-  const cellWidth = Math.max(20, Math.round(24 * zoom));
-  const dateColWidth = Math.max(30, Math.round(34 * Math.min(1.2, zoom)));
+  // Actual cell dimensions scaled by zoom
+  const cellHeight = Math.max(10, Math.round(fitCellHeight * zoom));
+  const cellWidth = Math.max(22, Math.round(26 * zoom));
+  const dateColWidth = Math.max(28, Math.round(32 * Math.min(1.2, zoom)));
 
-  // Gesture handling refs
-  const startDistRef = useRef<number>(0);
-  const startZoomRef = useRef<number>(1.0);
+  // Touch gesture & focal point pinch zoom logic
   const lastTapTimeRef = useRef<number>(0);
-  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isLongPressRef = useRef<boolean>(false);
 
-  // Handle Touch Start for Pinch / Double-Tap / Long Press
-  const handleTouchStart = (
-    e: React.TouchEvent<HTMLDivElement>,
-    roomNumber?: number,
-    dateYMD?: string,
-    booking?: Booking | null
-  ) => {
-    if (e.touches.length === 2) {
-      // Pinch gesture start
-      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-      isLongPressRef.current = false;
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      startDistRef.current = dist;
-      startZoomRef.current = zoom;
-      return;
-    }
+  useEffect(() => {
+    const container = gridContainerRef.current;
+    if (!container) return;
 
-    if (e.touches.length === 1 && roomNumber && dateYMD !== undefined) {
-      // Double tap check to reset zoom
-      const now = Date.now();
-      if (now - lastTapTimeRef.current < 280) {
-        setZoom(1.0); // Reset to 100% Fit
-        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-        isLongPressRef.current = false;
-        lastTapTimeRef.current = 0;
-        return;
+    let startDist = 0;
+    let startZoom = 1.0;
+    let startScrollLeft = 0;
+    let startScrollTop = 0;
+    let focalX = 0;
+    let focalY = 0;
+    let isPinching = false;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault(); // Prevent native browser screen zoom
+        isPinching = true;
+
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+
+        startDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        startZoom = zoomRef.current;
+
+        const rect = container.getBoundingClientRect();
+        focalX = (t1.clientX + t2.clientX) / 2 - rect.left;
+        focalY = (t1.clientY + t2.clientY) / 2 - rect.top;
+
+        startScrollLeft = container.scrollLeft;
+        startScrollTop = container.scrollTop;
       }
-      lastTapTimeRef.current = now;
+    };
 
-      // Long press check
-      isLongPressRef.current = false;
-      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = setTimeout(() => {
-        isLongPressRef.current = true;
-        setSelectedCellInfo({
-          roomNumber,
-          dateYMD,
-          booking: booking || null,
-          isLongPress: true,
-        });
-      }, 450);
-    }
-  };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && isPinching && startDist > 0) {
+        e.preventDefault(); // Prevent browser zoom while pinching
 
-  // Handle Touch Move
-  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
 
-    if (e.touches.length === 2 && startDistRef.current > 0) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      const ratio = dist / startDistRef.current;
-      const newZoom = Math.min(2.5, Math.max(0.25, startZoomRef.current * ratio));
-      setZoom(Number(newZoom.toFixed(2)));
-    }
-  };
+        const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        if (dist === 0) return;
 
-  // Handle Touch End
-  const handleTouchEnd = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-    startDistRef.current = 0;
-  };
+        const ratio = dist / startDist;
+        const rawZoom = startZoom * ratio;
+        // Strictly enforce 75% min zoom, 250% max zoom
+        const newZoom = Math.min(2.5, Math.max(0.75, rawZoom));
 
-  // Cell Tap
-  const handleCellClick = (roomNumber: number, dateYMD: string, booking: Booking | null) => {
-    if (isLongPressRef.current) {
-      isLongPressRef.current = false;
+        if (Math.abs(newZoom - zoomRef.current) > 0.005) {
+          setZoom(Number(newZoom.toFixed(2)));
+
+          // Preserve visible scroll position around the focal point under fingers
+          const scale = newZoom / startZoom;
+          const targetScrollLeft = (startScrollLeft + focalX) * scale - focalX;
+          const targetScrollTop = (startScrollTop + focalY) * scale - focalY;
+
+          container.scrollLeft = Math.max(0, targetScrollLeft);
+          container.scrollTop = Math.max(0, targetScrollTop);
+        }
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        isPinching = false;
+        startDist = 0;
+      }
+    };
+
+    container.addEventListener('touchstart', onTouchStart, { passive: false });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd);
+    container.addEventListener('touchcancel', onTouchEnd);
+
+    return () => {
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('touchend', onTouchEnd);
+      container.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, []);
+
+  // Double tap to reset zoom to 1.0 (100% Fit)
+  const handleCellTouchStart = () => {
+    const now = Date.now();
+    if (now - lastTapTimeRef.current < 280) {
+      setZoom(1.0);
+      lastTapTimeRef.current = 0;
       return;
     }
+    lastTapTimeRef.current = now;
+  };
 
+  // Cell Click / Tap
+  const handleCellClick = (roomNumber: number, dateYMD: string, booking: Booking | null) => {
     if (booking) {
       onSelectBooking(booking.id);
     } else {
@@ -243,33 +260,33 @@ export default function MobileCalendar({
   // Zoom preset handlers
   const handleResetZoom = () => setZoom(1.0);
   const handleZoomIn = () => setZoom((z) => Math.min(2.5, Number((z + 0.25).toFixed(2))));
-  const handleZoomOut = () => setZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))));
+  const handleZoomOut = () => setZoom((z) => Math.max(0.75, Number((z - 0.25).toFixed(2))));
 
   return (
     <div
       className="flex flex-col h-[calc(100vh-68px)] w-full bg-slate-950 text-slate-100 select-none overflow-hidden font-sans border-0 shadow-none relative"
       id="mobile_fullscreen_calendar"
     >
-      {/* 1. COLLAPSED SINGLE-ROW TOOLBAR (Height ~34px) */}
-      <div className="shrink-0 bg-slate-900 px-1.5 py-1 border-b border-slate-800 flex items-center justify-between gap-1 z-40 h-9">
+      {/* 1. COMPACT TOOLBAR (Height ~32px, reduced 15-20%) */}
+      <div className="shrink-0 bg-slate-900 px-1 py-0.5 border-b border-slate-800 flex items-center justify-between gap-1 z-40 h-8">
         {/* Month Switcher */}
         <div className="flex items-center gap-0.5">
           <button
             onClick={goToPrevMonth}
-            className="p-1 rounded bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
+            className="p-0.5 rounded bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
             aria-label="Previous Month"
           >
-            <ChevronLeft className="w-3.5 h-3.5" />
+            <ChevronLeft className="w-3 h-3" />
           </button>
-          <span className="text-[11px] font-black tracking-tight text-white px-1 font-mono uppercase">
+          <span className="text-[10px] font-black tracking-tight text-white px-0.5 font-mono uppercase">
             {currentMonthTitle}
           </span>
           <button
             onClick={goToNextMonth}
-            className="p-1 rounded bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
+            className="p-0.5 rounded bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
             aria-label="Next Month"
           >
-            <ChevronRight className="w-3.5 h-3.5" />
+            <ChevronRight className="w-3 h-3" />
           </button>
         </div>
 
@@ -277,7 +294,7 @@ export default function MobileCalendar({
         <div className="flex items-center gap-1">
           <button
             onClick={goToToday}
-            className="px-1.5 py-0.5 bg-indigo-600 active:bg-indigo-700 text-white text-[10px] font-extrabold rounded shadow-xs transition"
+            className="px-1.5 py-0.5 bg-indigo-600 active:bg-indigo-700 text-white text-[9.5px] font-black rounded shadow-2xs transition"
           >
             Today
           </button>
@@ -293,15 +310,15 @@ export default function MobileCalendar({
           <div className="flex items-center bg-slate-800 rounded p-0.5 border border-slate-700">
             <button
               onClick={handleZoomOut}
-              disabled={zoom <= 0.25}
+              disabled={zoom <= 0.75}
               className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white"
-              title="Zoom Out"
+              title="Zoom Out (Min 75%)"
             >
-              <ZoomOut className="w-3 h-3" />
+              <ZoomOut className="w-2.5 h-2.5" />
             </button>
             <button
               onClick={handleResetZoom}
-              className="text-[9.5px] font-mono font-bold px-1 text-indigo-300 hover:text-white"
+              className="text-[9px] font-mono font-bold px-1 text-indigo-300 hover:text-white"
               title="Double tap or click to reset to 100% Fit"
             >
               {Math.round(zoom * 100)}%
@@ -310,71 +327,72 @@ export default function MobileCalendar({
               onClick={handleZoomIn}
               disabled={zoom >= 2.5}
               className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white"
-              title="Zoom In"
+              title="Zoom In (Max 250%)"
             >
-              <ZoomIn className="w-3 h-3" />
+              <ZoomIn className="w-2.5 h-2.5" />
             </button>
           </div>
 
-          {/* Tiny Floating Legend Trigger Button */}
+          {/* Legend Trigger Button */}
           <button
             onClick={() => setShowLegendModal(!showLegendModal)}
-            className="p-1 bg-slate-800 active:bg-slate-700 text-amber-400 rounded border border-slate-700 flex items-center justify-center"
+            className="p-0.5 bg-slate-800 active:bg-slate-700 text-amber-400 rounded border border-slate-700 flex items-center justify-center"
             title="Calendar Legend"
           >
-            <Info className="w-3.5 h-3.5" />
+            <Info className="w-3 h-3" />
           </button>
         </div>
       </div>
 
-      {/* 2. FLOATING LEGEND POPUP (Does NOT take permanent vertical space) */}
+      {/* 2. FLOATING LEGEND POPUP */}
       {showLegendModal && (
-        <div className="absolute top-10 right-2 z-50 bg-slate-900 border border-slate-700 rounded-xl p-2.5 shadow-2xl text-[10px] text-slate-200 animate-fadeIn space-y-1.5 w-48 backdrop-blur-md">
+        <div className="absolute top-9 right-1 z-50 bg-slate-900 border border-slate-700 rounded-xl p-2 shadow-2xl text-[9.5px] text-slate-200 animate-fadeIn space-y-1 w-44 backdrop-blur-md">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 font-bold text-white">
-            <span>Color Legend (Mobile)</span>
+            <span>Color Legend</span>
             <button onClick={() => setShowLegendModal(false)} className="text-slate-400 hover:text-white cursor-pointer">
               <X className="w-3 h-3" />
             </button>
           </div>
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#D6D6D6] bg-white"></span>
+              <span className="w-2.5 h-2.5 rounded-xs border border-[#D6D6D6] bg-white"></span>
               <span>Available (White)</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#C79A00] bg-[#FFD54F]"></span>
+              <span className="w-2.5 h-2.5 rounded-xs border border-[#C79A00] bg-[#FFD54F]"></span>
               <span className="text-amber-300">Reserved (Yellow)</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#1565C0] bg-[#1E88E5]"></span>
+              <span className="w-2.5 h-2.5 rounded-xs border border-[#1565C0] bg-[#1E88E5]"></span>
               <span className="text-blue-400">Checked In (Blue)</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#B71C1C] bg-[#E53935]"></span>
+              <span className="w-2.5 h-2.5 rounded-xs border border-[#B71C1C] bg-[#E53935]"></span>
               <span className="text-red-400">Checked Out (Red)</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#3A3A3A] bg-[#FFF4D6]"></span>
+              <span className="w-2.5 h-2.5 rounded-xs border border-[#3A3A3A] bg-[#FFF4D6]"></span>
               <span className="text-amber-200">First Fl Cream</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#3A3A3A] bg-[#EDE0D4]"></span>
+              <span className="w-2.5 h-2.5 rounded-xs border border-[#3A3A3A] bg-[#EDE0D4]"></span>
               <span className="text-amber-100">Second Fl Coffee</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-xs border border-[#B71C1C] bg-[#D32F2F]"></span>
+              <span className="w-2.5 h-2.5 rounded-xs border border-[#B71C1C] bg-[#D32F2F]"></span>
               <span className="text-red-300">Fri - Sun Date (Red)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-xs border border-slate-700 bg-slate-900/60"></span>
+              <span className="text-slate-400">Disabled (31-day pad)</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* 3. FULLSCREEN AUTO-FIT MATRIX GRID (Spreadsheet Style) */}
+      {/* 3. FULLSCREEN MATRIX GRID (Always 31 Rows Fit on Screen) */}
       <div
         ref={gridContainerRef}
-        onTouchStart={(e) => handleTouchStart(e)}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
         className="flex-1 overflow-auto relative touch-pan-x touch-pan-y bg-slate-950 scrollbar-none"
       >
         <table className="border-collapse table-fixed w-max bg-slate-950">
@@ -388,8 +406,9 @@ export default function MobileCalendar({
                   backgroundColor: '#0F172A',
                   color: '#FFFFFF',
                   borderColor: '#3A3A3A',
+                  fontSize: `${Math.min(10, Math.max(7.5, 8.5 * Math.sqrt(zoom)))}px`,
                 }}
-                className="sticky top-0 left-0 z-30 border-r-2 border-b-2 p-0 text-[9px] font-black text-center font-mono uppercase shadow-xs flex items-center justify-center"
+                className="sticky top-0 left-0 z-30 border-r-2 border-b-2 p-0 font-black text-center font-mono uppercase shadow-xs"
               >
                 RM
               </th>
@@ -417,8 +436,9 @@ export default function MobileCalendar({
                       backgroundColor: headerBg,
                       color: headerColor,
                       borderColor: '#3A3A3A',
+                      fontSize: `${Math.min(12, Math.max(8, 9.5 * Math.sqrt(zoom)))}px`,
                     }}
-                    className="sticky top-0 z-20 border-r border-b-2 p-0 text-center align-middle font-extrabold text-[10px] font-mono"
+                    className="sticky top-0 z-20 border-r border-b-2 p-0 text-center align-middle font-black font-mono leading-none"
                   >
                     <div className="w-full h-full flex items-center justify-center font-bold">
                       {room.number}
@@ -430,9 +450,51 @@ export default function MobileCalendar({
           </thead>
 
           <tbody>
-            {monthDays.map((day) => {
+            {monthDays31.map((day) => {
+              if (!day.isActive) {
+                // Disabled row beyond daysInMonth (e.g. Days 29..31 in Feb, Day 31 in Apr)
+                return (
+                  <tr key={day.ymd} className="opacity-40 select-none">
+                    {/* Date Left Column (Disabled) */}
+                    <td
+                      style={{
+                        width: `${dateColWidth}px`,
+                        height: `${cellHeight}px`,
+                        backgroundColor: '#090E1A',
+                        color: '#475569',
+                        borderColor: '#1E293B',
+                        fontSize: `${Math.min(10, Math.max(7, 8.5 * Math.sqrt(zoom)))}px`,
+                      }}
+                      className="sticky left-0 z-20 border-r-2 border-b p-0 text-center align-middle font-bold font-mono"
+                    >
+                      <div className="w-full h-full flex items-center justify-center leading-none text-center">
+                        <span>{day.formattedDayNum}</span>
+                      </div>
+                    </td>
+
+                    {/* Room Status Cells (Disabled) */}
+                    {rooms.map((room) => (
+                      <td
+                        key={`${room.number}_${day.ymd}`}
+                        style={{
+                          width: `${cellWidth}px`,
+                          height: `${cellHeight}px`,
+                          borderColor: '#1E293B',
+                          backgroundColor: '#070B14',
+                        }}
+                        className="p-0 border-r border-b align-middle text-center overflow-hidden pointer-events-none"
+                      >
+                        <div className="w-full h-full flex items-center justify-center text-[7px] text-slate-700">
+                          -
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                );
+              }
+
+              // Active Day Row (Days 1 to daysInMonth)
               const isToday = day.isToday;
-              // Date column: Friday, Saturday, Sunday -> Red background (#D32F2F) with white text; Mon-Thu -> White with black text
               const dateBgColor = day.isFriSatSun ? '#D32F2F' : '#FFFFFF';
               const dateTextColor = day.isFriSatSun ? '#FFFFFF' : '#000000';
 
@@ -441,7 +503,7 @@ export default function MobileCalendar({
                   key={day.ymd}
                   className={isToday ? 'relative z-10' : ''}
                 >
-                  {/* Date Left Column */}
+                  {/* Date Left Column (Frozen Sticky) */}
                   <td
                     style={{
                       width: `${dateColWidth}px`,
@@ -454,11 +516,19 @@ export default function MobileCalendar({
                     className="sticky left-0 z-20 border-r-2 border-b p-0 text-center align-middle font-bold"
                   >
                     <div className="w-full h-full flex items-center justify-center leading-none text-center">
-                      <span className="text-[10px] font-extrabold font-mono">{day.formattedDayNum}</span>
+                      <span
+                        style={{ fontSize: `${Math.min(11, Math.max(7.5, 9 * Math.sqrt(zoom)))}px` }}
+                        className="font-black font-mono"
+                      >
+                        {day.formattedDayNum}
+                      </span>
                       {zoom >= 1.4 && (
                         <span
-                          style={{ color: day.isFriSatSun ? '#FFCDD2' : '#555555' }}
-                          className="text-[7.5px] uppercase font-mono ml-0.5 font-bold"
+                          style={{
+                            color: day.isFriSatSun ? '#FFCDD2' : '#555555',
+                            fontSize: `${Math.min(9, Math.max(6.5, 7.5 * Math.sqrt(zoom)))}px`,
+                          }}
+                          className="uppercase font-mono ml-0.5 font-bold"
                         >
                           {day.shortDayName}
                         </span>
@@ -470,11 +540,9 @@ export default function MobileCalendar({
                   {rooms.map((room) => {
                     const booking = getBookingForRoomAndDate(room.number, day.ymd);
 
-                    // Default available styling: White (#FFFFFF)
                     let bg = '#FFFFFF';
                     let textColor = '#444444';
                     let cellBorderColor = '#3A3A3A';
-                    let textDecoration = 'none';
                     let statusTitle = 'Available';
 
                     if (booking) {
@@ -511,7 +579,7 @@ export default function MobileCalendar({
                         className="p-0 border-r border-b align-middle text-center overflow-hidden"
                       >
                         <div
-                          onTouchStart={(e) => handleTouchStart(e, room.number, day.ymd, booking)}
+                          onTouchStart={handleCellTouchStart}
                           onClick={() => handleCellClick(room.number, day.ymd, booking)}
                           title={`Rm ${room.number} (${day.ymd}): ${statusTitle}${booking ? ' - ' + booking.guestName : ''}`}
                           style={{
@@ -519,13 +587,17 @@ export default function MobileCalendar({
                             height: `${cellHeight}px`,
                             backgroundColor: bg,
                             color: textColor,
-                            textDecoration,
                           }}
                           className="w-full h-full cursor-pointer flex items-center justify-center text-center transition-all active:opacity-80 p-0"
                         >
                           {booking && (
-                            <span className="text-[8.5px] font-black uppercase truncate px-0.5 text-center leading-none w-full block select-none">
-                              {zoom < 1.2 && cellWidth < 30
+                            <span
+                              style={{
+                                fontSize: `${Math.min(10, Math.max(6.5, 8 * Math.sqrt(zoom)))}px`,
+                              }}
+                              className="font-black uppercase truncate px-0.2 text-center leading-none w-full block select-none"
+                            >
+                              {zoom < 1.2 && cellWidth < 28
                                 ? guestText.charAt(0)
                                 : guestText}
                             </span>
@@ -543,3 +615,4 @@ export default function MobileCalendar({
     </div>
   );
 }
+
