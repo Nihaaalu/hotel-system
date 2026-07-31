@@ -214,7 +214,7 @@ export default function BookingCalendar({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" id="booking_calendar_panel">
+    <div className="bg-white sm:rounded-2xl sm:border sm:border-gray-200 sm:shadow-sm overflow-hidden" id="booking_calendar_panel">
       {/* Top Banner for Error/Loading State */}
       {errorMsg && (
         <div className="p-3 bg-red-50 border-b border-red-200 text-red-700 text-xs font-semibold flex items-center justify-between px-4">

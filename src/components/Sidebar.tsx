@@ -3,18 +3,28 @@ import { LayoutDashboard, Calendar, Package, TrendingUp, Wallet, Menu, X } from 
 
 export type AppTab = 'dashboard' | 'calendar' | 'inventory' | 'salary-rent' | 'analytics';
 
-interface SidebarProps {
+export interface SidebarProps {
   currentTab: AppTab;
   onTabChange: (tab: AppTab) => void;
+  isMobileDrawerOpen?: boolean;
+  setIsMobileDrawerOpen?: (open: boolean) => void;
 }
 
-export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
-  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
+export default function Sidebar({
+  currentTab,
+  onTabChange,
+  isMobileDrawerOpen: externalDrawerOpen,
+  setIsMobileDrawerOpen: externalSetDrawerOpen,
+}: SidebarProps) {
+  const [internalDrawerOpen, setInternalDrawerOpen] = useState(false);
+
+  const isMobileDrawerOpen = externalDrawerOpen ?? internalDrawerOpen;
+  const setIsMobileDrawerOpen = externalSetDrawerOpen ?? setInternalDrawerOpen;
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'calendar', label: 'Booking Calendar', icon: Calendar },
-    { id: 'inventory', label: 'Inventory', icon: Package },
+    { id: 'inventory', label: 'Expense Ledger', icon: Package },
     { id: 'salary-rent', label: 'Salary / Rent', icon: Wallet },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   ] as const;
@@ -26,17 +36,6 @@ export default function Sidebar({ currentTab, onTabChange }: SidebarProps) {
 
   return (
     <>
-      {/* Mobile Hamburger Menu Button */}
-      <div className="sm:hidden fixed top-2.5 left-2.5 z-40">
-        <button
-          onClick={() => setIsMobileDrawerOpen(true)}
-          className="p-2 bg-slate-900 text-slate-100 rounded-lg shadow-md border border-slate-800 flex items-center justify-center cursor-pointer active:scale-95 transition"
-          aria-label="Open Navigation Menu"
-        >
-          <Menu className="w-5 h-5 text-indigo-400" />
-        </button>
-      </div>
-
       {/* Mobile Slide-Over Drawer */}
       {isMobileDrawerOpen && (
         <div className="fixed inset-0 z-50 sm:hidden flex">

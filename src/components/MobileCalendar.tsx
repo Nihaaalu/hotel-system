@@ -29,7 +29,7 @@ export default function MobileCalendar({
   onSelectBooking,
   todayYMD,
 }: MobileCalendarProps) {
-  // Zoom level state (0.75 to 2.5). Default 1.0 is "100% Fit to Screen"
+  // Zoom level state (0.80 to 2.50). Default 1.0 is "100% Fit to Screen"
   const [zoom, setZoom] = useState<number>(1.0);
   const zoomRef = useRef<number>(zoom);
   useEffect(() => {
@@ -38,30 +38,36 @@ export default function MobileCalendar({
 
   const [showLegendModal, setShowLegendModal] = useState<boolean>(false);
 
-  // Dynamic height measurement for auto-fit calculations
+  // Container & Table DOM refs
   const gridContainerRef = useRef<HTMLDivElement>(null);
-  const [gridHeight, setGridHeight] = useState<number>(500);
+  const tableRef = useRef<HTMLTableElement>(null);
 
-  // Measure container size
+  // Initial screen dimensions fallback
+  const initialW = typeof window !== 'undefined' ? window.innerWidth : 360;
+  const initialH = typeof window !== 'undefined' ? window.innerHeight - 80 : 550;
+
+  const [gridWidth, setGridWidth] = useState<number>(initialW);
+  const [gridHeight, setGridHeight] = useState<number>(initialH);
+
+  // Measure container viewport size accurately
   useEffect(() => {
-    const updateHeight = () => {
+    const updateDimensions = () => {
       if (gridContainerRef.current) {
         const rect = gridContainerRef.current.getBoundingClientRect();
-        if (rect.height > 100) {
-          setGridHeight(rect.height);
-        }
+        if (rect.height > 100) setGridHeight(rect.height);
+        if (rect.width > 100) setGridWidth(rect.width);
       }
     };
 
-    updateHeight();
-    window.addEventListener('resize', updateHeight);
-    const observer = new ResizeObserver(updateHeight);
+    updateDimensions();
+    window.addEventListener('resize', updateDimensions);
+    const observer = new ResizeObserver(updateDimensions);
     if (gridContainerRef.current) {
       observer.observe(gridContainerRef.current);
     }
 
     return () => {
-      window.removeEventListener('resize', updateHeight);
+      window.removeEventListener('resize', updateDimensions);
       observer.disconnect();
     };
   }, []);
@@ -143,18 +149,26 @@ export default function MobileCalendar({
     );
   };
 
-  // Dynamic cell sizing: ALWAYS fit 31 rows in available height at zoom = 1.0!
-  const ROOM_ROW_HEIGHT = 20; // sticky room header row height
-  const availableHeightForCells = Math.max(180, gridHeight - ROOM_ROW_HEIGHT - 2);
-  const fitCellHeight = Math.max(12, Math.floor(availableHeightForCells / 31));
+  // Dynamic cell sizing:
+  // 1. HEIGHT: ALWAYS fit 31 rows + header in available height at zoom = 1.0!
+  const ROOM_ROW_HEIGHT = 18; // sticky room header row height
+  const availableHeightForCells = Math.max(150, gridHeight - ROOM_ROW_HEIGHT - 32);
+  const fitCellHeight = Math.max(10, Math.floor(availableHeightForCells / 31));
+
+  // 2. WIDTH: ALWAYS fit date column + all 13 rooms in available width at zoom = 1.0!
+  const numRooms = rooms.length || 13;
+  const dateColWidthBase = 26; // compact date column width
+  const availableWidthForRooms = Math.max(150, gridWidth - dateColWidthBase - (numRooms + 1));
+  const fitCellWidth = Math.max(18, Math.floor(availableWidthForRooms / numRooms));
 
   // Actual cell dimensions scaled by zoom
   const cellHeight = Math.max(10, Math.round(fitCellHeight * zoom));
-  const cellWidth = Math.max(22, Math.round(26 * zoom));
-  const dateColWidth = Math.max(28, Math.round(32 * Math.min(1.2, zoom)));
+  const cellWidth = Math.max(18, Math.round(fitCellWidth * zoom));
+  const dateColWidth = Math.max(24, Math.round(dateColWidthBase * Math.min(1.15, zoom)));
 
-  // Touch gesture & focal point pinch zoom logic
+  // Touch gesture & focal point pinch zoom engine (GPU 60 FPS, No React State updates during pinch)
   const lastTapTimeRef = useRef<number>(0);
+  const pinchAnimationRef = useRef<number | null>(null);
 
   useEffect(() => {
     const container = gridContainerRef.current;
@@ -167,10 +181,14 @@ export default function MobileCalendar({
     let focalX = 0;
     let focalY = 0;
     let isPinching = false;
+    let currentTargetZoom = 1.0;
+
+    let targetScrollLeft = 0;
+    let targetScrollTop = 0;
 
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
-        e.preventDefault(); // Prevent native browser screen zoom
+        e.preventDefault(); // Stop browser native page zoom
         isPinching = true;
 
         const t1 = e.touches[0];
@@ -178,6 +196,7 @@ export default function MobileCalendar({
 
         startDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         startZoom = zoomRef.current;
+        currentTargetZoom = startZoom;
 
         const rect = container.getBoundingClientRect();
         focalX = (t1.clientX + t2.clientX) / 2 - rect.left;
@@ -190,7 +209,7 @@ export default function MobileCalendar({
 
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length === 2 && isPinching && startDist > 0) {
-        e.preventDefault(); // Prevent browser zoom while pinching
+        e.preventDefault(); // Stop browser screen zoom
 
         const t1 = e.touches[0];
         const t2 = e.touches[1];
@@ -200,26 +219,54 @@ export default function MobileCalendar({
 
         const ratio = dist / startDist;
         const rawZoom = startZoom * ratio;
-        // Strictly enforce 75% min zoom, 250% max zoom
-        const newZoom = Math.min(2.5, Math.max(0.75, rawZoom));
+        // Strictly enforce 80% min zoom, 250% max zoom
+        currentTargetZoom = Math.min(2.5, Math.max(0.8, rawZoom));
 
-        if (Math.abs(newZoom - zoomRef.current) > 0.005) {
-          setZoom(Number(newZoom.toFixed(2)));
+        const visualScale = currentTargetZoom / startZoom;
 
-          // Preserve visible scroll position around the focal point under fingers
-          const scale = newZoom / startZoom;
-          const targetScrollLeft = (startScrollLeft + focalX) * scale - focalX;
-          const targetScrollTop = (startScrollTop + focalY) * scale - focalY;
+        targetScrollLeft = (startScrollLeft + focalX) * visualScale - focalX;
+        targetScrollTop = (startScrollTop + focalY) * visualScale - focalY;
+
+        if (pinchAnimationRef.current) {
+          cancelAnimationFrame(pinchAnimationRef.current);
+        }
+
+        pinchAnimationRef.current = requestAnimationFrame(() => {
+          if (!isPinching) return;
+
+          const cHeight = Math.max(10, Math.round(fitCellHeight * currentTargetZoom));
+          const cWidth = Math.max(18, Math.round(fitCellWidth * currentTargetZoom));
+          const dWidth = Math.max(24, Math.round(dateColWidthBase * Math.min(1.15, currentTargetZoom)));
+
+          // Direct CSS custom property updates for 60 FPS zero-lag scaling without DOM reflow
+          if (tableRef.current) {
+            tableRef.current.style.setProperty('--cell-w', `${cWidth}px`);
+            tableRef.current.style.setProperty('--cell-h', `${cHeight}px`);
+            tableRef.current.style.setProperty('--date-w', `${dWidth}px`);
+          }
 
           container.scrollLeft = Math.max(0, targetScrollLeft);
           container.scrollTop = Math.max(0, targetScrollTop);
-        }
+        });
       }
     };
 
     const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) {
+      if (e.touches.length < 2 && isPinching) {
         isPinching = false;
+        if (pinchAnimationRef.current) {
+          cancelAnimationFrame(pinchAnimationRef.current);
+          pinchAnimationRef.current = null;
+        }
+
+        const finalZoom = Number(currentTargetZoom.toFixed(2));
+        setZoom(finalZoom);
+
+        requestAnimationFrame(() => {
+          container.scrollLeft = Math.max(0, targetScrollLeft);
+          container.scrollTop = Math.max(0, targetScrollTop);
+        });
+
         startDist = 0;
       }
     };
@@ -234,8 +281,11 @@ export default function MobileCalendar({
       container.removeEventListener('touchmove', onTouchMove);
       container.removeEventListener('touchend', onTouchEnd);
       container.removeEventListener('touchcancel', onTouchEnd);
+      if (pinchAnimationRef.current) {
+        cancelAnimationFrame(pinchAnimationRef.current);
+      }
     };
-  }, []);
+  }, [fitCellHeight, fitCellWidth, dateColWidthBase]);
 
   // Double tap to reset zoom to 1.0 (100% Fit)
   const handleCellTouchStart = () => {
@@ -260,15 +310,15 @@ export default function MobileCalendar({
   // Zoom preset handlers
   const handleResetZoom = () => setZoom(1.0);
   const handleZoomIn = () => setZoom((z) => Math.min(2.5, Number((z + 0.25).toFixed(2))));
-  const handleZoomOut = () => setZoom((z) => Math.max(0.75, Number((z - 0.25).toFixed(2))));
+  const handleZoomOut = () => setZoom((z) => Math.max(0.8, Number((z - 0.25).toFixed(2))));
 
   return (
     <div
-      className="flex flex-col h-[calc(100vh-68px)] w-full bg-slate-950 text-slate-100 select-none overflow-hidden font-sans border-0 shadow-none relative"
+      className="flex flex-col h-[calc(100dvh-50px)] w-full bg-slate-950 text-slate-100 select-none overflow-hidden font-sans border-0 shadow-none relative"
       id="mobile_fullscreen_calendar"
     >
-      {/* 1. COMPACT TOOLBAR (Height ~32px, reduced 15-20%) */}
-      <div className="shrink-0 bg-slate-900 px-1 py-0.5 border-b border-slate-800 flex items-center justify-between gap-1 z-40 h-8">
+      {/* 1. COMPACT TOOLBAR (Height 30px, ultra compact) */}
+      <div className="shrink-0 bg-slate-900 px-1 py-0.5 border-b border-slate-800 flex items-center justify-between gap-1 z-40 h-7.5">
         {/* Month Switcher */}
         <div className="flex items-center gap-0.5">
           <button
@@ -294,7 +344,7 @@ export default function MobileCalendar({
         <div className="flex items-center gap-1">
           <button
             onClick={goToToday}
-            className="px-1.5 py-0.5 bg-indigo-600 active:bg-indigo-700 text-white text-[9.5px] font-black rounded shadow-2xs transition"
+            className="px-1.5 py-0.5 bg-indigo-600 active:bg-indigo-700 text-white text-[9px] font-black rounded shadow-2xs transition cursor-pointer"
           >
             Today
           </button>
@@ -310,15 +360,15 @@ export default function MobileCalendar({
           <div className="flex items-center bg-slate-800 rounded p-0.5 border border-slate-700">
             <button
               onClick={handleZoomOut}
-              disabled={zoom <= 0.75}
-              className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white"
-              title="Zoom Out (Min 75%)"
+              disabled={zoom <= 0.8}
+              className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white cursor-pointer"
+              title="Zoom Out (Min 80%)"
             >
               <ZoomOut className="w-2.5 h-2.5" />
             </button>
             <button
               onClick={handleResetZoom}
-              className="text-[9px] font-mono font-bold px-1 text-indigo-300 hover:text-white"
+              className="text-[9px] font-mono font-bold px-1 text-indigo-300 hover:text-white cursor-pointer"
               title="Double tap or click to reset to 100% Fit"
             >
               {Math.round(zoom * 100)}%
@@ -326,7 +376,7 @@ export default function MobileCalendar({
             <button
               onClick={handleZoomIn}
               disabled={zoom >= 2.5}
-              className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white"
+              className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white cursor-pointer"
               title="Zoom In (Max 250%)"
             >
               <ZoomIn className="w-2.5 h-2.5" />
@@ -336,7 +386,7 @@ export default function MobileCalendar({
           {/* Legend Trigger Button */}
           <button
             onClick={() => setShowLegendModal(!showLegendModal)}
-            className="p-0.5 bg-slate-800 active:bg-slate-700 text-amber-400 rounded border border-slate-700 flex items-center justify-center"
+            className="p-0.5 bg-slate-800 active:bg-slate-700 text-amber-400 rounded border border-slate-700 flex items-center justify-center cursor-pointer"
             title="Calendar Legend"
           >
             <Info className="w-3 h-3" />
@@ -346,7 +396,7 @@ export default function MobileCalendar({
 
       {/* 2. FLOATING LEGEND POPUP */}
       {showLegendModal && (
-        <div className="absolute top-9 right-1 z-50 bg-slate-900 border border-slate-700 rounded-xl p-2 shadow-2xl text-[9.5px] text-slate-200 animate-fadeIn space-y-1 w-44 backdrop-blur-md">
+        <div className="absolute top-8 right-1 z-50 bg-slate-900 border border-slate-700 rounded-xl p-2 shadow-2xl text-[9.5px] text-slate-200 animate-fadeIn space-y-1 w-44 backdrop-blur-md">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1 font-bold text-white">
             <span>Color Legend</span>
             <button onClick={() => setShowLegendModal(false)} className="text-slate-400 hover:text-white cursor-pointer">
@@ -390,23 +440,35 @@ export default function MobileCalendar({
         </div>
       )}
 
-      {/* 3. FULLSCREEN MATRIX GRID (Always 31 Rows Fit on Screen) */}
+      {/* 3. FULLSCREEN MATRIX GRID (Always 31 Rows & All 13 Rooms Fit on Screen at 100% Zoom) */}
       <div
         ref={gridContainerRef}
         className="flex-1 overflow-auto relative touch-pan-x touch-pan-y bg-slate-950 scrollbar-none"
       >
-        <table className="border-collapse table-fixed w-max bg-slate-950">
+        <table
+          ref={tableRef}
+          style={
+            {
+              '--cell-w': `${cellWidth}px`,
+              '--cell-h': `${cellHeight}px`,
+              '--date-w': `${dateColWidth}px`,
+            } as React.CSSProperties
+          }
+          className="border-collapse table-fixed w-max bg-slate-950"
+        >
           <thead>
             <tr>
               {/* Top-Left Freeze Corner */}
               <th
                 style={{
-                  width: `${dateColWidth}px`,
+                  width: 'var(--date-w)',
+                  minWidth: 'var(--date-w)',
+                  maxWidth: 'var(--date-w)',
                   height: `${ROOM_ROW_HEIGHT}px`,
                   backgroundColor: '#0F172A',
                   color: '#FFFFFF',
                   borderColor: '#3A3A3A',
-                  fontSize: `${Math.min(10, Math.max(7.5, 8.5 * Math.sqrt(zoom)))}px`,
+                  fontSize: `${Math.min(10, Math.max(7, 8 * Math.sqrt(zoom)))}px`,
                 }}
                 className="sticky top-0 left-0 z-30 border-r-2 border-b-2 p-0 font-black text-center font-mono uppercase shadow-xs"
               >
@@ -431,12 +493,14 @@ export default function MobileCalendar({
                   <th
                     key={room.number}
                     style={{
-                      width: `${cellWidth}px`,
+                      width: 'var(--cell-w)',
+                      minWidth: 'var(--cell-w)',
+                      maxWidth: 'var(--cell-w)',
                       height: `${ROOM_ROW_HEIGHT}px`,
                       backgroundColor: headerBg,
                       color: headerColor,
                       borderColor: '#3A3A3A',
-                      fontSize: `${Math.min(12, Math.max(8, 9.5 * Math.sqrt(zoom)))}px`,
+                      fontSize: `${Math.min(11, Math.max(7.5, 9 * Math.sqrt(zoom)))}px`,
                     }}
                     className="sticky top-0 z-20 border-r border-b-2 p-0 text-center align-middle font-black font-mono leading-none"
                   >
@@ -458,12 +522,14 @@ export default function MobileCalendar({
                     {/* Date Left Column (Disabled) */}
                     <td
                       style={{
-                        width: `${dateColWidth}px`,
-                        height: `${cellHeight}px`,
+                        width: 'var(--date-w)',
+                        minWidth: 'var(--date-w)',
+                        maxWidth: 'var(--date-w)',
+                        height: 'var(--cell-h)',
                         backgroundColor: '#090E1A',
                         color: '#475569',
                         borderColor: '#1E293B',
-                        fontSize: `${Math.min(10, Math.max(7, 8.5 * Math.sqrt(zoom)))}px`,
+                        fontSize: `${Math.min(10, Math.max(6.5, 8 * Math.sqrt(zoom)))}px`,
                       }}
                       className="sticky left-0 z-20 border-r-2 border-b p-0 text-center align-middle font-bold font-mono"
                     >
@@ -477,8 +543,10 @@ export default function MobileCalendar({
                       <td
                         key={`${room.number}_${day.ymd}`}
                         style={{
-                          width: `${cellWidth}px`,
-                          height: `${cellHeight}px`,
+                          width: 'var(--cell-w)',
+                          minWidth: 'var(--cell-w)',
+                          maxWidth: 'var(--cell-w)',
+                          height: 'var(--cell-h)',
                           borderColor: '#1E293B',
                           backgroundColor: '#070B14',
                         }}
@@ -506,8 +574,10 @@ export default function MobileCalendar({
                   {/* Date Left Column (Frozen Sticky) */}
                   <td
                     style={{
-                      width: `${dateColWidth}px`,
-                      height: `${cellHeight}px`,
+                      width: 'var(--date-w)',
+                      minWidth: 'var(--date-w)',
+                      maxWidth: 'var(--date-w)',
+                      height: 'var(--cell-h)',
                       backgroundColor: dateBgColor,
                       color: dateTextColor,
                       borderColor: isToday ? '#EF4444' : '#3A3A3A',
@@ -517,7 +587,7 @@ export default function MobileCalendar({
                   >
                     <div className="w-full h-full flex items-center justify-center leading-none text-center">
                       <span
-                        style={{ fontSize: `${Math.min(11, Math.max(7.5, 9 * Math.sqrt(zoom)))}px` }}
+                        style={{ fontSize: `${Math.min(11, Math.max(7, 8.5 * Math.sqrt(zoom)))}px` }}
                         className="font-black font-mono"
                       >
                         {day.formattedDayNum}
@@ -526,7 +596,7 @@ export default function MobileCalendar({
                         <span
                           style={{
                             color: day.isFriSatSun ? '#FFCDD2' : '#555555',
-                            fontSize: `${Math.min(9, Math.max(6.5, 7.5 * Math.sqrt(zoom)))}px`,
+                            fontSize: `${Math.min(9, Math.max(6, 7 * Math.sqrt(zoom)))}px`,
                           }}
                           className="uppercase font-mono ml-0.5 font-bold"
                         >
@@ -571,8 +641,10 @@ export default function MobileCalendar({
                       <td
                         key={`${room.number}_${day.ymd}`}
                         style={{
-                          width: `${cellWidth}px`,
-                          height: `${cellHeight}px`,
+                          width: 'var(--cell-w)',
+                          minWidth: 'var(--cell-w)',
+                          maxWidth: 'var(--cell-w)',
+                          height: 'var(--cell-h)',
                           borderColor: cellBorderColor,
                           backgroundColor: bg,
                         }}
@@ -583,8 +655,8 @@ export default function MobileCalendar({
                           onClick={() => handleCellClick(room.number, day.ymd, booking)}
                           title={`Rm ${room.number} (${day.ymd}): ${statusTitle}${booking ? ' - ' + booking.guestName : ''}`}
                           style={{
-                            width: `${cellWidth}px`,
-                            height: `${cellHeight}px`,
+                            width: 'var(--cell-w)',
+                            height: 'var(--cell-h)',
                             backgroundColor: bg,
                             color: textColor,
                           }}
@@ -593,11 +665,11 @@ export default function MobileCalendar({
                           {booking && (
                             <span
                               style={{
-                                fontSize: `${Math.min(10, Math.max(6.5, 8 * Math.sqrt(zoom)))}px`,
+                                fontSize: `${Math.min(10, Math.max(6, 7.5 * Math.sqrt(zoom)))}px`,
                               }}
                               className="font-black uppercase truncate px-0.2 text-center leading-none w-full block select-none"
                             >
-                              {zoom < 1.2 && cellWidth < 28
+                              {zoom < 1.2 && cellWidth < 26
                                 ? guestText.charAt(0)
                                 : guestText}
                             </span>
@@ -615,4 +687,3 @@ export default function MobileCalendar({
     </div>
   );
 }
-
