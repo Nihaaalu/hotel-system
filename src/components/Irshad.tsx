@@ -553,12 +553,21 @@ export default function Irshad() {
                   Amount (₹) *
                 </label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  min="1"
-                  value={settlementAmount}
-                  onChange={(e) => setSettlementAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="e.g. 50000"
+                  value={settlementAmount === '' ? '' : settlementAmount}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setSettlementAmount('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setSettlementAmount(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter amount"
                   className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-purple-500 min-h-[44px]"
                 />
               </div>

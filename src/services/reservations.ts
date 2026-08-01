@@ -97,16 +97,16 @@ export const ReservationService = {
           const parentRes = resMap.get(String(rr.reservation_id));
           if (!parentRes) continue; // Skip orphan room reservations if parent doesn't exist
 
-          const isCancelled = rr.cancelled === true || rr.status === 'cancelled' || parentRes.status === 'cancelled';
-          const rawStatus = isCancelled ? 'cancelled' : String(rr.status || parentRes.status || 'reserved');
+          const isCancelled = rr.cancelled === true || rr.status === 'Cancelled' || rr.status === 'cancelled' || parentRes.status === 'Cancelled' || parentRes.status === 'cancelled';
+          const rawStatus = isCancelled ? 'Cancelled' : String(rr.status || parentRes.status || 'Booked');
           const mappedStatus: Booking['status'] =
-            rawStatus === 'reserved' || rawStatus === 'booked'
+            rawStatus === 'Booked' || rawStatus === 'reserved' || rawStatus === 'booked'
               ? 'booked'
-              : rawStatus === 'checked_in' || rawStatus === 'checked-in'
+              : rawStatus === 'Checked In' || rawStatus === 'checked_in' || rawStatus === 'checked-in'
               ? 'checked-in'
-              : rawStatus === 'checked_out' || rawStatus === 'checked-out'
+              : rawStatus === 'Checked Out' || rawStatus === 'checked_out' || rawStatus === 'checked-out'
               ? 'checked-out'
-              : rawStatus === 'cancelled'
+              : rawStatus === 'Cancelled' || rawStatus === 'cancelled'
               ? 'cancelled'
               : 'booked';
 
@@ -147,15 +147,16 @@ export const ReservationService = {
 
       // Fallback if reservation_rooms is empty
       const fallbackBookings: Booking[] = resData.map((res: any) => {
-        const rawStatus = String(res.status || 'reserved');
+        const isCancelled = res.status === 'Cancelled' || res.status === 'cancelled';
+        const rawStatus = isCancelled ? 'Cancelled' : String(res.status || 'Booked');
         const mappedStatus: Booking['status'] =
-          rawStatus === 'reserved' || rawStatus === 'booked'
+          rawStatus === 'Booked' || rawStatus === 'reserved' || rawStatus === 'booked'
             ? 'booked'
-            : rawStatus === 'checked_in' || rawStatus === 'checked-in'
+            : rawStatus === 'Checked In' || rawStatus === 'checked_in' || rawStatus === 'checked-in'
             ? 'checked-in'
-            : rawStatus === 'checked_out' || rawStatus === 'checked-out'
+            : rawStatus === 'Checked Out' || rawStatus === 'checked_out' || rawStatus === 'checked-out'
             ? 'checked-out'
-            : rawStatus === 'cancelled'
+            : rawStatus === 'Cancelled' || rawStatus === 'cancelled'
             ? 'cancelled'
             : 'booked';
 
@@ -238,27 +239,29 @@ export const ReservationService = {
       remarks: remarksPayload,
       check_in_date: bookingDetails.checkInDate,
       check_out_date: bookingDetails.checkOutDate,
-      status: 'reserved',
+      status: 'Booked',
     };
 
+    console.log('[RESERVATIONS INSERT] Creating reservation with payload:', JSON.stringify(reservationPayload, null, 2));
     logQuery('reservations', 'INSERT', 'N/A', reservationPayload);
-    const { data: resData, error: resError } = await supabase
+    const { data: resDataArr, error: resError } = await supabase
       .from('reservations')
       .insert(reservationPayload)
-      .select()
-      .single();
+      .select();
+    
+    const resData = resDataArr && resDataArr.length > 0 ? resDataArr[0] : null;
     logResponse(resData, resError);
 
     if (resError) {
-      console.error('Failed to create reservation:', resError);
-      throw resError;
+      console.error('Failed to create reservation in Supabase:', resError);
+      throw new Error(`Failed to create reservation: ${resError.message || JSON.stringify(resError)}`);
     }
 
     if (!resData || !resData.id) {
       throw new Error('Reservation was created, but returned ID was empty.');
     }
 
-    const resId = String(resData.id);
+    const resId = resData.id;
 
     // 2. Insert 1 row into 'reservation_rooms' for EACH selected room using room_id (rooms.id)
     const uniqueRoomNumbers = Array.from(new Set(selectedRoomNumbers));
@@ -267,7 +270,7 @@ export const ReservationService = {
       return {
         reservation_id: resId,
         room_id: roomId,
-        status: 'reserved',
+        status: 'Booked',
         cancelled: false,
       };
     });
@@ -281,7 +284,7 @@ export const ReservationService = {
 
     if (roomsError) {
       console.error('Failed to allocate rooms in database:', roomsError);
-      throw roomsError;
+      throw new Error(`Failed to allocate rooms: ${roomsError.message || JSON.stringify(roomsError)}`);
     }
 
     // 3. Insert payment record storing: reservation_id, total_amount, advance_paid, payment_status
@@ -291,9 +294,9 @@ export const ReservationService = {
       reservation_id: resId,
       total_amount: totalAmt,
       advance_paid: advPaid,
+      amount_collected: advPaid,
+      collected_amount: advPaid,
       payment_status: paymentStatus,
-      amount: advPaid,
-      payment_method: 'cash',
       remarks: bookingDetails.remarks ? `Initial booking: ${bookingDetails.remarks}` : 'Initial booking payment',
     };
 
@@ -382,8 +385,8 @@ export const ReservationService = {
       }
     }
 
-    // 1. Update reservation_rooms: status = "checked_in"
-    const rrPayload = { status: 'checked_in', cancelled: false };
+    // 1. Update reservation_rooms: status = "Checked In"
+    const rrPayload = { status: 'Checked In', cancelled: false };
     if (roomRow?.id) {
       logQuery('reservation_rooms', 'UPDATE', `id = ${roomRow.id}`, rrPayload);
       const { data: rrData, error: rrErr } = await supabase
@@ -394,8 +397,11 @@ export const ReservationService = {
       logResponse(rrData, rrErr);
 
       if (rrErr) {
-        console.error('Failed to update reservation_rooms status to checked_in:', rrErr);
+        console.error('Failed to update reservation_rooms status to Checked In:', rrErr);
         throw rrErr;
+      }
+      if (!rrData || rrData.length === 0) {
+        throw new Error(`UPDATE on reservation_rooms status to Checked In failed: returned row count 0 for id ${roomRow.id}`);
       }
     } else if (reservationId && roomId) {
       logQuery('reservation_rooms', 'UPDATE', `reservation_id = ${reservationId} AND room_id = ${roomId}`, rrPayload);
@@ -407,8 +413,11 @@ export const ReservationService = {
       logResponse(rrData, rrErr);
 
       if (rrErr) {
-        console.error('Failed to update reservation_rooms status to checked_in:', rrErr);
+        console.error('Failed to update reservation_rooms status to Checked In:', rrErr);
         throw rrErr;
+      }
+      if (!rrData || rrData.length === 0) {
+        throw new Error(`UPDATE on reservation_rooms status to Checked In failed: returned row count 0 for reservation_id ${reservationId}`);
       }
     } else {
       logQuery('reservation_rooms', 'UPDATE', `reservation_id = ${reservationId}`, rrPayload);
@@ -420,13 +429,16 @@ export const ReservationService = {
       logResponse(rrData, rrErr);
 
       if (rrErr) {
-        console.error('Failed to update reservation_rooms status to checked_in:', rrErr);
+        console.error('Failed to update reservation_rooms status to Checked In:', rrErr);
         throw rrErr;
+      }
+      if (!rrData || rrData.length === 0) {
+        throw new Error(`UPDATE on reservation_rooms status to Checked In failed: returned row count 0 for reservation_id ${reservationId}`);
       }
     }
 
-    // 2. Update reservations: status = "checked_in"
-    const resPayload = { status: 'checked_in' };
+    // 2. Update reservations: status = "Checked In"
+    const resPayload = { status: 'Checked In' };
     logQuery('reservations', 'UPDATE', `id = ${reservationId}`, resPayload);
     const { data: resData, error: resErr } = await supabase
       .from('reservations')
@@ -436,8 +448,11 @@ export const ReservationService = {
     logResponse(resData, resErr);
 
     if (resErr) {
-      console.error('Failed to update reservations status to checked_in:', resErr);
+      console.error('Failed to update reservations status to Checked In:', resErr);
       throw resErr;
+    }
+    if (!resData || resData.length === 0) {
+      throw new Error(`UPDATE on reservations status to Checked In failed: returned row count 0 for reservation_id ${reservationId}`);
     }
 
     // 3. Automatically update payment_status = "paid" if pending. Do NOT modify advance_paid or total_amount.
@@ -487,17 +502,27 @@ export const ReservationService = {
     let reservationId = roomRow?.reservation_id || id;
 
     if (roomRow?.id) {
-      logQuery('reservation_rooms', 'UPDATE', `id = ${roomRow.id}`, { status: 'checked_out' });
-      await supabase
+      logQuery('reservation_rooms', 'UPDATE', `id = ${roomRow.id}`, { status: 'Checked Out' });
+      const { data: rrData, error: rrErr } = await supabase
         .from('reservation_rooms')
-        .update({ status: 'checked_out' })
-        .eq('id', roomRow.id);
+        .update({ status: 'Checked Out' })
+        .eq('id', roomRow.id)
+        .select();
+      if (rrErr) throw rrErr;
+      if (!rrData || rrData.length === 0) {
+        throw new Error(`UPDATE on reservation_rooms status to Checked Out failed: returned row count 0 for id ${roomRow.id}`);
+      }
     } else if (reservationId) {
-      logQuery('reservation_rooms', 'UPDATE', `reservation_id = ${reservationId}`, { status: 'checked_out' });
-      await supabase
+      logQuery('reservation_rooms', 'UPDATE', `reservation_id = ${reservationId}`, { status: 'Checked Out' });
+      const { data: rrData, error: rrErr } = await supabase
         .from('reservation_rooms')
-        .update({ status: 'checked_out' })
-        .eq('reservation_id', reservationId);
+        .update({ status: 'Checked Out' })
+        .eq('reservation_id', reservationId)
+        .select();
+      if (rrErr) throw rrErr;
+      if (!rrData || rrData.length === 0) {
+        throw new Error(`UPDATE on reservation_rooms status to Checked Out failed: returned row count 0 for reservation_id ${reservationId}`);
+      }
     }
 
     if (reservationId) {
@@ -506,13 +531,18 @@ export const ReservationService = {
         .select('status')
         .eq('reservation_id', reservationId);
 
-      const allCheckedOut = !siblingRooms || siblingRooms.every((r) => r.status === 'checked_out' || r.status === 'checked-out');
+      const allCheckedOut = !siblingRooms || siblingRooms.every((r) => r.status === 'Checked Out' || r.status === 'checked_out' || r.status === 'checked-out');
       if (allCheckedOut) {
-        logQuery('reservations', 'UPDATE', `id = ${reservationId}`, { status: 'checked_out' });
-        await supabase
+        logQuery('reservations', 'UPDATE', `id = ${reservationId}`, { status: 'Checked Out' });
+        const { data: resData, error: resErr } = await supabase
           .from('reservations')
-          .update({ status: 'checked_out' })
-          .eq('id', reservationId);
+          .update({ status: 'Checked Out' })
+          .eq('id', reservationId)
+          .select();
+        if (resErr) throw resErr;
+        if (!resData || resData.length === 0) {
+          throw new Error(`UPDATE on reservations status to Checked Out failed: returned row count 0 for reservation_id ${reservationId}`);
+        }
       }
     }
   },
@@ -648,28 +678,73 @@ export const ReservationService = {
 
     const reservationId = roomRow?.reservation_id || id;
 
+    // Fetch before update
+    let beforeData: any[] = [];
+    if (roomRow) {
+      beforeData = [roomRow];
+    } else if (reservationId) {
+      const { data: bData } = await supabase
+        .from('reservation_rooms')
+        .select('*')
+        .eq('reservation_id', reservationId);
+      beforeData = bData || [];
+    }
+    console.log('reservation_rooms before update:', beforeData);
+
     // Delete reservation_room
+    let deleteData: any[] | null = null;
+    let deleteError: any = null;
+
     if (roomRow?.id) {
       logQuery('reservation_rooms', 'DELETE', `id = ${roomRow.id}`);
-      await supabase.from('reservation_rooms').delete().eq('id', roomRow.id);
+      const res = await supabase.from('reservation_rooms').delete().eq('id', roomRow.id).select();
+      deleteData = res.data;
+      deleteError = res.error;
     } else if (reservationId) {
       logQuery('reservation_rooms', 'DELETE', `reservation_id = ${reservationId}`);
-      await supabase.from('reservation_rooms').delete().eq('reservation_id', reservationId);
+      const res = await supabase.from('reservation_rooms').delete().eq('reservation_id', reservationId).select();
+      deleteData = res.data;
+      deleteError = res.error;
     }
 
-    // Delete parent reservation if no remaining rooms
+    if (deleteError) {
+      console.error('Error deleting reservation_rooms:', deleteError);
+      throw deleteError;
+    }
+    if (!deleteData || deleteData.length === 0) {
+      throw new Error(`DELETE on reservation_rooms failed: returned row count 0 for id ${id}`);
+    }
+
+    // Check remaining rooms for this reservation
     if (reservationId) {
       const { data: remaining } = await supabase
         .from('reservation_rooms')
-        .select('id')
+        .select('*')
         .eq('reservation_id', reservationId);
 
+      console.log('reservation_rooms after update:', remaining || []);
+
       if (!remaining || remaining.length === 0) {
-        await this.purgeReservationDependencies(reservationId);
-        logQuery('reservations', 'DELETE', `id = ${reservationId}`);
-        await supabase.from('reservations').delete().eq('id', reservationId);
+        // Zero rooms remain -> update reservations.status = 'Cancelled'
+        logQuery('reservations', 'UPDATE', `id = ${reservationId}`, { status: 'Cancelled' });
+        const { data: resData, error: resErr } = await supabase
+          .from('reservations')
+          .update({ status: 'Cancelled' })
+          .eq('id', reservationId)
+          .select();
+
+        if (resErr) {
+          console.error('Error updating reservation status to Cancelled:', resErr);
+          throw resErr;
+        }
+        if (!resData || resData.length === 0) {
+          throw new Error(`UPDATE on reservations status to Cancelled failed: returned row count 0 for reservation_id ${reservationId}`);
+        }
       }
     }
+
+    const { data: reloadedRR } = await supabase.from('reservation_rooms').select('*');
+    console.log('reservationRooms state after refresh:', reloadedRR || []);
   },
 
   /**
@@ -706,7 +781,7 @@ export const ReservationService = {
 
     const reservationId = roomRow?.reservation_id || id;
 
-    const rrPayload = { status: 'reserved', cancelled: false };
+    const rrPayload = { status: 'Booked', cancelled: false };
     logQuery('reservation_rooms', 'UPDATE', `id = ${id}`, rrPayload);
     const { data: rrData, error: rrErr } = await supabase
       .from('reservation_rooms')
@@ -720,7 +795,7 @@ export const ReservationService = {
       throw rrErr;
     }
 
-    const resPayload = { status: 'reserved' };
+    const resPayload = { status: 'Booked' };
     logQuery('reservations', 'UPDATE', `id = ${reservationId}`, resPayload);
     const { data: resData, error: resErr } = await supabase
       .from('reservations')
@@ -741,14 +816,43 @@ export const ReservationService = {
   async cancelEntireReservation(reservationId: string): Promise<void> {
     if (!isSupabaseConfigured) return;
 
+    const { data: beforeData } = await supabase
+      .from('reservation_rooms')
+      .select('*')
+      .eq('reservation_id', reservationId);
+    console.log('reservation_rooms before update:', beforeData || []);
+
     // Purge dependencies (payments, checkin_logs)
     await this.purgeReservationDependencies(reservationId);
 
     logQuery('reservation_rooms', 'DELETE', `reservation_id = ${reservationId}`);
-    await supabase.from('reservation_rooms').delete().eq('reservation_id', reservationId);
+    const { data: delRooms, error: errRooms } = await supabase
+      .from('reservation_rooms')
+      .delete()
+      .eq('reservation_id', reservationId)
+      .select();
 
-    logQuery('reservations', 'DELETE', `id = ${reservationId}`);
-    await supabase.from('reservations').delete().eq('id', reservationId);
+    if (errRooms) throw errRooms;
+    if (!delRooms || delRooms.length === 0) {
+      throw new Error(`DELETE on reservation_rooms failed: returned row count 0 for reservation_id ${reservationId}`);
+    }
+
+    console.log('reservation_rooms after update:', []);
+
+    logQuery('reservations', 'UPDATE', `id = ${reservationId}`, { status: 'Cancelled' });
+    const { data: resData, error: resErr } = await supabase
+      .from('reservations')
+      .update({ status: 'Cancelled' })
+      .eq('id', reservationId)
+      .select();
+
+    if (resErr) throw resErr;
+    if (!resData || resData.length === 0) {
+      throw new Error(`UPDATE on reservations status to Cancelled failed: returned row count 0 for reservation_id ${reservationId}`);
+    }
+
+    const { data: reloadedRR } = await supabase.from('reservation_rooms').select('*');
+    console.log('reservationRooms state after refresh:', reloadedRR || []);
   },
 
   /**
@@ -768,26 +872,78 @@ export const ReservationService = {
   /**
    * Replaces the room for a given reservation_rooms row ID
    */
-  async replaceRoom(reservationRoomId: string, newRoomNumber: number): Promise<void> {
-    if (!isSupabaseConfigured) return;
+  async replaceRoom(reservationRoomId: string, newRoomNumber: number): Promise<any[]> {
+    if (!isSupabaseConfigured) return [];
 
     // 1. Get room list to find room ID for newRoomNumber
     const rooms = await RoomService.getRooms();
-    const targetRoom = rooms.find((r) => r.number === newRoomNumber);
+    const targetRoom = rooms.find(
+      (r) => Number(r.room_number ?? r.number) === Number(newRoomNumber)
+    );
     const newRoomId = targetRoom ? targetRoom.id : newRoomNumber;
 
-    logQuery('reservation_rooms', 'UPDATE', `id = ${reservationRoomId}`, { room_id: newRoomId });
-    const { data, error } = await supabase
+    // 2. Fetch reservation_rooms before update
+    let targetRowId = reservationRoomId;
+    const { data: beforeData, error: beforeError } = await supabase
+      .from('reservation_rooms')
+      .select('*')
+      .eq('id', reservationRoomId);
+
+    if (beforeError) {
+      console.error('Error fetching reservation_rooms before update:', beforeError);
+    }
+    console.log('reservation_rooms before update:', beforeData);
+
+    // Fallback if ID was composite string
+    if ((!beforeData || beforeData.length === 0) && reservationRoomId.includes('_')) {
+      const parts = reservationRoomId.split('_');
+      const resId = parts[0];
+      const oldRoomNum = Number(parts[1]);
+      const oldRoom = rooms.find((r) => Number(r.room_number ?? r.number) === oldRoomNum);
+      if (oldRoom) {
+        const { data: fallbackData } = await supabase
+          .from('reservation_rooms')
+          .select('*')
+          .eq('reservation_id', resId)
+          .eq('room_id', oldRoom.id);
+        if (fallbackData && fallbackData.length > 0) {
+          targetRowId = fallbackData[0].id;
+          console.log('Found reservation_rooms row via fallback:', fallbackData);
+        }
+      }
+    }
+
+    logQuery('reservation_rooms', 'UPDATE', `id = ${targetRowId}`, { room_id: newRoomId });
+    const { data: afterData, error } = await supabase
       .from('reservation_rooms')
       .update({ room_id: newRoomId })
-      .eq('id', reservationRoomId)
+      .eq('id', targetRowId)
       .select();
 
-    logResponse(data, error);
+    logResponse(afterData, error);
     if (error) {
       console.error('Error replacing room in reservation_rooms:', error);
       throw error;
     }
+
+    if (!afterData || afterData.length !== 1) {
+      throw new Error(`UPDATE on reservation_rooms failed: returned row count ${afterData ? afterData.length : 0}, expected 1.`);
+    }
+
+    console.log('reservation_rooms after update:', afterData);
+
+    // 3. Immediately reload reservation_rooms from Supabase
+    const { data: reloadedRR, error: reloadError } = await supabase
+      .from('reservation_rooms')
+      .select('*');
+
+    if (reloadError) {
+      console.error('Error reloading reservation_rooms after update:', reloadError);
+    } else {
+      console.log('reservationRooms state after refresh:', reloadedRR);
+    }
+
+    return reloadedRR || [];
   },
 
   /**
@@ -892,7 +1048,8 @@ export const ReservationService = {
         logQuery('payments', 'UPDATE', `id = ${p.id}`, {
           total_amount: totalAmount,
           advance_paid: advancePaid,
-          amount: advancePaid,
+          amount_collected: advancePaid,
+          collected_amount: advancePaid,
           payment_status: paymentStatus,
         });
         await supabase
@@ -900,7 +1057,8 @@ export const ReservationService = {
           .update({
             total_amount: totalAmount,
             advance_paid: advancePaid,
-            amount: advancePaid,
+            amount_collected: advancePaid,
+            collected_amount: advancePaid,
             payment_status: paymentStatus,
           })
           .eq('id', p.id);
@@ -910,9 +1068,9 @@ export const ReservationService = {
         reservation_id: targetResId,
         total_amount: totalAmount,
         advance_paid: advancePaid,
-        amount: advancePaid,
+        amount_collected: advancePaid,
+        collected_amount: advancePaid,
         payment_status: paymentStatus,
-        payment_method: 'cash',
         remarks: 'Payment details updated',
       };
       logQuery('payments', 'INSERT', 'N/A', paymentPayload);

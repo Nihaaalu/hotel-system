@@ -90,7 +90,7 @@ export const BookingService = {
   async deleteBooking(id: string): Promise<void> {
     return ReservationService.deleteBooking(id);
   },
-  async replaceRoom(reservationRoomId: string, newRoomNumber: number): Promise<void> {
+  async replaceRoom(reservationRoomId: string, newRoomNumber: number): Promise<any> {
     return ReservationService.replaceRoom(reservationRoomId, newRoomNumber);
   },
   async updateBookingDetails(

@@ -1586,13 +1586,21 @@ export default function Inventory() {
                   Amount (₹) <span className="text-rose-500">*</span>
                 </label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  min="0"
-                  step="any"
                   value={amount === '' ? '' : amount}
-                  onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="0"
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setAmount('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setAmount(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter amount"
                   className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
@@ -1820,20 +1828,40 @@ export default function Inventory() {
                     <div>
                       <span className="text-[10px] font-bold text-gray-500 block mb-1">Min Amount (₹)</span>
                       <input
-                        type="number"
-                        placeholder="0"
-                        value={filterMinAmount}
-                        onChange={(e) => setFilterMinAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="Min amount"
+                        value={filterMinAmount === '' ? '' : filterMinAmount}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/[^0-9]/g, '');
+                          if (raw === '') {
+                            setFilterMinAmount('');
+                          } else {
+                            const clean = raw.replace(/^0+(?=\d)/, '');
+                            setFilterMinAmount(clean === '' ? '' : Number(clean));
+                          }
+                        }}
                         className="w-full rounded-xl border border-gray-200 p-2 text-xs font-bold"
                       />
                     </div>
                     <div>
                       <span className="text-[10px] font-bold text-gray-500 block mb-1">Max Amount (₹)</span>
                       <input
-                        type="number"
-                        placeholder="No Limit"
-                        value={filterMaxAmount}
-                        onChange={(e) => setFilterMaxAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="Max amount"
+                        value={filterMaxAmount === '' ? '' : filterMaxAmount}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/[^0-9]/g, '');
+                          if (raw === '') {
+                            setFilterMaxAmount('');
+                          } else {
+                            const clean = raw.replace(/^0+(?=\d)/, '');
+                            setFilterMaxAmount(clean === '' ? '' : Number(clean));
+                          }
+                        }}
                         className="w-full rounded-xl border border-gray-200 p-2 text-xs font-bold"
                       />
                     </div>

@@ -1327,12 +1327,21 @@ export default function SalaryRent() {
               <div>
                 <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Amount Paid (₹) *</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  min="1"
-                  value={salaryPayAmountInput}
-                  onChange={(e) => setSalaryPayAmountInput(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="e.g. 20000"
+                  value={salaryPayAmountInput === '' ? '' : salaryPayAmountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setSalaryPayAmountInput('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setSalaryPayAmountInput(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter amount"
                   className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
@@ -1410,11 +1419,21 @@ export default function SalaryRent() {
               <div>
                 <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">New Monthly Rent (₹)</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  min="1"
-                  value={rentAmountInput}
-                  onChange={(e) => setRentAmountInput(e.target.value === '' ? '' : Number(e.target.value))}
+                  value={rentAmountInput === '' ? '' : rentAmountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setRentAmountInput('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setRentAmountInput(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter amount"
                   className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
@@ -1477,12 +1496,21 @@ export default function SalaryRent() {
               <div>
                 <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Amount Paid (₹)</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  min="1"
-                  value={rentPayAmountInput}
-                  onChange={(e) => setRentPayAmountInput(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="e.g. 160000"
+                  value={rentPayAmountInput === '' ? '' : rentPayAmountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setRentPayAmountInput('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setRentPayAmountInput(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter amount"
                   className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
@@ -1583,12 +1611,21 @@ export default function SalaryRent() {
               <div>
                 <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Base Monthly Salary (₹) *</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  min="1"
-                  value={empSalaryInput}
-                  onChange={(e) => setEmpSalaryInput(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="e.g. 25000"
+                  value={empSalaryInput === '' ? '' : empSalaryInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setEmpSalaryInput('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setEmpSalaryInput(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter amount"
                   className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
@@ -1661,11 +1698,21 @@ export default function SalaryRent() {
               <div>
                 <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Monthly Salary (₹)</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  min="1"
-                  value={editEmpSalaryInput}
-                  onChange={(e) => setEditEmpSalaryInput(e.target.value === '' ? '' : Number(e.target.value))}
+                  value={editEmpSalaryInput === '' ? '' : editEmpSalaryInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setEditEmpSalaryInput('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setEditEmpSalaryInput(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter amount"
                   className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
@@ -1747,12 +1794,21 @@ export default function SalaryRent() {
               <div>
                 <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Amount (₹) *</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  min="1"
-                  value={adjAmountInput}
-                  onChange={(e) => setAdjAmountInput(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="e.g. 2000"
+                  value={adjAmountInput === '' ? '' : adjAmountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setAdjAmountInput('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setAdjAmountInput(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter amount"
                   className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
               </div>
@@ -1813,11 +1869,20 @@ export default function SalaryRent() {
               <div>
                 <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Adjustment Amount (₹) *</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   required
-                  value={manualAdjAmountInput}
-                  onChange={(e) => setManualAdjAmountInput(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="e.g. 500 or -500"
+                  value={manualAdjAmountInput === '' ? '' : manualAdjAmountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9-]/g, '');
+                    if (raw === '' || raw === '-') {
+                      setManualAdjAmountInput(raw as any);
+                    } else {
+                      const num = Number(raw);
+                      setManualAdjAmountInput(isNaN(num) ? '' : num);
+                    }
+                  }}
+                  placeholder="Enter amount (e.g. 500 or -500)"
                   className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">Positive adds to wallet balance, negative reduces it.</p>

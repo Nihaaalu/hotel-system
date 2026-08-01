@@ -3,6 +3,11 @@ export interface Room {
   number: number;
   floor: number;
   type: string;
+  room_number?: number;
+  room_type?: string;
+  bed_type?: string;
+  capacity?: number;
+  is_active?: boolean;
 }
 
 export interface Guest {

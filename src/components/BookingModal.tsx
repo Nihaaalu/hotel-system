@@ -980,11 +980,20 @@ export default function BookingModal({
                     </div>
                     <div className="flex items-center gap-1.5">
                       <input
-                        type="number"
-                        min="1"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         placeholder="Amount (₹)"
                         value={quickAdvanceInput}
-                        onChange={(e) => setQuickAdvanceInput(e.target.value === '' ? '' : Number(e.target.value))}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/[^0-9]/g, '');
+                          if (raw === '') {
+                            setQuickAdvanceInput('');
+                          } else {
+                            const clean = raw.replace(/^0+(?=\d)/, '');
+                            setQuickAdvanceInput(clean === '' ? '' : Number(clean));
+                          }
+                        }}
                         className="w-24 bg-white border border-gray-200 rounded-lg p-1.5 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[36px]"
                       />
                       <select
@@ -1387,11 +1396,20 @@ export default function BookingModal({
                     Total Amount (₹)
                   </label>
                   <input
-                    type="number"
-                    min="0"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={totalAmount === '' ? '' : totalAmount}
-                    onChange={(e) => setTotalAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="0"
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                      if (raw === '') {
+                        setTotalAmount('');
+                      } else {
+                        const clean = raw.replace(/^0+(?=\d)/, '');
+                        setTotalAmount(clean === '' ? '' : Number(clean));
+                      }
+                    }}
+                    placeholder="Enter amount"
                     className="w-full rounded-xl border border-gray-200 bg-white p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[42px]"
                   />
                 </div>
@@ -1400,11 +1418,20 @@ export default function BookingModal({
                     Advance Paid (₹)
                   </label>
                   <input
-                    type="number"
-                    min="0"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={advancePaid === '' ? '' : advancePaid}
-                    onChange={(e) => setAdvancePaid(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="0"
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                      if (raw === '') {
+                        setAdvancePaid('');
+                      } else {
+                        const clean = raw.replace(/^0+(?=\d)/, '');
+                        setAdvancePaid(clean === '' ? '' : Number(clean));
+                      }
+                    }}
+                    placeholder="Enter amount"
                     className="w-full rounded-xl border border-gray-200 bg-white p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[42px]"
                   />
                 </div>
@@ -1520,11 +1547,21 @@ export default function BookingModal({
             <div className="space-y-2 text-xs">
               <label className="text-[10px] font-bold uppercase text-gray-400 block mb-0.5">Total Amount (₹)</label>
               <input
-                type="number"
-                min="0"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 required
-                value={editTotalInput}
-                onChange={(e) => setEditTotalInput(e.target.value === '' ? '' : Number(e.target.value))}
+                value={editTotalInput === '' ? '' : editTotalInput}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9]/g, '');
+                  if (raw === '') {
+                    setEditTotalInput('');
+                  } else {
+                    const clean = raw.replace(/^0+(?=\d)/, '');
+                    setEditTotalInput(clean === '' ? '' : Number(clean));
+                  }
+                }}
+                placeholder="Enter amount"
                 className="w-full rounded-xl border border-gray-200 p-2 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500"
               />
               <div className="text-[10px] text-gray-500 font-medium">
@@ -1821,11 +1858,20 @@ export default function BookingModal({
                 <div className="relative">
                   <span className="absolute left-3 top-2.5 font-bold text-slate-400">₹</span>
                   <input
-                    type="number"
-                    min="0"
-                    max={loadedBooking.totalAmount - loadedBooking.advancePaid}
-                    value={checkInPaidNowInput}
-                    onChange={(e) => setCheckInPaidNowInput(e.target.value === '' ? '' : Number(e.target.value))}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={checkInPaidNowInput === '' ? '' : checkInPaidNowInput}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                      if (raw === '') {
+                        setCheckInPaidNowInput('');
+                      } else {
+                        const clean = raw.replace(/^0+(?=\d)/, '');
+                        setCheckInPaidNowInput(clean === '' ? '' : Number(clean));
+                      }
+                    }}
+                    placeholder="Enter amount paid"
                     className="w-full rounded-xl border border-slate-200 pl-7 pr-3 py-2.5 font-black text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                   />
                 </div>

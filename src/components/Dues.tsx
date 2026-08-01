@@ -541,11 +541,20 @@ export default function Dues() {
                 <div className="relative">
                   <span className="absolute left-3 top-2.5 font-bold text-slate-400">₹</span>
                   <input
-                    type="number"
-                    min="1"
-                    max={selectedDueForPayment.remainingBalance}
-                    value={collectAmountInput}
-                    onChange={(e) => setCollectAmountInput(e.target.value === '' ? '' : Number(e.target.value))}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={collectAmountInput === '' ? '' : collectAmountInput}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                      if (raw === '') {
+                        setCollectAmountInput('');
+                      } else {
+                        const clean = raw.replace(/^0+(?=\d)/, '');
+                        setCollectAmountInput(clean === '' ? '' : Number(clean));
+                      }
+                    }}
+                    placeholder="Enter amount"
                     className="w-full rounded-xl border border-slate-200 pl-7 pr-3 py-2.5 font-black text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                   />
                 </div>

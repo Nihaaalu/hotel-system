@@ -20,6 +20,7 @@ function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advanc
 
 interface HotelContextType {
   rooms: Room[];
+  reservationRooms: any[];
   bookings: Booking[];
   payments: Payment[];
   dueTransactions: DueTransaction[];
@@ -43,6 +44,7 @@ const HotelContext = createContext<HotelContextType | undefined>(undefined);
 
 export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [reservationRooms, setReservationRooms] = useState<any[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [dueTransactions, setDueTransactions] = useState<DueTransaction[]>([]);
@@ -61,7 +63,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       // Perform a single batch fetch of all core tables concurrently
       const [roomsRes, rrRes, resRes, payRes, expList, dueTxRes] = await Promise.all([
-        supabase.from('rooms').select('*').order('room_number', { ascending: true }),
+        supabase.from('rooms').select('*').eq('is_active', true).order('room_number', { ascending: true }),
         supabase.from('reservation_rooms').select('*'),
         supabase.from('reservations').select('*'),
         supabase.from('payments').select('*'),
@@ -70,6 +72,11 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       ]);
 
       setExpenses(expList);
+
+      if (roomsRes.error) {
+        console.error('FULL SUPABASE ERROR fetching rooms in HotelContext:', roomsRes.error);
+        throw new Error(`Rooms query failed: ${roomsRes.error.message || JSON.stringify(roomsRes.error)}`);
+      }
 
       if (dueTxRes.data) {
         setDueTransactions(
@@ -90,14 +97,18 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // 1. Process Rooms
       let parsedRooms: Room[] = [];
       if (roomsRes.data && roomsRes.data.length > 0) {
-        parsedRooms = roomsRes.data
-          .filter((item: any) => item.is_active !== false)
-          .map((item: any) => ({
-            id: item.id ?? item.room_number ?? item.number,
-            number: Number(item.room_number ?? item.number ?? item.id),
-            floor: Number(item.floor ?? 1),
-            type: String(item.room_type ?? item.type ?? 'Standard'),
-          }));
+        parsedRooms = roomsRes.data.map((item: any) => ({
+          id: item.id,
+          room_number: Number(item.room_number ?? item.id),
+          floor: Number(item.floor ?? 1),
+          room_type: String(item.room_type ?? 'Standard'),
+          bed_type: item.bed_type ? String(item.bed_type) : undefined,
+          capacity: item.capacity ? Number(item.capacity) : undefined,
+          is_active: item.is_active !== false,
+          created_at: item.created_at ? String(item.created_at) : undefined,
+          number: Number(item.room_number ?? item.id),
+          type: String(item.room_type ?? 'Standard'),
+        }));
       }
       setRooms(parsedRooms);
 
@@ -165,6 +176,10 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setPayments(parsedPayments);
 
       // 3. Process Reservations & Reservation Rooms
+      const fetchedReservationRooms = rrRes.data || [];
+      setReservationRooms(fetchedReservationRooms);
+      console.log('reservationRooms state after refresh:', fetchedReservationRooms);
+
       const resMap = new Map<string, any>();
       (resRes.data || []).forEach((r: any) => {
         resMap.set(String(r.id), r);
@@ -176,16 +191,16 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           const parentRes = resMap.get(String(rr.reservation_id));
           if (!parentRes) continue;
 
-          const isCancelled = rr.cancelled === true || rr.status === 'cancelled' || parentRes.status === 'cancelled';
-          const rawStatus = isCancelled ? 'cancelled' : String(rr.status || parentRes.status || 'reserved');
+          const isCancelled = rr.cancelled === true || rr.status === 'Cancelled' || rr.status === 'cancelled' || parentRes.status === 'Cancelled' || parentRes.status === 'cancelled';
+          const rawStatus = isCancelled ? 'Cancelled' : String(rr.status || parentRes.status || 'Booked');
           const mappedStatus: Booking['status'] =
-            rawStatus === 'reserved' || rawStatus === 'booked'
+            rawStatus === 'Booked' || rawStatus === 'reserved' || rawStatus === 'booked'
               ? 'booked'
-              : rawStatus === 'checked_in' || rawStatus === 'checked-in'
+              : rawStatus === 'Checked In' || rawStatus === 'checked_in' || rawStatus === 'checked-in'
               ? 'checked-in'
-              : rawStatus === 'checked_out' || rawStatus === 'checked-out'
+              : rawStatus === 'Checked Out' || rawStatus === 'checked_out' || rawStatus === 'checked-out'
               ? 'checked-out'
-              : rawStatus === 'cancelled'
+              : rawStatus === 'Cancelled' || rawStatus === 'cancelled'
               ? 'cancelled'
               : 'booked';
 
@@ -341,6 +356,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     <HotelContext.Provider
       value={{
         rooms,
+        reservationRooms,
         bookings,
         payments,
         dueTransactions,
