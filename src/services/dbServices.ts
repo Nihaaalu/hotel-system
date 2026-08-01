@@ -120,45 +120,29 @@ export const GuestService = {
   async getGuests(): Promise<Guest[]> {
     if (!isSupabaseConfigured) return [];
 
-    logQuery('profiles', 'SELECT', 'ALL');
-    const { data, error } = await supabase.from('profiles').select('*');
+    logQuery('reservations', 'SELECT', 'ALL');
+    const { data, error } = await supabase.from('reservations').select('id, booking_name, created_at');
     logResponse(data, error);
 
     if (error) {
-      console.error('Error fetching profiles:', error);
-      throw error;
+      console.error('Error fetching guests from reservations:', error);
+      return [];
     }
 
     if (!data) return [];
     return data.map((g: any) => ({
       id: String(g.id),
-      name: String(g.name || 'Guest'),
-      phone: String(g.phone || ''),
-      address: String(g.address || ''),
-      idProof: String(g.id_proof || ''),
+      name: String(g.booking_name || 'Guest'),
+      phone: '',
+      address: '',
+      idProof: '',
       createdAt: String(g.created_at || new Date().toISOString()),
       updatedAt: String(g.created_at || new Date().toISOString()),
     }));
   },
 
   async saveGuest(guest: Guest): Promise<void> {
-    if (isSupabaseConfigured) {
-      const payload = {
-        id: guest.id,
-        name: guest.name,
-        phone: guest.phone,
-        address: guest.address,
-        id_proof: guest.idProof,
-      };
-      logQuery('profiles', 'UPSERT', `id = ${guest.id}`, payload);
-      const { data, error } = await supabase.from('profiles').upsert(payload).select();
-      logResponse(data, error);
-
-      if (error) {
-        console.error('Error saving profile:', error);
-        throw error;
-      }
-    }
+    // Guest info is stored directly on reservations table
   },
 
   async searchGuests(query: string): Promise<Guest[]> {

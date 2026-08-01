@@ -17,38 +17,50 @@ export const IrshadWalletService = {
     }
 
     try {
-      const { data, error } = await supabase
-        .from('irshad_wallet_summary')
-        .select('*')
-        .maybeSingle();
+      // Fetch concurrently from base tables
+      const [invRes, salRes, rentRes, setRes, payRes] = await Promise.all([
+        supabase.from('inventory_expenses').select('amount').eq('paid_by', 'irshad'),
+        supabase.from('salary_transactions').select('amount').eq('paid_by', 'irshad'),
+        supabase.from('rent_transactions').select('amount').eq('paid_by', 'irshad'),
+        supabase.from('irshad_settlements').select('amount, transaction_type'),
+        supabase.from('payments').select('transferred_to_irshad, amount_collected').or('transfer_to_irshad.eq.true,transferred_to_irshad.gt.0'),
+      ]);
 
-      if (error) {
-        console.warn('Error reading irshad_wallet_summary view:', error.message || error);
-        return {
-          expense_by_irshad: 0,
-          bookings_with_irshad: 0,
-          resort_paid: 0,
-          irshad_paid: 0,
-        };
-      }
+      let expenseByIrshad = 0;
+      (invRes.data || []).forEach((r: any) => { expenseByIrshad += Number(r.amount || 0); });
+      (salRes.data || []).forEach((r: any) => { expenseByIrshad += Number(r.amount || 0); });
+      (rentRes.data || []).forEach((r: any) => { expenseByIrshad += Number(r.amount || 0); });
 
-      if (!data) {
-        return {
-          expense_by_irshad: 0,
-          bookings_with_irshad: 0,
-          resort_paid: 0,
-          irshad_paid: 0,
-        };
-      }
+      let bookingsWithIrshad = 0;
+      (payRes.data || []).forEach((r: any) => {
+        bookingsWithIrshad += Number(r.transferred_to_irshad ?? r.amount_collected ?? 0);
+      });
+
+      let resortPaid = 0;
+      let irshadPaid = 0;
+
+      (setRes.data || []).forEach((s: any) => {
+        const amt = Number(s.amount || 0);
+        const type = String(s.transaction_type || '');
+        if (type === 'expense_by_irshad') {
+          expenseByIrshad += amt;
+        } else if (type === 'booking_to_irshad') {
+          bookingsWithIrshad += amt;
+        } else if (type === 'resort_paid_irshad') {
+          resortPaid += amt;
+        } else if (type === 'irshad_paid_resort') {
+          irshadPaid += amt;
+        }
+      });
 
       return {
-        expense_by_irshad: Number(data.expense_by_irshad || 0),
-        bookings_with_irshad: Number(data.bookings_with_irshad || 0),
-        resort_paid: Number(data.resort_paid || 0),
-        irshad_paid: Number(data.irshad_paid || 0),
+        expense_by_irshad: expenseByIrshad,
+        bookings_with_irshad: bookingsWithIrshad,
+        resort_paid: resortPaid,
+        irshad_paid: irshadPaid,
       };
     } catch (err) {
-      console.error('Exception reading irshad_wallet_summary view:', err);
+      console.error('Exception reading Irshad wallet summary from base tables:', err);
       return {
         expense_by_irshad: 0,
         bookings_with_irshad: 0,

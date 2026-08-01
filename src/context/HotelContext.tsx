@@ -60,12 +60,11 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setIsLoading(true);
 
       // Perform a single batch fetch of all core tables concurrently
-      const [roomsRes, rrRes, resRes, payRes, profRes, expList, dueTxRes] = await Promise.all([
+      const [roomsRes, rrRes, resRes, payRes, expList, dueTxRes] = await Promise.all([
         supabase.from('rooms').select('*').order('room_number', { ascending: true }),
         supabase.from('reservation_rooms').select('*'),
         supabase.from('reservations').select('*'),
         supabase.from('payments').select('*'),
-        supabase.from('profiles').select('*'),
         ExpenseService.getExpenses(),
         supabase.from('due_payment_transactions').select('*'),
       ]);
@@ -236,19 +235,16 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       setBookings(parsedBookings);
 
-      // 4. Process Guests / Profiles
-      let parsedGuests: Guest[] = [];
-      if (profRes.data) {
-        parsedGuests = profRes.data.map((g: any) => ({
-          id: String(g.id),
-          name: String(g.name || 'Guest'),
-          phone: String(g.phone || ''),
-          address: String(g.address || ''),
-          idProof: String(g.id_proof || ''),
-          createdAt: String(g.created_at || new Date().toISOString()),
-          updatedAt: String(g.created_at || new Date().toISOString()),
-        }));
-      }
+      // 4. Process Guests from Reservations
+      const parsedGuests: Guest[] = (resRes.data || []).map((r: any) => ({
+        id: String(r.id),
+        name: String(r.booking_name || 'Guest'),
+        phone: '',
+        address: '',
+        idProof: '',
+        createdAt: String(r.created_at || new Date().toISOString()),
+        updatedAt: String(r.created_at || new Date().toISOString()),
+      }));
       setGuests(parsedGuests);
 
     } catch (err) {

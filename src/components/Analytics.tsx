@@ -228,7 +228,7 @@ const DailyChartTooltip = React.memo(({ active, payload, metrics, chartType }: a
 });
 
 export default function Analytics() {
-  const { bookings, expenses, payments, isLoading } = useHotelData();
+  const { bookings, expenses, payments, dueTransactions, isLoading } = useHotelData();
 
   const currentISTDateStr = useMemo(() => getISTDateStr(), []);
   const defaultMonthStr = useMemo(() => getISTMonthStr(), []);
@@ -377,6 +377,15 @@ export default function Analytics() {
               : p.advancePaid || 0
           );
           monthRev += amt;
+        }
+      });
+    }
+
+    if (dueTransactions && dueTransactions.length > 0) {
+      dueTransactions.forEach((dt) => {
+        const dtDate = (dt.created_at || '').split('T')[0];
+        if (dtDate.startsWith(selectedMonth)) {
+          monthRev += Number(dt.amount || 0);
         }
       });
     } else {

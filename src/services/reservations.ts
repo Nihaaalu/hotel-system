@@ -308,24 +308,7 @@ export const ReservationService = {
       console.warn('Payment insert warning:', payErr);
     }
 
-    // 4. Upsert guest profile in 'profiles' optional table if provided
-    if (guestData.name) {
-      const profilePayload = {
-        name: guestData.name,
-        phone: guestData.phone || '',
-        address: guestData.address || '',
-        id_proof: guestData.idProof || '',
-      };
-      logQuery('profiles', 'UPSERT', 'N/A', profilePayload);
-      const { data: profData, error: profErr } = await supabase
-        .from('profiles')
-        .upsert(profilePayload)
-        .select();
-      logResponse(profData, profErr);
-      if (profErr) {
-        console.warn('Profile upsert warning:', profErr);
-      }
-    }
+    // Guest name and details stored on reservations table
   },
 
   /**
@@ -1002,13 +985,6 @@ export const ReservationService = {
     if (updateErr) {
       console.error('Failed to update reservation details:', updateErr);
       throw updateErr;
-    }
-
-    if (data.guestName && resData?.guest_id) {
-      await supabase
-        .from('profiles')
-        .update({ full_name: data.guestName })
-        .eq('id', resData.guest_id);
     }
   },
 };
