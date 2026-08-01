@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Booking, Guest } from '../types';
 import { RoomService } from './rooms';
+import { updatePaymentSummary } from './paymentSummary';
 
 function logQuery(table: string, action: string, where: string, payload?: any) {
   console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
@@ -287,29 +288,17 @@ export const ReservationService = {
       throw new Error(`Failed to allocate rooms: ${roomsError.message || JSON.stringify(roomsError)}`);
     }
 
-    // 3. Insert payment record storing: reservation_id, total_amount, advance_paid, payment_status
-    const paymentStatus = advPaid >= totalAmt ? 'paid' : 'pending';
-
-    const paymentPayload = {
-      reservation_id: resId,
-      total_amount: totalAmt,
-      advance_paid: advPaid,
-      amount_collected: advPaid,
-      collected_amount: advPaid,
-      payment_status: paymentStatus,
+    // 3. Insert payment record using updatePaymentSummary
+    await updatePaymentSummary({
+      reservationId: resId,
+      paymentAmount: advPaid,
+      isAdvance: true,
+      paymentMethod: 'cash',
       remarks: bookingDetails.remarks ? `Initial booking: ${bookingDetails.remarks}` : 'Initial booking payment',
-    };
-
-    logQuery('payments', 'INSERT', 'N/A', paymentPayload);
-    const { data: payData, error: payErr } = await supabase
-      .from('payments')
-      .insert(paymentPayload)
-      .select();
-    logResponse(payData, payErr);
-
-    if (payErr) {
-      console.warn('Payment insert warning:', payErr);
-    }
+      options: {
+        totalAmount: totalAmt,
+      },
+    });
 
     // Guest name and details stored on reservations table
   },
@@ -573,63 +562,24 @@ export const ReservationService = {
 
       const reservationId = roomRow?.reservation_id || id;
 
-      // Fetch parent reservation
-      const { data: resRow } = await supabase
-        .from('reservations')
-        .select('*')
-        .eq('id', reservationId)
-        .maybeSingle();
-
-      const totalAmount = Number(resRow?.total_amount || 0);
-      const isBalanceDue = Boolean(paymentData.balanceDueWallet);
-      const paidAmount = Number(paymentData.amountCollected || 0);
-      const remBal = isBalanceDue ? Math.max(0, totalAmount - paidAmount) : 0;
-
-      const paymentStatus = isBalanceDue
-        ? 'pending'
-        : paidAmount >= totalAmount
-        ? 'paid'
-        : 'pending';
-
-      // SELECT payment row WHERE reservation_id = reservationId
-      const { data: existingPayments } = await supabase
-        .from('payments')
-        .select('*')
-        .eq('reservation_id', reservationId);
-
-      if (existingPayments && existingPayments.length > 0) {
-        const targetId = existingPayments[0].id;
-        const updatePayload = {
-          total_amount: totalAmount,
-          advance_paid: paidAmount,
-          amount_collected: paidAmount,
-          remaining_balance: isBalanceDue ? remBal : 0,
-          balance_due_wallet: isBalanceDue,
-          payment_status: paymentStatus,
-          transfer_to_irshad: isBalanceDue ? false : Boolean(paymentData.transferToIrshad),
-          transferred_to_irshad: isBalanceDue ? 0 : Number(paymentData.transferredToIrshad || 0),
-          remarks:
-            paymentData.remarks ||
-            (isBalanceDue
-              ? 'Customer outstanding balance due recorded'
-              : paymentData.transferToIrshad
-              ? 'Transferred remaining balance to Irshad Wallet'
-              : 'Check-in payment'),
-        };
-        await supabase.from('payments').update(updatePayload).eq('id', targetId);
-      }
-      // Never insert another payment row during check-in
-
-      // Update parent reservation
-      if (resRow?.id) {
-        await supabase
-          .from('reservations')
-          .update({
-            advance_paid: paidAmount,
-            payment_status: paymentStatus,
-          })
-          .eq('id', resRow.id);
-      }
+      await updatePaymentSummary({
+        reservationId,
+        paymentAmount: Number(paymentData.amountCollected || 0),
+        isAdvance: false,
+        paymentMethod: 'cash',
+        remarks:
+          paymentData.remarks ||
+          (paymentData.balanceDueWallet
+            ? 'Customer outstanding balance due recorded'
+            : paymentData.transferToIrshad
+            ? 'Transferred remaining balance to Irshad Wallet'
+            : 'Check-in payment'),
+        options: {
+          balanceDueWallet: Boolean(paymentData.balanceDueWallet),
+          transferToIrshad: Boolean(paymentData.transferToIrshad),
+          transferredToIrshad: Number(paymentData.transferredToIrshad || 0),
+        },
+      });
     } catch (err) {
       console.error('Exception recording check-in payment:', err);
     }
@@ -991,10 +941,6 @@ export const ReservationService = {
       throw new Error('Advance paid cannot exceed total amount');
     }
 
-    const paymentStatus = advancePaid >= totalAmount ? 'paid' : 'pending';
-
-    // 1. Fetch reservation to get current remarks
-    logQuery('reservations', 'SELECT', `id = ${reservationId}`);
     let targetResId = reservationId;
     let { data: resData } = await supabase
       .from('reservations')
@@ -1011,71 +957,28 @@ export const ReservationService = {
       
       if (rrData?.reservation_id) {
         targetResId = String(rrData.reservation_id);
-        const { data: parentRes } = await supabase
-          .from('reservations')
-          .select('remarks')
-          .eq('id', targetResId)
-          .maybeSingle();
-        resData = parentRes;
       }
     }
 
-    const currentRemarksStr = resData?.remarks || '';
-    const { cleanRemarks } = parsePaymentMetadata(currentRemarksStr);
-    const newMetadata = `[PAYMENT:total=${totalAmount},advance=${advancePaid}]`;
-    const newRemarksPayload = `${newMetadata} ${cleanRemarks}`.trim();
-
-    // 2. Update reservations table
-    logQuery('reservations', 'UPDATE', `id = ${targetResId}`, { remarks: newRemarksPayload });
-    const { error: resUpdateErr } = await supabase
-      .from('reservations')
-      .update({ remarks: newRemarksPayload })
-      .eq('id', targetResId);
-
-    if (resUpdateErr) {
-      console.error('Failed to update reservation remarks for payment edit:', resUpdateErr);
-    }
-
-    // 3. Update or insert into payments table
-    logQuery('payments', 'SELECT', `reservation_id = ${targetResId}`);
+    // Fetch current payment state to determine additional advance
     const { data: payRows } = await supabase
       .from('payments')
-      .select('id')
+      .select('*')
       .eq('reservation_id', targetResId);
 
-    if (payRows && payRows.length > 0) {
-      for (const p of payRows) {
-        logQuery('payments', 'UPDATE', `id = ${p.id}`, {
-          total_amount: totalAmount,
-          advance_paid: advancePaid,
-          amount_collected: advancePaid,
-          collected_amount: advancePaid,
-          payment_status: paymentStatus,
-        });
-        await supabase
-          .from('payments')
-          .update({
-            total_amount: totalAmount,
-            advance_paid: advancePaid,
-            amount_collected: advancePaid,
-            collected_amount: advancePaid,
-            payment_status: paymentStatus,
-          })
-          .eq('id', p.id);
-      }
-    } else {
-      const paymentPayload = {
-        reservation_id: targetResId,
-        total_amount: totalAmount,
-        advance_paid: advancePaid,
-        amount_collected: advancePaid,
-        collected_amount: advancePaid,
-        payment_status: paymentStatus,
-        remarks: 'Payment details updated',
-      };
-      logQuery('payments', 'INSERT', 'N/A', paymentPayload);
-      await supabase.from('payments').insert(paymentPayload);
-    }
+    const existing = payRows && payRows.length > 0 ? payRows[0] : null;
+    const currentAdvance = Number(existing?.advance_paid || 0);
+    const additionalAdvance = Math.max(0, advancePaid - currentAdvance);
+
+    await updatePaymentSummary({
+      reservationId: targetResId,
+      paymentAmount: additionalAdvance,
+      isAdvance: true,
+      options: {
+        totalAmount,
+      },
+      remarks: 'Payment details updated',
+    });
   },
 
   /**

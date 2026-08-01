@@ -2,6 +2,7 @@ import { RoomService as SupabaseRoomService } from './rooms';
 import { ReservationService } from './reservations';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Booking, Guest, Payment, Room } from '../types';
+import { updatePaymentSummary } from './paymentSummary';
 
 export { supabase, isSupabaseConfigured } from '../lib/supabase';
 export { RoomService as SupabaseRoomService } from './rooms';
@@ -208,31 +209,13 @@ export const PaymentService = {
 
     if (isSupabaseConfigured) {
       try {
-        const { data: existingPay } = await supabase
-          .from('payments')
-          .select('*')
-          .eq('reservation_id', bookingId);
-
-        if (existingPay && existingPay.length > 0) {
-          const p = existingPay[0];
-          const newAdvance = Number(p.advance_paid || 0) + Number(amount);
-          const totalAmt = Number(p.total_amount || 0);
-          const isDue = Boolean(p.balance_due_wallet);
-          const newRem = isDue ? Math.max(0, Number(p.remaining_balance || 0) - Number(amount)) : 0;
-          const dueWallet = isDue && newRem > 0;
-          const newStatus = dueWallet ? 'pending' : (newAdvance >= totalAmt && totalAmt > 0 ? 'paid' : p.payment_status);
-
-          const updatePayload = {
-            advance_paid: newAdvance,
-            amount_collected: Number(p.amount_collected || 0) + Number(amount),
-            remaining_balance: newRem,
-            balance_due_wallet: dueWallet,
-            payment_status: newStatus,
-            remarks: remarks ? `${p.remarks || ''} | ${remarks}`.trim() : p.remarks,
-          };
-          logQuery('payments', 'UPDATE', `id = ${p.id}`, updatePayload);
-          await supabase.from('payments').update(updatePayload).eq('id', p.id);
-        }
+        await updatePaymentSummary({
+          reservationId: bookingId,
+          paymentAmount: Number(amount),
+          isAdvance: true,
+          paymentMethod: method,
+          remarks,
+        });
       } catch (err: any) {
         console.warn('Exception updating payment row in addPayment:', err?.message || err);
       }

@@ -221,8 +221,6 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           if (payInfo.advancePaid === 0 && parsedAdvance > 0) payInfo.advancePaid = parsedAdvance;
 
           const effectivePaymentStatus: 'paid' | 'pending' =
-            mappedStatus === 'checked-in' ||
-            mappedStatus === 'checked-out' ||
             payInfo.paymentStatus === 'paid' ||
             (payInfo.advancePaid >= payInfo.totalAmount && payInfo.totalAmount > 0)
               ? 'paid'

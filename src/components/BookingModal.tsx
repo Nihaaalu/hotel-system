@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Booking, Guest, Payment, Room } from '../types';
 import { BookingService, PaymentService } from '../services/dbServices';
+import { updatePaymentSummary } from '../services/paymentSummary';
 import { useHotelData } from '../context/HotelContext';
 import { formatDateHuman } from '../utils/formatters';
 import {
@@ -377,27 +378,13 @@ export default function BookingModal({
       setErrorMsg(null);
 
       const addAmount = Number(quickAdvanceInput);
+      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
+
       await PaymentService.addPayment(
-        loadedBooking.id,
+        resId,
         addAmount,
         quickAdvanceMethod,
         'Additional advance payment'
-      );
-
-      const currentAdvance = loadedBooking.advancePaid || 0;
-      const newAdvance = currentAdvance + addAmount;
-      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
-
-      await updateBookingPayment(resId, loadedBooking.totalAmount, newAdvance);
-
-      setLoadedBooking((prev) =>
-        prev
-          ? {
-              ...prev,
-              advancePaid: newAdvance,
-              paymentStatus: newAdvance >= prev.totalAmount && prev.totalAmount > 0 ? 'paid' : 'pending',
-            }
-          : null
       );
 
       setQuickAdvanceInput('');
@@ -420,26 +407,14 @@ export default function BookingModal({
       setIsSubmitting(true);
       setErrorMsg(null);
 
-      await PaymentService.addPayment(
-        loadedBooking.id,
-        remaining,
-        'cash',
-        'Paid in Full'
-      );
-
       const resId = loadedBooking.bookingGroupId || loadedBooking.id;
-      const newAdvance = loadedBooking.totalAmount;
-      await updateBookingPayment(resId, loadedBooking.totalAmount, newAdvance);
-
-      setLoadedBooking((prev) =>
-        prev
-          ? {
-              ...prev,
-              advancePaid: newAdvance,
-              paymentStatus: 'paid',
-            }
-          : null
-      );
+      await updatePaymentSummary({
+        reservationId: resId,
+        paymentAmount: remaining,
+        isAdvance: false,
+        paymentMethod: 'cash',
+        remarks: 'Paid in Full',
+      });
 
       await refreshData();
       onSuccess();

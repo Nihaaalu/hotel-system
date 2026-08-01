@@ -1,11 +1,12 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { CustomerDue } from '../types';
 import { getISTDateStr } from '../utils/formatters';
+import { updatePaymentSummary } from './paymentSummary';
 
 export const DuesService = {
   /**
    * Fetch dues list directly from payments INNER JOIN reservations
-   * WHERE payments.balance_due_wallet = true AND payments.remaining_balance > 0
+   * WHERE payments.remaining_balance > 0
    */
   async getDuesList(): Promise<{
     activeDues: CustomerDue[];
@@ -17,13 +18,11 @@ export const DuesService = {
     }
 
     try {
-      // 1. Fetch payments where balance_due_wallet = true AND remaining_balance > 0 AND payment_status = 'pending'
+      // 1. Fetch payments where remaining_balance > 0
       const { data: paymentsData, error: payError } = await supabase
         .from('payments')
         .select('*')
-        .eq('balance_due_wallet', true)
         .gt('remaining_balance', 0)
-        .eq('payment_status', 'pending')
         .order('created_at', { ascending: false });
 
       if (payError) {
@@ -117,71 +116,14 @@ export const DuesService = {
         throw new Error('Payment record not found');
       }
 
-      const currentCollected = Number(payRow.amount_collected || 0);
-      const currentRemaining = Number(payRow.remaining_balance || 0);
-
-      const newCollected = currentCollected + Number(collectAmount);
-      const newRemaining = Math.max(0, currentRemaining - Number(collectAmount));
-      const isFullyPaid = newRemaining <= 0;
-
-      const createdIso = paymentDate
-        ? new Date(paymentDate).toISOString()
-        : new Date().toISOString();
-
-      // 2. Insert into due_payment_transactions
-      try {
-        await supabase.from('due_payment_transactions').insert({
-          payment_id: paymentId,
-          reservation_id: payRow.reservation_id,
-          amount: Number(collectAmount),
-          payment_method: paymentMethod,
-          remarks: remarks.trim() ? remarks.trim() : 'Customer outstanding due collected',
-          created_at: createdIso,
-        });
-      } catch (e) {
-        console.warn('due_payment_transactions insert error:', e);
-      }
-
-      // 3. Update existing payment row ONLY
-      const updatePayload: any = {
-        amount_collected: newCollected,
-        remaining_balance: newRemaining,
-      };
-
-      if (isFullyPaid) {
-        updatePayload.balance_due_wallet = false;
-        updatePayload.payment_status = 'paid';
-      }
-
-      const { error: updateErr } = await supabase
-        .from('payments')
-        .update(updatePayload)
-        .eq('id', paymentId);
-
-      if (updateErr) {
-        console.error('Error updating payment due record:', updateErr);
-        throw updateErr;
-      }
-
-      // 4. Update parent reservation advance_paid
-      if (payRow.reservation_id) {
-        const { data: resRow } = await supabase
-          .from('reservations')
-          .select('*')
-          .eq('id', payRow.reservation_id)
-          .maybeSingle();
-
-        if (resRow) {
-          const totalAmt = Number(resRow.total_amount || 0);
-          await supabase
-            .from('reservations')
-            .update({
-              advance_paid: newCollected,
-              payment_status: isFullyPaid || newCollected >= totalAmt ? 'paid' : resRow.payment_status,
-            })
-            .eq('id', payRow.reservation_id);
-        }
-      }
+      await updatePaymentSummary({
+        reservationId: String(payRow.reservation_id),
+        paymentAmount: Number(collectAmount),
+        isAdvance: false,
+        paymentMethod,
+        remarks: remarks.trim() ? remarks.trim() : 'Customer outstanding due collected',
+        paymentDate,
+      });
     } catch (err) {
       console.error('Exception in collectDuePayment:', err);
       throw err;
