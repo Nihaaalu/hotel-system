@@ -467,6 +467,10 @@ export const ReservationService = {
 
       if (payRows && payRows.length > 0) {
         for (const p of payRows) {
+          if (p.balance_due_wallet === true || Number(p.remaining_balance || 0) > 0) {
+            // Keep pending due status intact
+            continue;
+          }
           if (p.payment_status === 'pending' || p.status === 'pending') {
             logQuery('payments', 'UPDATE', `id = ${p.id}`, { payment_status: 'paid' });
             await supabase
@@ -475,17 +479,8 @@ export const ReservationService = {
               .eq('id', p.id);
           }
         }
-      } else {
-        // Create paid payment row if none exists
-        const payPayload = {
-          reservation_id: reservationId,
-          payment_status: 'paid',
-          payment_method: 'cash',
-          remarks: 'Payment settled automatically at Check-In',
-        };
-        logQuery('payments', 'INSERT', 'N/A', payPayload);
-        await supabase.from('payments').insert(payPayload);
       }
+      // Never insert another payment row during check-in
     } catch (payErr) {
       console.warn('Note updating payment_status at check-in:', payErr);
     }
@@ -540,15 +535,109 @@ export const ReservationService = {
   },
 
   /**
-   * Helper to delete payments and checkin_logs for a reservation
+   * Records check-in payment details into payments table, including Irshad wallet transfer options
+   */
+  async recordCheckInPayment(
+    id: string,
+    paymentData: {
+      amountCollected: number;
+      transferredToIrshad: number;
+      transferToIrshad: boolean;
+      balanceDueWallet?: boolean;
+      remainingBalance?: number;
+      remarks?: string;
+    }
+  ): Promise<void> {
+    if (!isSupabaseConfigured) return;
+
+    try {
+      // Find parent reservation_id
+      let { data: roomRow } = await supabase
+        .from('reservation_rooms')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      const reservationId = roomRow?.reservation_id || id;
+
+      // Fetch parent reservation
+      const { data: resRow } = await supabase
+        .from('reservations')
+        .select('*')
+        .eq('id', reservationId)
+        .maybeSingle();
+
+      const totalAmount = Number(resRow?.total_amount || 0);
+      const isBalanceDue = Boolean(paymentData.balanceDueWallet);
+      const paidAmount = Number(paymentData.amountCollected || 0);
+      const remBal = isBalanceDue ? Math.max(0, totalAmount - paidAmount) : 0;
+
+      const paymentStatus = isBalanceDue
+        ? 'pending'
+        : paidAmount >= totalAmount
+        ? 'paid'
+        : 'pending';
+
+      // SELECT payment row WHERE reservation_id = reservationId
+      const { data: existingPayments } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('reservation_id', reservationId);
+
+      if (existingPayments && existingPayments.length > 0) {
+        const targetId = existingPayments[0].id;
+        const updatePayload = {
+          total_amount: totalAmount,
+          advance_paid: paidAmount,
+          amount_collected: paidAmount,
+          remaining_balance: isBalanceDue ? remBal : 0,
+          balance_due_wallet: isBalanceDue,
+          payment_status: paymentStatus,
+          transfer_to_irshad: isBalanceDue ? false : Boolean(paymentData.transferToIrshad),
+          transferred_to_irshad: isBalanceDue ? 0 : Number(paymentData.transferredToIrshad || 0),
+          remarks:
+            paymentData.remarks ||
+            (isBalanceDue
+              ? 'Customer outstanding balance due recorded'
+              : paymentData.transferToIrshad
+              ? 'Transferred remaining balance to Irshad Wallet'
+              : 'Check-in payment'),
+        };
+        await supabase.from('payments').update(updatePayload).eq('id', targetId);
+      }
+      // Never insert another payment row during check-in
+
+      // Update parent reservation
+      if (resRow?.id) {
+        await supabase
+          .from('reservations')
+          .update({
+            advance_paid: paidAmount,
+            payment_status: paymentStatus,
+          })
+          .eq('id', resRow.id);
+      }
+    } catch (err) {
+      console.error('Exception recording check-in payment:', err);
+    }
+  },
+
+  /**
+   * Helper to delete payments, due_payment_transactions and checkin_logs for a reservation
    */
   async purgeReservationDependencies(reservationId: string): Promise<void> {
     if (!reservationId || !isSupabaseConfigured) return;
     try {
+      await supabase.from('due_payment_transactions').delete().eq('reservation_id', reservationId);
+    } catch (e) {
+      // ignore
+    }
+
+    try {
       logQuery('checkin_logs', 'DELETE', `reservation_id = ${reservationId}`);
       await supabase.from('checkin_logs').delete().eq('reservation_id', reservationId);
     } catch (e) {
-      // ignore if checkin_logs table does not exist
+      // ignore
     }
 
     try {

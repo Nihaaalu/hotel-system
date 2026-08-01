@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { Room, Booking, Payment, Guest, Expense } from '../types';
+import { Room, Booking, Payment, Guest, Expense, DueTransaction } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ExpenseService } from '../services/expenses';
 import { ReservationService } from '../services/reservations';
@@ -22,6 +22,7 @@ interface HotelContextType {
   rooms: Room[];
   bookings: Booking[];
   payments: Payment[];
+  dueTransactions: DueTransaction[];
   guests: Guest[];
   expenses: Expense[];
   isLoading: boolean;
@@ -44,6 +45,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [rooms, setRooms] = useState<Room[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [dueTransactions, setDueTransactions] = useState<DueTransaction[]>([]);
   const [guests, setGuests] = useState<Guest[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -58,16 +60,33 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setIsLoading(true);
 
       // Perform a single batch fetch of all core tables concurrently
-      const [roomsRes, rrRes, resRes, payRes, profRes, expList] = await Promise.all([
+      const [roomsRes, rrRes, resRes, payRes, profRes, expList, dueTxRes] = await Promise.all([
         supabase.from('rooms').select('*').order('room_number', { ascending: true }),
         supabase.from('reservation_rooms').select('*'),
         supabase.from('reservations').select('*'),
         supabase.from('payments').select('*'),
         supabase.from('profiles').select('*'),
         ExpenseService.getExpenses(),
+        supabase.from('due_payment_transactions').select('*'),
       ]);
 
       setExpenses(expList);
+
+      if (dueTxRes.data) {
+        setDueTransactions(
+          dueTxRes.data.map((tx: any) => ({
+            id: String(tx.id || ''),
+            payment_id: String(tx.payment_id || ''),
+            reservation_id: String(tx.reservation_id || ''),
+            amount: Number(tx.amount || 0),
+            payment_method: String(tx.payment_method || 'cash'),
+            remarks: String(tx.remarks || ''),
+            created_at: String(tx.created_at || new Date().toISOString()),
+          }))
+        );
+      } else {
+        setDueTransactions([]);
+      }
 
       // 1. Process Rooms
       let parsedRooms: Room[] = [];
@@ -127,9 +146,15 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return {
             id: String(p.id ?? p.payment_id ?? ''),
             bookingId: resId,
+            reservationId: resId,
             amount: advPaid,
             totalAmount: totAmt,
             advancePaid: advPaid,
+            amountCollected: p.amount_collected !== undefined && p.amount_collected !== null ? Number(p.amount_collected) : undefined,
+            transferredToIrshad: p.transferred_to_irshad !== undefined && p.transferred_to_irshad !== null ? Number(p.transferred_to_irshad) : undefined,
+            transferToIrshad: Boolean(p.transfer_to_irshad),
+            balanceDueWallet: Boolean(p.balance_due_wallet),
+            remainingBalance: Number(p.remaining_balance || 0),
             paymentStatus: pStatus,
             paymentMethod: (p.payment_method || 'cash') as Payment['paymentMethod'],
             paymentDate: String(p.payment_date || p.created_at || new Date().toISOString()),
@@ -322,6 +347,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         rooms,
         bookings,
         payments,
+        dueTransactions,
         guests,
         expenses,
         isLoading,

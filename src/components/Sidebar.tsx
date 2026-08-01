@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Calendar, Package, TrendingUp, Wallet, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Calendar, Package, TrendingUp, Wallet, Handshake, Receipt, Menu, X } from 'lucide-react';
 
-export type AppTab = 'dashboard' | 'calendar' | 'inventory' | 'salary-rent' | 'analytics';
+export type AppTab = 'dashboard' | 'calendar' | 'inventory' | 'salary-rent' | 'irshad' | 'dues' | 'analytics';
 
 export interface SidebarProps {
   currentTab: AppTab;
@@ -26,6 +26,8 @@ export default function Sidebar({
     { id: 'calendar', label: 'Booking Calendar', icon: Calendar },
     { id: 'inventory', label: 'Expense Ledger', icon: Package },
     { id: 'salary-rent', label: 'Salary / Rent', icon: Wallet },
+    { id: 'irshad', label: 'Irshad', icon: Handshake },
+    { id: 'dues', label: 'Dues', icon: Receipt },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   ] as const;
 

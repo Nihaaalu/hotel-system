@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { supabase } from '../lib/supabase';
 import { useHotelData } from '../context/HotelContext';
 import { SalaryRentService } from '../services/salaryRent';
+import { IrshadWalletService } from '../services/irshadWallet';
+import { DuesService } from '../services/dues';
 import { getISTDateStr, getISTMonthStr } from '../utils/formatters';
 import { SalaryPayment, RentPayment } from '../types';
 import {
@@ -36,9 +39,18 @@ import {
 } from 'recharts';
 
 interface BookingSummaryItem {
+  id: string;
+  bookingGroupId?: string;
   totalAmount: number;
   advancePaid: number;
+  amountCollected: number;
+  remainingBalance: number;
+  balanceDueWallet: boolean;
+  transferToIrshad: boolean;
+  transferredToIrshad: number;
+  paymentMethod: string;
   checkInDate: string;
+  checkOutDate?: string;
   createdAt: string;
   status: string;
   guestName: string;
@@ -216,7 +228,7 @@ const DailyChartTooltip = React.memo(({ active, payload, metrics, chartType }: a
 });
 
 export default function Analytics() {
-  const { bookings, expenses, isLoading } = useHotelData();
+  const { bookings, expenses, payments, isLoading } = useHotelData();
 
   const currentISTDateStr = useMemo(() => getISTDateStr(), []);
   const defaultMonthStr = useMemo(() => getISTMonthStr(), []);
@@ -227,10 +239,22 @@ export default function Analytics() {
 
   const [allSalaryPayments, setAllSalaryPayments] = useState<SalaryPayment[]>([]);
   const [allRentPayments, setAllRentPayments] = useState<RentPayment[]>([]);
+  const [irshadWalletBalance, setIrshadWalletBalance] = useState<number>(0);
+  const [outstandingDuesBalance, setOutstandingDuesBalance] = useState<number>(0);
 
   // Zoom levels for Daily Charts (1x, 1.5x, 2x)
   const [revChartZoom, setRevChartZoom] = useState<number>(1);
   const [invChartZoom, setInvChartZoom] = useState<number>(1);
+
+  // Expanded days map for Booking Revenue Ledger
+  const [expandedDaysMap, setExpandedDaysMap] = useState<Record<string, boolean>>({});
+
+  const toggleDayExpansion = (dateKey: string) => {
+    setExpandedDaysMap((prev) => ({
+      ...prev,
+      [dateKey]: !prev[dateKey],
+    }));
+  };
 
   useEffect(() => {
     async function loadSalaryRentAnalytics() {
@@ -242,8 +266,34 @@ export default function Analytics() {
         console.error('Error fetching salary/rent analytics', err);
       }
     }
+    async function loadIrshadWallet() {
+      try {
+        const summary = await IrshadWalletService.getWalletSummary();
+        const netBal = (summary.expense_by_irshad + summary.bookings_with_irshad) - (summary.resort_paid - summary.irshad_paid);
+        setIrshadWalletBalance(netBal);
+      } catch (err) {
+        console.error('Error fetching Irshad wallet summary', err);
+      }
+    }
+    async function loadOutstandingDues() {
+      try {
+        const { data: payData } = await supabase
+          .from('payments')
+          .select('remaining_balance')
+          .eq('balance_due_wallet', true)
+          .gt('remaining_balance', 0)
+          .eq('payment_status', 'pending');
+
+        const sum = (payData || []).reduce((acc: any, p: any) => acc + Number(p.remaining_balance || 0), 0);
+        setOutstandingDuesBalance(sum);
+      } catch (err) {
+        console.error('Error fetching outstanding dues', err);
+      }
+    }
     loadSalaryRentAnalytics();
-  }, []);
+    loadIrshadWallet();
+    loadOutstandingDues();
+  }, [selectedMonth, payments, bookings]);
 
   // Controls for Month & Year switching
   const handlePrevMonth = () => {
@@ -275,7 +325,7 @@ export default function Analytics() {
     return [startYr, startYr + 1, startYr + 2, startYr + 3, startYr + 4];
   }, [currentYearNum]);
 
-  // 1. Process Unique Bookings (prevent duplicating group booking totals)
+  // 1. Process Unique Bookings
   const uniqueBookingsMap = useMemo(() => {
     const map = new Map<string, BookingSummaryItem>();
 
@@ -284,9 +334,18 @@ export default function Analytics() {
       const key = b.bookingGroupId || b.id;
       if (!map.has(key)) {
         map.set(key, {
+          id: b.id,
+          bookingGroupId: b.bookingGroupId,
           totalAmount: Number(b.totalAmount || 0),
           advancePaid: Number(b.advancePaid || 0),
+          amountCollected: Number(b.amountCollected !== undefined ? b.amountCollected : b.advancePaid || 0),
+          remainingBalance: Number(b.remainingBalance || 0),
+          balanceDueWallet: Boolean(b.balanceDueWallet),
+          transferToIrshad: Boolean(b.transferToIrshad),
+          transferredToIrshad: Number(b.transferredToIrshad || 0),
+          paymentMethod: b.paymentMethod || 'cash',
           checkInDate: b.checkInDate,
+          checkOutDate: b.checkOutDate,
           createdAt: b.createdAt ? b.createdAt.split('T')[0] : b.checkInDate,
           status: b.status,
           guestName: b.guestName || 'Guest',
@@ -299,16 +358,36 @@ export default function Analytics() {
   }, [bookings]);
 
   // 2. Calculate Metrics for Selected Month
+  // Revenue = SUM(payments.amount_collected) + SUM(due_payment_transactions.amount)
+  // ONLY money actually collected counts as Revenue!
   const metrics = useMemo(() => {
     let monthRev = 0;
     let monthAdv = 0;
 
-    uniqueBookingsMap.forEach((b) => {
-      if (b.checkInDate && b.checkInDate.startsWith(selectedMonth)) {
-        monthRev += b.totalAmount;
-        monthAdv += b.advancePaid;
-      }
-    });
+    // Sum actual money collected from payments
+    if (payments && payments.length > 0) {
+      payments.forEach((p) => {
+        const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
+        if (pDate.startsWith(selectedMonth)) {
+          const amt = Number(
+            p.amountCollected !== undefined
+              ? p.amountCollected
+              : p.amount !== undefined
+              ? p.amount
+              : p.advancePaid || 0
+          );
+          monthRev += amt;
+        }
+      });
+    } else {
+      // Fallback
+      uniqueBookingsMap.forEach((b) => {
+        if (b.checkInDate && b.checkInDate.startsWith(selectedMonth)) {
+          monthRev += b.advancePaid;
+          monthAdv += b.advancePaid;
+        }
+      });
+    }
 
     let monthInventoryExp = 0;
     let monthSalaryInExp = 0;
@@ -335,7 +414,11 @@ export default function Analytics() {
     const effectiveRentMonthExp = monthRentInExp > 0 ? monthRentInExp : rentPaidThisMonth;
 
     const totalMonthAllExp = monthInventoryExp + effectiveSalaryMonthExp + effectiveRentMonthExp;
-    const outstandingBalance = Math.max(0, monthRev - monthAdv);
+
+    // Outstanding Dues = SUM(payments.remaining_balance) WHERE balance_due_wallet = true AND remaining_balance > 0 AND payment_status = 'pending'
+    const outstandingBalance = outstandingDuesBalance;
+
+    // Net Profit = Collected Revenue - Inventory - Salary - Rent
     const netIncome = monthRev - totalMonthAllExp;
 
     return {
@@ -348,7 +431,7 @@ export default function Analytics() {
       totalMonthAllExp,
       netIncome,
     };
-  }, [uniqueBookingsMap, expenses, selectedMonth, allSalaryPayments, allRentPayments]);
+  }, [payments, uniqueBookingsMap, expenses, selectedMonth, allSalaryPayments, allRentPayments, outstandingDuesBalance]);
 
   // 3. Entire Year View Chart Data (12 Months Jan - Dec for selectedYear)
   const yearly12MonthsData = useMemo(() => {
@@ -360,11 +443,26 @@ export default function Analytics() {
       const monthLabel = SHORT_MONTH_NAMES[m - 1];
 
       let rev = 0;
-      uniqueBookingsMap.forEach((b) => {
-        if (b.checkInDate && b.checkInDate.startsWith(mKey)) {
-          rev += b.totalAmount;
-        }
-      });
+      if (payments && payments.length > 0) {
+        payments.forEach((p) => {
+          const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
+          if (pDate.startsWith(mKey)) {
+            rev += Number(
+              p.amountCollected !== undefined
+                ? p.amountCollected
+                : p.amount !== undefined
+                ? p.amount
+                : p.advancePaid || 0
+            );
+          }
+        });
+      } else {
+        uniqueBookingsMap.forEach((b) => {
+          if (b.checkInDate && b.checkInDate.startsWith(mKey)) {
+            rev += b.advancePaid;
+          }
+        });
+      }
 
       let invExp = 0;
       let salExpFromCat = 0;
@@ -401,10 +499,9 @@ export default function Analytics() {
     }
 
     return list;
-  }, [selectedYear, uniqueBookingsMap, expenses, allSalaryPayments, allRentPayments]);
+  }, [selectedYear, payments, uniqueBookingsMap, expenses, allSalaryPayments, allRentPayments]);
 
-  // 4. Progressive Daily Data for Full Selected Month
-  // Shows ALL days of the month (1..31) on the X-axis, but ONLY plots points/lines up to maxCompletedDay
+  // 4. Progressive Daily Data for Full Selected Month (ONLY plots collected payments per day)
   const dailyDataForMonth = useMemo(() => {
     if (!selectedMonth || !selectedMonth.includes('-')) {
       return {
@@ -449,11 +546,26 @@ export default function Analytics() {
 
       if (day <= maxCompletedDay) {
         let rev = 0;
-        uniqueBookingsMap.forEach((b) => {
-          if (b.checkInDate === dateKey) {
-            rev += b.totalAmount;
-          }
-        });
+        if (payments && payments.length > 0) {
+          payments.forEach((p) => {
+            const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
+            if (pDate === dateKey) {
+              rev += Number(
+                p.amountCollected !== undefined
+                  ? p.amountCollected
+                  : p.amount !== undefined
+                  ? p.amount
+                  : p.advancePaid || 0
+              );
+            }
+          });
+        } else {
+          uniqueBookingsMap.forEach((b) => {
+            if (b.checkInDate === dateKey) {
+              rev += Number(b.advancePaid || 0);
+            }
+          });
+        }
 
         let invExp = 0;
         expenses.forEach((e) => {
@@ -489,7 +601,6 @@ export default function Analytics() {
         prevRevenue = rev;
         prevExpenses = invExp;
       } else {
-        // Days past maxCompletedDay: Keep in array so X-axis shows full month 1..31, but set value to null!
         daysList.push({
           dayNum: day,
           dateKey,
@@ -520,7 +631,122 @@ export default function Analytics() {
       totalRevMonth,
       totalExpMonth,
     };
-  }, [selectedMonth, defaultMonthStr, currentISTDateStr, uniqueBookingsMap, expenses]);
+  }, [selectedMonth, defaultMonthStr, currentISTDateStr, payments, uniqueBookingsMap, expenses]);
+
+  // 5. Booking Revenue Ledger Data (grouped by day for selectedMonth)
+  const bookingRevenueLedgerData = useMemo(() => {
+    if (!selectedMonth || !selectedMonth.includes('-')) return [];
+
+    const [yStr, mStr] = selectedMonth.split('-');
+    const year = parseInt(yStr, 10);
+    const month = parseInt(mStr, 10);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const monthShort = SHORT_MONTH_NAMES[month - 1] || '';
+
+    const list = [];
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dayStr = String(day).padStart(2, '0');
+      const dateKey = `${selectedMonth}-${dayStr}`;
+
+      const dayBookings = bookings.filter(
+        (b) => b.status !== 'cancelled' && b.checkInDate === dateKey
+      );
+
+      const dayPayments = payments.filter((p) => {
+        const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
+        return pDate === dateKey;
+      });
+
+      let dayCollected = 0;
+      if (dayPayments.length > 0) {
+        dayPayments.forEach((p) => {
+          dayCollected += Number(
+            p.amountCollected !== undefined
+              ? p.amountCollected
+              : p.amount !== undefined
+              ? p.amount
+              : p.advancePaid || 0
+          );
+        });
+      } else {
+        dayBookings.forEach((b) => {
+          dayCollected += Number(b.advancePaid || 0);
+        });
+      }
+
+      let dayDue = 0;
+      dayBookings.forEach((b) => {
+        if (b.balanceDueWallet || (b.remainingBalance && b.remainingBalance > 0)) {
+          dayDue += Number(b.remainingBalance || 0);
+        }
+      });
+
+      const items: Array<{
+        id: string;
+        customerName: string;
+        roomNumber: number | string;
+        collectedAmount: number;
+        remainingDue: number;
+        paymentMethod: string;
+        isIrshadWallet: boolean;
+        isBalanceDueWallet: boolean;
+        status: string;
+      }> = [];
+
+      const processedIds = new Set<string>();
+
+      dayBookings.forEach((b) => {
+        processedIds.add(b.id);
+        const isIrshad = Boolean(b.transferToIrshad || b.transferredToIrshad);
+        const isDueWallet = Boolean(b.balanceDueWallet || (b.remainingBalance && b.remainingBalance > 0));
+        const collected = Number(b.advancePaid || b.amountCollected || 0);
+        const remaining = Number(b.remainingBalance || 0);
+
+        items.push({
+          id: b.id,
+          customerName: b.guestName || 'Guest',
+          roomNumber: b.roomNumber,
+          collectedAmount: collected,
+          remainingDue: remaining,
+          paymentMethod: b.paymentMethod || 'cash',
+          isIrshadWallet: isIrshad,
+          isBalanceDueWallet: isDueWallet,
+          status: b.status || 'checked_in',
+        });
+      });
+
+      dayPayments.forEach((p) => {
+        if (p.paymentType === 'due_collection' && !processedIds.has(p.id)) {
+          const matchingBooking = bookings.find((b) => b.id === p.reservationId || b.id === p.bookingId);
+          items.push({
+            id: p.id,
+            customerName: matchingBooking ? matchingBooking.guestName : 'Due Collection',
+            roomNumber: matchingBooking ? matchingBooking.roomNumber : '-',
+            collectedAmount: Number(p.amountCollected || p.amount || 0),
+            remainingDue: Number(p.remainingBalance || 0),
+            paymentMethod: p.paymentMethod || 'cash',
+            isIrshadWallet: Boolean(p.transferToIrshad),
+            isBalanceDueWallet: Boolean(p.balanceDueWallet),
+            status: 'paid',
+          });
+        }
+      });
+
+      list.push({
+        dayNum: day,
+        dateKey,
+        label: `${day} ${monthShort} ${year}`,
+        shortLabel: String(day),
+        bookingsCount: dayBookings.length,
+        collectedAmount: dayCollected,
+        outstandingBalance: dayDue,
+        items,
+      });
+    }
+
+    return list;
+  }, [selectedMonth, bookings, payments]);
 
   if (isLoading) {
     return (
@@ -701,30 +927,83 @@ export default function Analytics() {
           </div>
         </div>
 
-        {/* Row 4: Month Net Profit (Full Width - Most Prominent Card) */}
-        <div className="p-3.5 sm:p-4 bg-slate-900 text-white rounded-2xl shadow-md border border-slate-800 flex flex-col justify-between min-h-[102px]">
-          <div className="flex items-center justify-between text-slate-300">
-            <span className="text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5">
-              <Receipt className="w-4 h-4 text-emerald-400 shrink-0" /> Month Net Profit
-            </span>
-            <span className="text-[10px] font-sans font-bold bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700">
-              Net Bottomline
-            </span>
+        {/* Row 4: Month Net Profit (Full Width - Most Prominent Card with Partner Split) */}
+        <div className="p-4 sm:p-5 bg-slate-900 text-white rounded-2xl shadow-xl border border-slate-800 space-y-4">
+          {/* Main Net Profit Header */}
+          <div className="flex items-center justify-between text-slate-300 pb-3 border-b border-slate-800">
+            <div>
+              <span className="text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 text-slate-200">
+                <Receipt className="w-4 h-4 text-emerald-400 shrink-0" /> Month Net Profit
+              </span>
+              <p className="text-[10px] text-slate-400 font-medium">
+                Revenue minus All Operating Expenses ({formatMonthLabel(selectedMonth)})
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-2xl sm:text-3xl font-black font-sans tracking-tight">
+                <AnimatedNumber
+                  value={metrics.netIncome}
+                  className={metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'}
+                />
+              </p>
+            </div>
           </div>
-          <div className="flex items-baseline justify-between my-1">
-            <p className="text-2xl sm:text-3xl font-black font-sans tracking-tight">
-              <AnimatedNumber
-                value={metrics.netIncome}
-                className={metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'}
-              />
-            </p>
-            <span className="text-[11px] font-semibold text-slate-400">
-              Revenue - All Expenses
-            </span>
+
+          {/* 50/50 Profit Share Breakdown */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            {/* Ansari Share (50%) */}
+            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/80 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-400 mb-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-300">Ansari Share (50%)</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 bg-indigo-950/60 text-indigo-300 rounded border border-indigo-800/60">Partner</span>
+              </div>
+              <p className="text-xl font-extrabold text-white my-1">
+                <AnimatedNumber value={metrics.netIncome * 0.5} className={metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
+              </p>
+              <p className="text-[10px] text-slate-400">Direct 50% Profit Share</p>
+            </div>
+
+            {/* Irshad Share (50%) & Wallet Settlement */}
+            <div className="p-3 bg-purple-950/40 rounded-xl border border-purple-800/60 space-y-2">
+              <div className="flex items-center justify-between text-purple-300">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Irshad Share (50%)</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 bg-purple-900/60 text-purple-200 rounded border border-purple-700/60">Partner</span>
+              </div>
+
+              <div className="flex items-baseline justify-between border-b border-purple-800/40 pb-2">
+                <span className="text-xs font-medium text-purple-200">Base Share (50%):</span>
+                <span className="text-lg font-black text-emerald-400">
+                  <AnimatedNumber value={metrics.netIncome * 0.5} />
+                </span>
+              </div>
+
+              <div className="space-y-1 text-[11px]">
+                <div className="flex items-center justify-between text-slate-300">
+                  <span>Irshad Wallet Balance:</span>
+                  <span className={`font-bold ${irshadWalletBalance >= 0 ? 'text-purple-300' : 'text-rose-300'}`}>
+                    <AnimatedNumber value={irshadWalletBalance} />
+                  </span>
+                </div>
+
+                {(() => {
+                  const irshadShare = metrics.netIncome * 0.5;
+                  const finalAmount = irshadShare + irshadWalletBalance;
+                  const isReceivable = finalAmount >= 0;
+
+                  return (
+                    <div className="pt-2 border-t border-purple-800/60 flex items-center justify-between">
+                      <span className="font-extrabold text-xs text-white">
+                        {isReceivable ? 'Final Irshad Receivable:' : 'Final Irshad Payable:'}
+                      </span>
+                      <span className={`text-base font-black ${isReceivable ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <AnimatedNumber value={finalAmount} />
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
           </div>
-          <p className="text-[11px] text-slate-400 font-medium truncate">
-            Net Profit for {formatMonthLabel(selectedMonth)}
-          </p>
         </div>
       </div>
 
@@ -983,6 +1262,144 @@ export default function Analytics() {
                 </ResponsiveContainer>
               </div>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* 5. BOOKING REVENUE LEDGER SECTION */}
+      <div className="bg-white p-3 sm:p-5 border border-slate-200/80 rounded-2xl shadow-2xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-3 gap-2">
+          <div>
+            <h3 className="font-extrabold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-indigo-600 shrink-0" />
+              Booking Revenue Ledger ({formatMonthLabel(selectedMonth)})
+            </h3>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Daily breakdown of bookings, collected revenue, and outstanding customer dues.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {bookingRevenueLedgerData.length === 0 ? (
+            <div className="p-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs">
+              No booking revenue records available for this month.
+            </div>
+          ) : (
+            bookingRevenueLedgerData.map((dayData) => {
+              const isExpanded = Boolean(expandedDaysMap[dayData.dateKey]);
+              const hasActivity = dayData.bookingsCount > 0 || dayData.collectedAmount > 0 || dayData.items.length > 0;
+
+              return (
+                <div
+                  key={dayData.dateKey}
+                  className={`border rounded-xl transition-all ${
+                    hasActivity
+                      ? 'border-slate-200/90 bg-white hover:border-slate-300'
+                      : 'border-slate-100 bg-slate-50/40 opacity-70'
+                  }`}
+                >
+                  {/* Day Header Row */}
+                  <div
+                    onClick={() => toggleDayExpansion(dayData.dateKey)}
+                    className="p-3 sm:p-3.5 flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-[140px]">
+                      <span className="p-1.5 bg-indigo-50 text-indigo-700 rounded-lg font-mono font-bold text-xs border border-indigo-100">
+                        {dayData.shortLabel}
+                      </span>
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-xs sm:text-sm">{dayData.label}</h4>
+                        <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium mt-0.5">
+                          <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded font-semibold text-[10px]">
+                            {dayData.bookingsCount} {dayData.bookingsCount === 1 ? 'Booking' : 'Bookings'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Summary Totals */}
+                    <div className="flex items-center gap-4 sm:gap-6 ml-auto">
+                      <div className="text-right">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Collected</span>
+                        <span className="text-xs sm:text-sm font-black text-emerald-600">
+                          ₹{dayData.collectedAmount.toLocaleString()}
+                        </span>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Outstanding Due</span>
+                        <span className={`text-xs sm:text-sm font-black ${dayData.outstandingBalance > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                          ₹{dayData.outstandingBalance.toLocaleString()}
+                        </span>
+                      </div>
+
+                      <button className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition">
+                        <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expandable Details Drawer */}
+                  {isExpanded && (
+                    <div className="border-t border-slate-100 bg-slate-50/70 p-3 sm:p-4 space-y-2">
+                      {dayData.items.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-2">No bookings or collections recorded for this date.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500 pb-1">
+                                <th className="pb-2">Customer</th>
+                                <th className="pb-2">Room</th>
+                                <th className="pb-2">Collected</th>
+                                <th className="pb-2">Remaining Due</th>
+                                <th className="pb-2">Method</th>
+                                <th className="pb-2">Wallets / Badges</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 font-medium">
+                              {dayData.items.map((item) => (
+                                <tr key={item.id} className="hover:bg-white/60">
+                                  <td className="py-2.5 font-bold text-slate-900">{item.customerName}</td>
+                                  <td className="py-2.5 text-slate-600 font-mono">
+                                    {typeof item.roomNumber === 'number' ? `Room ${item.roomNumber}` : item.roomNumber}
+                                  </td>
+                                  <td className="py-2.5 font-extrabold text-emerald-600">₹{item.collectedAmount.toLocaleString()}</td>
+                                  <td className={`py-2.5 font-extrabold ${item.remainingDue > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                    ₹{item.remainingDue.toLocaleString()}
+                                  </td>
+                                  <td className="py-2.5 text-slate-600 uppercase font-mono text-[10px]">{item.paymentMethod}</td>
+                                  <td className="py-2.5">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {item.isIrshadWallet && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-100 text-purple-800 border border-purple-200">
+                                          Irshad Wallet
+                                        </span>
+                                      )}
+                                      {item.isBalanceDueWallet && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
+                                          Balance Due Wallet
+                                        </span>
+                                      )}
+                                      {!item.isBalanceDueWallet && item.remainingDue === 0 && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                          Paid
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </div>

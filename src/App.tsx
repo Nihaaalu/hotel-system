@@ -6,6 +6,8 @@ import BookingCalendar from './components/BookingCalendar';
 import BookingModal from './components/BookingModal';
 import Inventory from './components/Inventory';
 import SalaryRent from './components/SalaryRent';
+import Irshad from './components/Irshad';
+import Dues from './components/Dues';
 import Analytics from './components/Analytics';
 import { useHotelData } from './context/HotelContext';
 
@@ -97,6 +99,8 @@ export default function App() {
               {currentTab === 'calendar' && 'Booking Calendar'}
               {currentTab === 'inventory' && 'Expense Ledger'}
               {currentTab === 'salary-rent' && 'Employee Salary & Property Rent'}
+              {currentTab === 'irshad' && 'Irshad Wallet & Settlement Ledger'}
+              {currentTab === 'dues' && 'Customer Dues Ledger'}
               {currentTab === 'analytics' && 'Financial Analytics & Expense Breakdown'}
             </h1>
           </div>
@@ -154,6 +158,14 @@ export default function App() {
 
             {currentTab === 'salary-rent' && (
               <SalaryRent />
+            )}
+
+            {currentTab === 'irshad' && (
+              <Irshad />
+            )}
+
+            {currentTab === 'dues' && (
+              <Dues />
             )}
 
             {currentTab === 'analytics' && (

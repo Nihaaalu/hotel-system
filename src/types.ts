@@ -31,6 +31,10 @@ export interface Booking {
   updatedAt: string;
   _synced?: boolean; // flag for firebase sync status
   bookingGroupId?: string; // internal booking group ID
+  // Irshad transfer tracking
+  amountCollected?: number;
+  transferredToIrshad?: number;
+  transferToIrshad?: boolean;
   // Joined fields for display
   guestName?: string;
   guestPhone?: string;
@@ -40,15 +44,47 @@ export interface Booking {
 export interface Payment {
   id: string; // local payment uuid
   bookingId: string;
+  reservationId?: string;
   amount: number;
   totalAmount?: number;
   advancePaid?: number;
-  paymentStatus?: 'paid' | 'pending';
+  amountCollected?: number;
+  transferredToIrshad?: number;
+  transferToIrshad?: boolean;
+  balanceDueWallet?: boolean;
+  remainingBalance?: number;
+  paymentStatus?: 'paid' | 'pending' | 'balance_due';
   paymentDate: string; // ISO String
   paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking';
   remarks: string;
   createdAt: string;
   _synced?: boolean; // flag for firebase sync status
+}
+
+export interface DueTransaction {
+  id?: string;
+  payment_id: string;
+  reservation_id?: string;
+  amount: number;
+  payment_method: string;
+  remarks?: string;
+  created_at: string;
+}
+
+export interface CustomerDue {
+  id: string; // payment id
+  reservationId: string;
+  bookingName: string;
+  checkInDate: string;
+  checkOutDate: string;
+  status: string;
+  totalAmount: number;
+  advancePaid: number;
+  amountCollected: number;
+  remainingBalance: number;
+  balanceDueWallet: boolean;
+  paymentStatus: 'balance_due' | 'paid' | 'pending';
+  createdAt: string;
 }
 
 export type ExpenseCategory =
@@ -73,7 +109,24 @@ export interface Expense {
   itemName?: string;   // optional item name field. If empty, falls back to category
   amount: number;
   remarks: string;
+  paidBy?: 'resort' | 'irshad';
   createdAt: string;
+}
+
+export interface IrshadSettlement {
+  id: string;
+  transactionDate: string;
+  transactionType: 'resort_paid_irshad' | 'irshad_paid_resort';
+  amount: number;
+  remarks?: string;
+  createdAt: string;
+}
+
+export interface IrshadWalletSummary {
+  expense_by_irshad: number;
+  bookings_with_irshad: number;
+  resort_paid: number;
+  irshad_paid: number;
 }
 
 export interface SalaryEmployee {

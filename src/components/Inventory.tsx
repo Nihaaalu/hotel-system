@@ -275,6 +275,7 @@ export default function Inventory() {
   const [itemNameInput, setItemNameInput] = useState('');
   const [amount, setAmount] = useState<number | ''>('');
   const [remarks, setRemarks] = useState('');
+  const [paidBy, setPaidBy] = useState<'resort' | 'irshad'>('resort');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -702,6 +703,7 @@ export default function Inventory() {
     setItemNameInput('');
     setAmount('');
     setRemarks('');
+    setPaidBy('resort');
     setErrorMsg(null);
     setSelectedExpenseDetail(null);
     setIsFormModalOpen(true);
@@ -714,6 +716,7 @@ export default function Inventory() {
     setItemNameInput(exp.itemName || '');
     setAmount(exp.amount || '');
     setRemarks(exp.remarks || '');
+    setPaidBy(exp.paidBy || 'resort');
     setErrorMsg(null);
     setSelectedExpenseDetail(null);
     setIsFormModalOpen(true);
@@ -726,6 +729,7 @@ export default function Inventory() {
     setItemNameInput(exp.itemName || '');
     setAmount(exp.amount || '');
     setRemarks(exp.remarks ? `${exp.remarks} (Copy)` : '');
+    setPaidBy(exp.paidBy || 'resort');
     setErrorMsg(null);
     setSelectedExpenseDetail(null);
     setIsFormModalOpen(true);
@@ -751,6 +755,7 @@ export default function Inventory() {
           itemName: finalItemName,
           amount: Number(amount),
           remarks: remarks.trim(),
+          paidBy,
         });
         showToast('✓ Ledger entry updated!');
       } else {
@@ -760,6 +765,7 @@ export default function Inventory() {
           itemName: finalItemName,
           amount: Number(amount),
           remarks: remarks.trim(),
+          paidBy,
         });
         showToast('✓ Expense added to ledger!');
       }
@@ -1275,11 +1281,18 @@ export default function Inventory() {
                       <div
                         key={exp.id}
                         onClick={() => setSelectedExpenseDetail(exp)}
-                        className="px-3.5 py-2.5 hover:bg-slate-50 active:bg-slate-100 transition cursor-pointer flex items-center justify-between gap-3"
+                        className={`px-3.5 py-2.5 hover:bg-slate-50 active:bg-slate-100 transition cursor-pointer flex items-center justify-between gap-3 ${
+                          exp.paidBy === 'irshad' ? 'border-l-4 border-l-purple-600 bg-purple-50/20' : ''
+                        }`}
                       >
                         <div className="space-y-0.5 min-w-0 flex-1">
-                          <div className="text-xs sm:text-sm font-bold text-slate-900 tracking-tight truncate">
-                            {exp.itemName || exp.category}
+                          <div className="text-xs sm:text-sm font-bold text-slate-900 tracking-tight flex items-center gap-1.5 flex-wrap">
+                            <span>{exp.itemName || exp.category}</span>
+                            {exp.paidBy === 'irshad' && (
+                              <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-black rounded-md border border-purple-200 shrink-0">
+                                Paid by Irshad
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
                             <span className="text-slate-600 font-semibold">{exp.category}</span>
@@ -1534,6 +1547,37 @@ export default function Inventory() {
                   placeholder={`Default to "${category}"`}
                   className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                 />
+              </div>
+
+              {/* Paid By */}
+              <div>
+                <label className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
+                  Paid By <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaidBy('resort')}
+                    className={`py-2.5 px-3 rounded-xl font-extrabold text-xs transition cursor-pointer border ${
+                      paidBy === 'resort'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                        : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    Resort
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaidBy('irshad')}
+                    className={`py-2.5 px-3 rounded-xl font-extrabold text-xs transition cursor-pointer border ${
+                      paidBy === 'irshad'
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-2xs'
+                        : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    Irshad (Personal)
+                  </button>
+                </div>
               </div>
 
               {/* Amount */}

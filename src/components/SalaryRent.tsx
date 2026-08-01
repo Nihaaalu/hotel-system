@@ -136,6 +136,7 @@ export default function SalaryRent() {
   const [isRentPaymentModalOpen, setIsRentPaymentModalOpen] = useState(false);
   const [rentPayAmountInput, setRentPayAmountInput] = useState<number | ''>('');
   const [rentPayMethodInput, setRentPayMethodInput] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
+  const [rentPayPaidBy, setRentPayPaidBy] = useState<'resort' | 'irshad'>('resort');
   const [rentPayRemarksInput, setRentPayRemarksInput] = useState('');
   const [rentPayDateInput, setRentPayDateInput] = useState(todayIST);
 
@@ -176,6 +177,7 @@ export default function SalaryRent() {
   const [selectedPayEmpId, setSelectedPayEmpId] = useState<string>('');
   const [salaryPayAmountInput, setSalaryPayAmountInput] = useState<number | ''>('');
   const [salaryPayMethodInput, setSalaryPayMethodInput] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
+  const [salaryPayPaidBy, setSalaryPayPaidBy] = useState<'resort' | 'irshad'>('resort');
   const [salaryPayRemarksInput, setSalaryPayRemarksInput] = useState('');
   const [salaryPayDateInput, setSalaryPayDateInput] = useState(todayIST);
 
@@ -374,7 +376,8 @@ export default function SalaryRent() {
         Number(rentPayAmountInput),
         rentPayMethodInput,
         rentPayRemarksInput,
-        rentPayDateInput
+        rentPayDateInput,
+        rentPayPaidBy
       );
       await loadData();
       setIsRentPaymentModalOpen(false);
@@ -503,7 +506,8 @@ export default function SalaryRent() {
         Number(salaryPayAmountInput),
         salaryPayMethodInput,
         salaryPayRemarksInput,
-        salaryPayDateInput
+        salaryPayDateInput,
+        salaryPayPaidBy
       );
       await loadData();
       setIsSalaryPayModalOpen(false);
@@ -1348,6 +1352,18 @@ export default function SalaryRent() {
               </div>
 
               <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Paid By</label>
+                <select
+                  value={salaryPayPaidBy}
+                  onChange={(e) => setSalaryPayPaidBy(e.target.value as 'resort' | 'irshad')}
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px] cursor-pointer"
+                >
+                  <option value="resort">Resort (Default)</option>
+                  <option value="irshad">Irshad (Personally)</option>
+                </select>
+              </div>
+
+              <div>
                 <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Notes / Remarks</label>
                 <input
                   type="text"
@@ -1482,6 +1498,18 @@ export default function SalaryRent() {
                   <option value="card">Card</option>
                   <option value="upi">UPI</option>
                   <option value="net_banking">Net Banking</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Paid By</label>
+                <select
+                  value={rentPayPaidBy}
+                  onChange={(e) => setRentPayPaidBy(e.target.value as 'resort' | 'irshad')}
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px] cursor-pointer"
+                >
+                  <option value="resort">Resort (Default)</option>
+                  <option value="irshad">Irshad (Personally)</option>
                 </select>
               </div>
 

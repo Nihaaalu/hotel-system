@@ -56,6 +56,7 @@ export const ExpenseService = {
           itemName: nameVal,
           amount: Number(item.amount || item.cost || item.price || 0),
           remarks: remarksRaw,
+          paidBy: (item.paid_by === 'irshad' ? 'irshad' : 'resort') as 'resort' | 'irshad',
           createdAt: String(item.created_at || new Date().toISOString()),
         };
       });
@@ -94,6 +95,7 @@ export const ExpenseService = {
         item_name: finalItemName,
         amount: Number(expenseData.amount || 0),
         remarks: expenseData.remarks || '',
+        paid_by: expenseData.paidBy || 'resort',
       };
 
       logQuery('inventory_expenses', 'INSERT', 'N/A', payload);
@@ -157,6 +159,7 @@ export const ExpenseService = {
       }
       if (expenseData.amount !== undefined) payload.amount = Number(expenseData.amount);
       if (expenseData.remarks !== undefined) payload.remarks = expenseData.remarks;
+      if (expenseData.paidBy !== undefined) payload.paid_by = expenseData.paidBy;
 
       const numId = Number(id);
       const targetId = !isNaN(numId) ? numId : id;

@@ -62,6 +62,19 @@ export const BookingService = {
   async checkInGuest(id: string, remarks?: string, checkedInBy?: string): Promise<void> {
     return ReservationService.checkInGuest(id, remarks, checkedInBy);
   },
+  async recordCheckInPayment(
+    id: string,
+    paymentData: {
+      amountCollected: number;
+      transferredToIrshad: number;
+      transferToIrshad: boolean;
+      balanceDueWallet?: boolean;
+      remainingBalance?: number;
+      remarks?: string;
+    }
+  ): Promise<void> {
+    return ReservationService.recordCheckInPayment(id, paymentData);
+  },
   async checkoutGuest(id: string, remarks?: string): Promise<void> {
     return ReservationService.checkoutGuest(id, remarks);
   },
@@ -211,21 +224,33 @@ export const PaymentService = {
 
     if (isSupabaseConfigured) {
       try {
-        const payload = {
-          reservation_id: bookingId,
-          amount,
-          payment_method: method,
-          remarks,
-        };
-        logQuery('payments', 'INSERT', 'N/A', payload);
-        const { data, error } = await supabase.from('payments').insert(payload).select();
-        logResponse(data, error);
+        const { data: existingPay } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('reservation_id', bookingId);
 
-        if (error) {
-          console.warn('Error inserting payment:', error.message || error);
+        if (existingPay && existingPay.length > 0) {
+          const p = existingPay[0];
+          const newAdvance = Number(p.advance_paid || 0) + Number(amount);
+          const totalAmt = Number(p.total_amount || 0);
+          const isDue = Boolean(p.balance_due_wallet);
+          const newRem = isDue ? Math.max(0, Number(p.remaining_balance || 0) - Number(amount)) : 0;
+          const dueWallet = isDue && newRem > 0;
+          const newStatus = dueWallet ? 'pending' : (newAdvance >= totalAmt && totalAmt > 0 ? 'paid' : p.payment_status);
+
+          const updatePayload = {
+            advance_paid: newAdvance,
+            amount_collected: Number(p.amount_collected || 0) + Number(amount),
+            remaining_balance: newRem,
+            balance_due_wallet: dueWallet,
+            payment_status: newStatus,
+            remarks: remarks ? `${p.remarks || ''} | ${remarks}`.trim() : p.remarks,
+          };
+          logQuery('payments', 'UPDATE', `id = ${p.id}`, updatePayload);
+          await supabase.from('payments').update(updatePayload).eq('id', p.id);
         }
       } catch (err: any) {
-        console.warn('Exception inserting payment:', err?.message || err);
+        console.warn('Exception updating payment row in addPayment:', err?.message || err);
       }
     }
 

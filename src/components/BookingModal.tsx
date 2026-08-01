@@ -8,6 +8,7 @@ import {
   Calendar,
   User,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -192,6 +193,12 @@ export default function BookingModal({
 
   // Loaded Booking State for View Mode
   const [loadedBooking, setLoadedBooking] = useState<Booking | null>(null);
+
+  // Check-In Payment Confirmation State
+  const [isCheckInModalOpen, setIsCheckInModalOpen] = useState(false);
+  const [checkInPaidNowInput, setCheckInPaidNowInput] = useState<number | ''>('');
+  const [transferToIrshad, setTransferToIrshad] = useState(false);
+  const [balanceDueWallet, setBalanceDueWallet] = useState(false);
 
   // General Status
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -637,13 +644,47 @@ export default function BookingModal({
     setConflictPrompt(null);
   };
 
-  // Check In Handler (Single tap, no extra confirm)
-  const handleCheckInGuest = async () => {
+  // Open Check-In Payment Confirmation Modal
+  const handleOpenCheckInModal = () => {
+    if (!loadedBooking) return;
+    const remaining = Math.max(0, loadedBooking.totalAmount - loadedBooking.advancePaid);
+    setCheckInPaidNowInput(remaining);
+    setTransferToIrshad(false);
+    setBalanceDueWallet(false);
+    setIsCheckInModalOpen(true);
+  };
+
+  // Submit Check-In Payment & Complete Check-In
+  const handleConfirmCheckInWithPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!loadedBooking) return;
     setErrorMsg(null);
 
+    const paidNow = Number(checkInPaidNowInput || 0);
+    const remainingAfterPayment = Math.max(0, loadedBooking.totalAmount - (loadedBooking.advancePaid + paidNow));
+    const isTransferred = transferToIrshad && remainingAfterPayment > 0;
+    const isBalanceDue = balanceDueWallet && remainingAfterPayment > 0;
+    const transferredAmount = isTransferred ? remainingAfterPayment : 0;
+    const remBal = isBalanceDue ? remainingAfterPayment : 0;
+
     try {
       setIsSubmitting(true);
+
+      // 1. Record check-in payment details
+      await BookingService.recordCheckInPayment(loadedBooking.id, {
+        amountCollected: paidNow,
+        transferredToIrshad: transferredAmount,
+        transferToIrshad: isTransferred,
+        balanceDueWallet: isBalanceDue,
+        remainingBalance: remBal,
+        remarks: isBalanceDue
+          ? 'Customer outstanding balance due recorded'
+          : isTransferred
+          ? 'Transferred remaining balance to Irshad Wallet'
+          : 'Check-in payment',
+      });
+
+      // 2. Execute check-in for this booking (or group)
       if (loadedBooking.bookingGroupId && groupBookingsSameGroup.length > 1) {
         const targetBookings = groupBookingsSameGroup.filter((b) => b.status === 'booked');
         const toUpdate = targetBookings.map((b) => b.id);
@@ -656,6 +697,8 @@ export default function BookingModal({
       } else {
         await BookingService.checkInGuest(loadedBooking.id, loadedBooking.remarks);
       }
+
+      setIsCheckInModalOpen(false);
       await refreshData();
       onSuccess();
       onClose();
@@ -1020,7 +1063,7 @@ export default function BookingModal({
                   {loadedBooking.status === 'booked' && (
                     <button
                       type="button"
-                      onClick={handleCheckInGuest}
+                      onClick={handleOpenCheckInModal}
                       disabled={isSubmitting}
                       className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer"
                     >
@@ -1731,6 +1774,160 @@ export default function BookingModal({
                 <span className="text-xs font-bold text-indigo-600 animate-pulse">Processing...</span>
               )}
             </div>
+          </div>
+        </div>
+      )}
+      {/* Check-In Payment Modal */}
+      {isCheckInModalOpen && loadedBooking && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 animate-fade-in">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-100 overflow-hidden text-slate-900 animate-scale-up">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-extrabold text-sm flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                  Check-In Payment & Wallet Assignment
+                </h3>
+                <p className="text-[11px] text-blue-100 font-medium">
+                  {loadedBooking.guestName} • Room #{loadedBooking.roomNumber}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCheckInModalOpen(false)}
+                className="p-1 hover:bg-white/10 rounded-lg text-white transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmCheckInWithPayment} className="p-4 space-y-4 text-xs">
+              {/* Summary Cards */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-150">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-0.5">Room Total</span>
+                  <span className="text-base font-black text-slate-900">₹{loadedBooking.totalAmount.toLocaleString()}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-150">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-0.5">Advance Paid</span>
+                  <span className="text-base font-black text-emerald-600">₹{loadedBooking.advancePaid.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {/* Customer Paid Now Input */}
+              <div>
+                <label className="font-bold text-slate-700 uppercase block mb-1 text-[10px]">
+                  Customer Paid Now (at Check-In)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 font-bold text-slate-400">₹</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max={loadedBooking.totalAmount - loadedBooking.advancePaid}
+                    value={checkInPaidNowInput}
+                    onChange={(e) => setCheckInPaidNowInput(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full rounded-xl border border-slate-200 pl-7 pr-3 py-2.5 font-black text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+                  />
+                </div>
+              </div>
+
+              {/* Remaining Balance Calculation */}
+              {(() => {
+                const paidNow = Number(checkInPaidNowInput || 0);
+                const remaining = Math.max(0, loadedBooking.totalAmount - (loadedBooking.advancePaid + paidNow));
+                return (
+                  <div className="space-y-3">
+                    <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/60 flex items-center justify-between">
+                      <span className="font-extrabold text-amber-900">Remaining Balance Dues</span>
+                      <span className="text-base font-black text-amber-700">₹{remaining.toLocaleString()}</span>
+                    </div>
+
+                    {/* Wallet Options for Remaining Balance */}
+                    {remaining > 0 && (
+                      <div className="space-y-2 pt-1">
+                        <label className="text-[10px] font-extrabold uppercase text-slate-500 tracking-wider block">
+                          Assign Remaining Balance (₹{remaining.toLocaleString()})
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {/* Option 1: Irshad Wallet */}
+                          <label
+                            className={`p-3 rounded-xl border-2 flex items-start gap-2.5 cursor-pointer transition ${
+                              transferToIrshad
+                                ? 'border-purple-600 bg-purple-50'
+                                : 'border-slate-200 bg-white hover:bg-slate-50'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={transferToIrshad}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setTransferToIrshad(checked);
+                                if (checked) setBalanceDueWallet(false);
+                              }}
+                              className="mt-0.5 w-4 h-4 text-purple-600 rounded border-purple-300 focus:ring-purple-500 cursor-pointer"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="font-black text-purple-900 text-xs block leading-tight">
+                                Irshad Wallet
+                              </span>
+                              <p className="text-[10px] text-slate-600 font-medium leading-normal">
+                                Assigns this remaining balance to Irshad's account ledger.
+                              </p>
+                            </div>
+                          </label>
+
+                          {/* Option 2: Balance Due Wallet */}
+                          <label
+                            className={`p-3 rounded-xl border-2 flex items-start gap-2.5 cursor-pointer transition ${
+                              balanceDueWallet
+                                ? 'border-amber-600 bg-amber-50'
+                                : 'border-slate-200 bg-white hover:bg-slate-50'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={balanceDueWallet}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setBalanceDueWallet(checked);
+                                if (checked) setTransferToIrshad(false);
+                              }}
+                              className="mt-0.5 w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500 cursor-pointer"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="font-black text-amber-900 text-xs block leading-tight">
+                                Balance Due Wallet
+                              </span>
+                              <p className="text-[10px] text-slate-600 font-medium leading-normal">
+                                Keep this remaining balance as customer outstanding due.
+                              </p>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCheckInModalOpen(false)}
+                  className="flex-1 py-2.5 border border-slate-200 font-bold text-slate-700 rounded-xl hover:bg-slate-50 cursor-pointer min-h-[42px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl shadow-2xs cursor-pointer min-h-[42px]"
+                >
+                  {isSubmitting ? 'Checking In...' : 'Confirm Check-In'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

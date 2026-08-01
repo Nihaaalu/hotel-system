@@ -375,7 +375,8 @@ export const SalaryRentService = {
     amount: number,
     paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking',
     remarks: string,
-    paymentDate: string
+    paymentDate: string,
+    paidBy: 'resort' | 'irshad' = 'resort'
   ): Promise<SalaryPayment> {
     const salaryMonth = `${month}-01`;
     const payAmount = Number(amount || 0);
@@ -392,6 +393,23 @@ export const SalaryRentService = {
 
     const empName = empData ? (empData.employee_name || empData.name || 'Employee') : 'Employee';
     const monthlySalary = empData ? Number(empData.monthly_salary || 0) : payAmount;
+
+    // Record in inventory_expenses if paid by Irshad
+    if (paidBy === 'irshad') {
+      try {
+        await supabase.from('inventory_expenses').insert({
+          expense_date: pDate,
+          category: 'Salary',
+          amount: payAmount,
+          remarks: cleanRemarks ? `Salary paid by Irshad: ${cleanRemarks}` : `Salary paid by Irshad (${empName})`,
+          item_name: `Salary Payment (${empName})`,
+          created_at: new Date().toISOString(),
+          paid_by: 'irshad',
+        });
+      } catch (e) {
+        console.warn('Could not insert salary paid by Irshad to inventory_expenses', e);
+      }
+    }
 
     // Check existing transaction
     const { data: existingTx } = await supabase
@@ -509,12 +527,30 @@ export const SalaryRentService = {
     amount: number,
     paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking',
     remarks: string,
-    paymentDate: string
+    paymentDate: string,
+    paidBy: 'resort' | 'irshad' = 'resort'
   ): Promise<RentPayment> {
     const rentMonth = `${month}-01`;
     const payAmount = Number(amount || 0);
     const pDate = paymentDate || getISTDateStr();
     const cleanRemarks = remarks.trim();
+
+    // Record in inventory_expenses if paid by Irshad
+    if (paidBy === 'irshad') {
+      try {
+        await supabase.from('inventory_expenses').insert({
+          expense_date: pDate,
+          category: 'Rent',
+          amount: payAmount,
+          remarks: cleanRemarks ? `Rent paid by Irshad: ${cleanRemarks}` : 'Rent paid by Irshad',
+          item_name: 'Rent Payment',
+          created_at: new Date().toISOString(),
+          paid_by: 'irshad',
+        });
+      } catch (e) {
+        console.warn('Could not insert rent paid by Irshad to inventory_expenses', e);
+      }
+    }
 
     // Fetch latest effective rent setting
     const { data: rentSets } = await supabase
