@@ -94,6 +94,13 @@ export const BookingService = {
   async replaceRoom(reservationRoomId: string, newRoomNumber: number): Promise<any> {
     return ReservationService.replaceRoom(reservationRoomId, newRoomNumber);
   },
+  async addRoomsToReservation(
+    reservationId: string,
+    roomNumbers: number[],
+    newTotalAmount?: number
+  ): Promise<void> {
+    return ReservationService.addRoomsToReservation(reservationId, roomNumbers, newTotalAmount);
+  },
   async updateBookingDetails(
     reservationId: string,
     data: {

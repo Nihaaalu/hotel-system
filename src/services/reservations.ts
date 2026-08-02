@@ -787,6 +787,118 @@ export const ReservationService = {
   },
 
   /**
+   * Adds extra room(s) to an existing reservation:
+   * 1. Resolves room numbers to room IDs in rooms table.
+   * 2. Finds existing reservation and reservation_rooms to determine status ('Booked' or 'Checked In').
+   * 3. Inserts a row into 'reservation_rooms' for EACH selected room:
+   *    { reservation_id: resId, room_id: roomId, status: newRoomStatus, cancelled: false }
+   * 4. Updates payment summary / total amount if newTotalAmount is specified.
+   */
+  async addRoomsToReservation(
+    reservationId: string,
+    roomNumbers: number[],
+    newTotalAmount?: number
+  ): Promise<void> {
+    if (!isSupabaseConfigured) return;
+    if (!roomNumbers || roomNumbers.length === 0) return;
+
+    // 0. Resolve target reservation_id
+    let targetResId = reservationId;
+    let { data: resData } = await supabase
+      .from('reservations')
+      .select('*')
+      .eq('id', targetResId)
+      .maybeSingle();
+
+    if (!resData) {
+      const { data: rrData } = await supabase
+        .from('reservation_rooms')
+        .select('reservation_id')
+        .eq('id', targetResId)
+        .maybeSingle();
+      if (rrData?.reservation_id) {
+        targetResId = String(rrData.reservation_id);
+        const { data: parentRes } = await supabase
+          .from('reservations')
+          .select('*')
+          .eq('id', targetResId)
+          .maybeSingle();
+        resData = parentRes;
+      }
+    }
+
+    if (!targetResId || !resData) {
+      throw new Error(`Reservation not found for id ${reservationId}`);
+    }
+
+    // Determine status of new rooms based on existing reservation/rooms
+    const { data: existingRR } = await supabase
+      .from('reservation_rooms')
+      .select('status')
+      .eq('reservation_id', targetResId);
+
+    const isCheckedIn = (existingRR || []).some(
+      (r) => r.status === 'Checked In' || r.status === 'checked_in' || r.status === 'checked-in'
+    ) || resData.status === 'Checked In' || resData.status === 'checked_in';
+
+    const newRoomStatus = isCheckedIn ? 'Checked In' : 'Booked';
+
+    // 1. Resolve room_number to rooms.id foreign key
+    const rooms = await RoomService.getRooms();
+    const roomNumToIdMap = new Map<number, string | number>();
+    rooms.forEach((r) => {
+      roomNumToIdMap.set(r.number, r.id);
+    });
+
+    const uniqueRoomNumbers = Array.from(new Set(roomNumbers));
+    const roomRows = uniqueRoomNumbers.map((roomNum) => {
+      const roomId = roomNumToIdMap.get(roomNum) ?? roomNum;
+      return {
+        reservation_id: targetResId,
+        room_id: roomId,
+        status: newRoomStatus,
+        cancelled: false,
+      };
+    });
+
+    logQuery('reservation_rooms', 'INSERT', 'N/A', roomRows);
+    const { data: insertedRooms, error: roomsError } = await supabase
+      .from('reservation_rooms')
+      .insert(roomRows)
+      .select();
+
+    logResponse(insertedRooms, roomsError);
+    if (roomsError) {
+      console.error('Failed to add extra rooms in database:', roomsError);
+      throw new Error(`Failed to add extra rooms: ${roomsError.message || JSON.stringify(roomsError)}`);
+    }
+
+    // 2. Recalculate and update payment summary / total amount if newTotalAmount provided
+    if (newTotalAmount !== undefined && newTotalAmount >= 0) {
+      await updatePaymentSummary({
+        reservationId: targetResId,
+        paymentAmount: 0,
+        isAdvance: false,
+        options: {
+          totalAmount: newTotalAmount,
+        },
+        remarks: `Added ${uniqueRoomNumbers.length} extra room(s): ${uniqueRoomNumbers.join(', ')}`,
+      });
+
+      // Update remarks metadata on reservations table
+      const currentRemarksStr = resData.remarks || '';
+      const { cleanRemarks, advancePaid: curAdvance } = parsePaymentMetadata(currentRemarksStr);
+      const newMetadata = `[PAYMENT:total=${newTotalAmount},advance=${curAdvance}]`;
+      const updatedRemarks = `${newMetadata} ${cleanRemarks}`.trim();
+
+      await supabase
+        .from('reservations')
+        .update({ remarks: updatedRemarks })
+        .eq('id', targetResId);
+    }
+  },
+
+  /**
    * Checks if a room has overlapping active bookings in Supabase
    */
   async checkOverlappingBooking(

@@ -128,6 +128,68 @@ export default function BookingModal({
     roomBooking?: Booking;
   } | null>(null);
 
+  // Add Extra Room Modal State
+  const [isAddRoomModalOpen, setIsAddRoomModalOpen] = useState(false);
+  const [addRoomSelectedNumbers, setAddRoomSelectedNumbers] = useState<number[]>([]);
+  const [addRoomCustomTotal, setAddRoomCustomTotal] = useState<number | ''>('');
+  const [addRoomErrorMsg, setAddRoomErrorMsg] = useState<string | null>(null);
+
+  const getAvailableRoomsForAdd = () => {
+    if (!loadedBooking) return [];
+    const allocatedNums = allocatedRoomsList.map((r) => r.roomNumber);
+    const cIn = loadedBooking.checkInDate;
+    const cOut = loadedBooking.checkOutDate;
+    const targetResId = loadedBooking.bookingGroupId || loadedBooking.id;
+
+    return roomsList.filter((room) => {
+      if (room.is_active === false) return false;
+      if (allocatedNums.includes(room.number)) return false;
+      const isOverlapping = checkOverlappingBooking(
+        room.number,
+        cIn,
+        cOut,
+        targetResId
+      );
+      return !isOverlapping;
+    });
+  };
+
+  const handleAddRoomsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loadedBooking || addRoomSelectedNumbers.length === 0) return;
+
+    setIsSubmitting(true);
+    setAddRoomErrorMsg(null);
+
+    try {
+      const resId = loadedBooking.bookingGroupId || loadedBooking.id;
+      const oldRoomCount = allocatedRoomsList.length;
+      const currentTotal = loadedBooking.totalAmount || 0;
+      const avgPricePerRoom = oldRoomCount > 0 ? Math.round(currentTotal / oldRoomCount) : 0;
+      const addedCount = addRoomSelectedNumbers.length;
+      const calculatedNewTotal = addRoomCustomTotal !== '' 
+        ? Number(addRoomCustomTotal) 
+        : currentTotal + (avgPricePerRoom * addedCount);
+
+      await BookingService.addRoomsToReservation(
+        resId,
+        addRoomSelectedNumbers,
+        calculatedNewTotal
+      );
+
+      await refreshData();
+      setIsAddRoomModalOpen(false);
+      setAddRoomSelectedNumbers([]);
+      setAddRoomCustomTotal('');
+      onSuccess();
+    } catch (err: any) {
+      console.error('Error adding rooms:', err);
+      setAddRoomErrorMsg(err.message || 'Failed to add rooms to reservation.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   // Custom Date Picker calendar states
   const [currentMonth, setCurrentMonth] = useState(() => new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(() => new Date().getFullYear());
@@ -978,6 +1040,19 @@ export default function BookingModal({
               <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2">
                 <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Allocated Rooms ({allocatedRoomsList.length})</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddRoomModalOpen(true);
+                      setAddRoomSelectedNumbers([]);
+                      setAddRoomErrorMsg(null);
+                      setAddRoomCustomTotal('');
+                    }}
+                    className="px-2 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold text-[11px] rounded-lg transition cursor-pointer flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Add Room</span>
+                  </button>
                 </div>
                 <div className="space-y-1.5">
                   {allocatedRoomsList.map((roomBooking) => (
@@ -1926,6 +2001,178 @@ export default function BookingModal({
                   className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl shadow-2xs cursor-pointer min-h-[42px]"
                 >
                   {isSubmitting ? 'Checking In...' : 'Confirm Check-In'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ADD EXTRA ROOM MODAL */}
+      {isAddRoomModalOpen && loadedBooking && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-gray-100 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start border-b border-gray-100 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                  <Plus className="w-5 h-5 text-indigo-600" />
+                  Add Extra Room(s)
+                </h3>
+                <p className="text-xs text-gray-500 font-medium">
+                  Guest: <span className="font-extrabold text-gray-900">{loadedBooking.guestName}</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddRoomModalOpen(false);
+                  setAddRoomSelectedNumbers([]);
+                  setAddRoomErrorMsg(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {addRoomErrorMsg && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-xl flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{addRoomErrorMsg}</span>
+              </div>
+            )}
+
+            {/* Dates info */}
+            <div className="p-2.5 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs flex items-center justify-between font-bold text-indigo-950">
+              <div className="flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-indigo-600" />
+                <span>Dates: {formatDateHuman(loadedBooking.checkInDate)} → {formatDateHuman(loadedBooking.checkOutDate)}</span>
+              </div>
+              <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full uppercase tracking-wider font-extrabold">
+                {loadedBooking.status}
+              </span>
+            </div>
+
+            <form onSubmit={handleAddRoomsSubmit} className="space-y-4">
+              {/* Room Selection Grid */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-bold tracking-wide text-gray-500 uppercase block">
+                    Select Available Rooms
+                  </label>
+                  <span className="text-xs font-extrabold text-indigo-600">
+                    Selected ({addRoomSelectedNumbers.length}): {addRoomSelectedNumbers.length > 0 ? addRoomSelectedNumbers.join(', ') : 'None'}
+                  </span>
+                </div>
+
+                {(() => {
+                  const availableRooms = getAvailableRoomsForAdd();
+                  if (availableRooms.length === 0) {
+                    return (
+                      <div className="text-center py-6 bg-slate-50 border border-dashed border-gray-200 rounded-xl">
+                        <p className="text-xs font-bold text-gray-500">No available rooms found for these dates.</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 max-h-48 overflow-y-auto p-1">
+                      {availableRooms.map((room) => {
+                        const isSelected = addRoomSelectedNumbers.includes(room.number);
+                        return (
+                          <button
+                            key={room.number}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setAddRoomSelectedNumbers(addRoomSelectedNumbers.filter((n) => n !== room.number));
+                              } else {
+                                setAddRoomSelectedNumbers([...addRoomSelectedNumbers, room.number]);
+                              }
+                            }}
+                            className={`p-2.5 rounded-xl border text-xs font-extrabold text-center transition-all cursor-pointer select-none active:scale-95 ${
+                              isSelected
+                                ? 'bg-indigo-600 border-indigo-700 text-white shadow-2xs ring-2 ring-indigo-400'
+                                : 'bg-white hover:bg-indigo-50 border-gray-200 text-gray-800'
+                            }`}
+                          >
+                            <div>Room {room.number}</div>
+                            <div className={`text-[9px] font-medium ${isSelected ? 'text-indigo-100' : 'text-gray-400'}`}>
+                              {getRoomConfig(room.number)}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Financial Recalculation Preview */}
+              {addRoomSelectedNumbers.length > 0 && (() => {
+                const oldRoomCount = allocatedRoomsList.length;
+                const currentTotal = loadedBooking.totalAmount || 0;
+                const avgPricePerRoom = oldRoomCount > 0 ? Math.round(currentTotal / oldRoomCount) : 0;
+                const addedCount = addRoomSelectedNumbers.length;
+                const autoCalculatedTotal = currentTotal + (avgPricePerRoom * addedCount);
+                const activeNewTotal = addRoomCustomTotal !== '' ? Number(addRoomCustomTotal) : autoCalculatedTotal;
+                const advancePaid = loadedBooking.advancePaid || 0;
+                const newRemaining = Math.max(0, activeNewTotal - advancePaid);
+
+                return (
+                  <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2.5">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-500 block">
+                      Updated Summary Preview
+                    </span>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs font-medium text-gray-700">
+                      <div>Current Rooms: <span className="font-extrabold text-gray-900">{oldRoomCount}</span></div>
+                      <div>New Room Count: <span className="font-extrabold text-indigo-600">{oldRoomCount + addedCount}</span></div>
+                      <div>Already Collected: <span className="font-extrabold text-emerald-600">₹{advancePaid.toLocaleString()}</span></div>
+                      <div>New Remaining: <span className="font-extrabold text-rose-600">₹{newRemaining.toLocaleString()}</span></div>
+                    </div>
+
+                    <div className="pt-2 border-t border-gray-200">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                        Recalculated Total Booking Amount (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={addRoomCustomTotal === '' ? autoCalculatedTotal : addRoomCustomTotal}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setAddRoomCustomTotal(val === '' ? '' : Number(val));
+                        }}
+                        className="w-full rounded-xl border border-gray-200 bg-white p-2 text-xs font-black text-gray-900 focus:ring-1 focus:ring-indigo-500"
+                      />
+                      <p className="text-[10px] text-gray-400 mt-1 font-medium">
+                        Auto-calculated from average room rate (₹{avgPricePerRoom.toLocaleString()}/room). You can adjust this total if needed.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddRoomModalOpen(false);
+                    setAddRoomSelectedNumbers([]);
+                    setAddRoomErrorMsg(null);
+                  }}
+                  className="flex-1 py-2.5 border border-gray-200 font-bold text-gray-700 rounded-xl hover:bg-gray-50 cursor-pointer text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting || addRoomSelectedNumbers.length === 0}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl shadow-2xs cursor-pointer text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? 'Adding Room(s)...' : `Confirm & Add ${addRoomSelectedNumbers.length} Room(s)`}
                 </button>
               </div>
             </form>
