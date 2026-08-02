@@ -23,7 +23,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-export default function Dues() {
+export default function Dues({ refreshTrigger }: { refreshTrigger?: number }) {
   const { payments, bookings, refreshData } = useHotelData();
   const [activeDues, setActiveDues] = useState<CustomerDue[]>([]);
   const [historyDues, setHistoryDues] = useState<CustomerDue[]>([]);
@@ -60,7 +60,7 @@ export default function Dues() {
 
   useEffect(() => {
     loadData();
-  }, [payments, bookings]);
+  }, [payments, bookings, refreshTrigger]);
 
   // Calculate Metrics
   const totalOutstandingBalance = useMemo(() => {
@@ -400,15 +400,22 @@ export default function Dues() {
                         </p>
                       </div>
 
-                      {isOutstanding ? (
-                        <span className="px-2.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 font-black text-[10px] rounded-md shrink-0">
-                          Outstanding
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 font-black text-[10px] rounded-md shrink-0 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Paid
-                        </span>
-                      )}
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        {due.transferToIrshad && (
+                          <span className="px-2 py-0.5 bg-purple-100 text-purple-900 border border-purple-300 font-black text-[10px] rounded-md">
+                            Due Owner: IRSHAD
+                          </span>
+                        )}
+                        {isOutstanding ? (
+                          <span className="px-2.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 font-black text-[10px] rounded-md">
+                            Outstanding
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 font-black text-[10px] rounded-md flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Paid
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Dates & Details */}

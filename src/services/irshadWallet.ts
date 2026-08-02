@@ -1,9 +1,9 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { IrshadSettlement, IrshadWalletSummary } from '../types';
+import { IrshadSettlement, IrshadWalletSummary, IrshadWalletNetSummary } from '../types';
 
 export const IrshadWalletService = {
   /**
-   * Reads the irshad_wallet_summary view.
+   * Reads the irshad_wallet_summary view or calculates from base tables.
    * Provides: expense_by_irshad, bookings_with_irshad, resort_paid, irshad_paid.
    */
   async getWalletSummary(): Promise<IrshadWalletSummary> {
@@ -23,7 +23,7 @@ export const IrshadWalletService = {
         supabase.from('salary_transactions').select('amount').eq('paid_by', 'irshad'),
         supabase.from('rent_transactions').select('amount').eq('paid_by', 'irshad'),
         supabase.from('irshad_settlements').select('amount, transaction_type'),
-        supabase.from('payments').select('transferred_to_irshad, amount_collected').or('transfer_to_irshad.eq.true,transferred_to_irshad.gt.0'),
+        supabase.from('payments').select('transferred_to_irshad, amount_collected, amount').or('transfer_to_irshad.eq.true,transferred_to_irshad.gt.0'),
       ]);
 
       let expenseByIrshad = 0;
@@ -33,7 +33,8 @@ export const IrshadWalletService = {
 
       let bookingsWithIrshad = 0;
       (payRes.data || []).forEach((r: any) => {
-        bookingsWithIrshad += Number(r.transferred_to_irshad ?? r.amount_collected ?? 0);
+        const val = Number(r.transferred_to_irshad || r.amount_collected || r.amount || 0);
+        bookingsWithIrshad += val;
       });
 
       let resortPaid = 0;
@@ -68,6 +69,34 @@ export const IrshadWalletService = {
         irshad_paid: 0,
       };
     }
+  },
+
+  /**
+   * Single shared function returning unified wallet net summary:
+   * bookingTransferred, expenseByIrshad, settlementPaid, walletNet
+   */
+  async getIrshadWalletNetSummary(): Promise<IrshadWalletNetSummary> {
+    const summary = await this.getWalletSummary();
+    let bookingTransferred = summary.bookings_with_irshad || 0;
+
+    if (bookingTransferred === 0) {
+      const bookings = await this.getIrshadBookings();
+      bookingTransferred = bookings.reduce((s, b) => s + (b.transferredToIrshad || b.amount || 0), 0);
+    }
+
+    const expenseByIrshad = summary.expense_by_irshad || 0;
+    const settlementPaid = (summary.resort_paid || 0) - (summary.irshad_paid || 0);
+    const walletNet = bookingTransferred - expenseByIrshad - settlementPaid;
+
+    const result = {
+      bookingTransferred,
+      expenseByIrshad,
+      settlementPaid,
+      walletNet,
+    };
+
+    console.log("Wallet Summary", result);
+    return result;
   },
 
   /**

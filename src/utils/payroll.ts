@@ -2,9 +2,9 @@
  * Shared Payroll Calculation Utility
  * 
  * Formula:
- * Final Salary = Monthly Salary + Bonus - Salary Cut
- * Inventory Expense = Final Salary
- * Wallet = Previous Wallet + Final Salary - Payments
+ * Wallet = Sum of all unpaid salary balances from months before the currently selected month.
+ * Total Payable = Wallet + Monthly Salary + Bonus - Salary Cut
+ * Remaining = Total Payable - Payments
  */
 
 export interface PayrollCalculationInput {
@@ -24,6 +24,8 @@ export interface PayrollCalculationResult {
   payments: number;
   previousWallet: number;
   wallet: number;
+  totalPayable: number;
+  remainingBalance: number;
 }
 
 export function calculatePayroll({
@@ -39,18 +41,21 @@ export function calculatePayroll({
   const p = Number(payments || 0);
   const prevW = Number(previousWallet || 0);
 
-  const finalSalary = mSalary + b - c;
-  const inventoryExpense = finalSalary;
-  const wallet = prevW + finalSalary - p;
+  const currentMonthPayable = mSalary + b - c;
+  const totalPayable = prevW + currentMonthPayable;
+  const inventoryExpense = currentMonthPayable;
+  const remainingBalance = Math.max(0, totalPayable - p);
 
   return {
     monthlySalary: mSalary,
     bonus: b,
     salaryCut: c,
-    finalSalary,
+    finalSalary: currentMonthPayable,
     inventoryExpense,
     payments: p,
     previousWallet: prevW,
-    wallet,
+    wallet: prevW,
+    totalPayable,
+    remainingBalance,
   };
 }

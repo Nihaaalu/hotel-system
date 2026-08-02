@@ -88,6 +88,8 @@ export interface CustomerDue {
   amountCollected: number;
   remainingBalance: number;
   balanceDueWallet: boolean;
+  transferToIrshad?: boolean;
+  transferredToIrshad?: number;
   paymentStatus: 'balance_due' | 'paid' | 'pending';
   createdAt: string;
 }
@@ -132,6 +134,13 @@ export interface IrshadWalletSummary {
   bookings_with_irshad: number;
   resort_paid: number;
   irshad_paid: number;
+}
+
+export interface IrshadWalletNetSummary {
+  bookingTransferred: number;
+  expenseByIrshad: number;
+  settlementPaid: number;
+  walletNet: number;
 }
 
 export interface SalaryEmployee {

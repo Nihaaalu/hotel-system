@@ -79,6 +79,8 @@ export const DuesService = {
           amountCollected: Number(p.amount_collected || 0),
           remainingBalance: Number(p.remaining_balance || 0),
           balanceDueWallet: Boolean(p.balance_due_wallet),
+          transferToIrshad: Boolean(p.transfer_to_irshad || (p.transferred_to_irshad && Number(p.transferred_to_irshad) > 0)),
+          transferredToIrshad: Number(p.transferred_to_irshad || 0),
           paymentStatus: p.payment_status || 'pending',
           createdAt: p.created_at || new Date().toISOString(),
         };

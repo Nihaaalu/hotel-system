@@ -9,6 +9,23 @@ function logResponse(data: any, error: any) {
   console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
 }
 
+function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advancePaid: number; cleanRemarks: string } {
+  let totalAmount = 0;
+  let advancePaid = 0;
+  let cleanRemarks = remarksStr || '';
+
+  if (remarksStr && remarksStr.includes('[PAYMENT:')) {
+    const match = remarksStr.match(/\[PAYMENT:total=(\d+(?:\.\d+)?),advance=(\d+(?:\.\d+)?)\]/);
+    if (match) {
+      totalAmount = parseFloat(match[1]);
+      advancePaid = parseFloat(match[2]);
+      cleanRemarks = remarksStr.replace(/\[PAYMENT:[^\]]+\]/, '').trim();
+    }
+  }
+
+  return { totalAmount, advancePaid, cleanRemarks };
+}
+
 export interface PaymentUpdateParams {
   reservationId: string;
   paymentAmount: number; // amount of money collected in this transaction
@@ -26,9 +43,10 @@ export interface PaymentUpdateParams {
 
 /**
  * Reusable function updatePaymentSummary() that performs all payment calculations consistently.
- * Never overwrites amount_collected, advance_paid, remaining_balance.
- * Always adds new payment to existing amount_collected.
+ * Never overwrites amount_collected, advance_paid, remaining_balance with raw inputs.
+ * Calculates paymentToApply capped by remaining_balance and updates payments table.
  * Creates a new row in due_payment_transactions for every customer payment.
+ * NEVER updates payment fields on reservations table.
  */
 export async function updatePaymentSummary(params: PaymentUpdateParams): Promise<any> {
   if (!isSupabaseConfigured) return null;
@@ -47,12 +65,33 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
     throw new Error('updatePaymentSummary failed: reservationId is required.');
   }
 
-  // 1. Fetch current payment record for reservationId
-  logQuery('payments', 'SELECT', `reservation_id = ${reservationId}`);
+  let targetResId = String(reservationId);
+
+  // Check if payments row exists directly for targetResId
+  const { data: checkPay } = await supabase
+    .from('payments')
+    .select('*')
+    .eq('reservation_id', targetResId);
+
+  if (!checkPay || checkPay.length === 0) {
+    // Check if targetResId is actually a reservation_rooms row ID
+    const { data: roomRow } = await supabase
+      .from('reservation_rooms')
+      .select('reservation_id')
+      .eq('id', targetResId)
+      .maybeSingle();
+
+    if (roomRow?.reservation_id) {
+      targetResId = String(roomRow.reservation_id);
+    }
+  }
+
+  // 1. Fetch current payment record for targetResId
+  logQuery('payments', 'SELECT', `reservation_id = ${targetResId}`);
   const { data: existingPayments, error: fetchErr } = await supabase
     .from('payments')
     .select('*')
-    .eq('reservation_id', reservationId);
+    .eq('reservation_id', targetResId);
 
   if (fetchErr) {
     console.error('Error fetching payment record:', fetchErr);
@@ -61,41 +100,71 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
 
   const existing = existingPayments && existingPayments.length > 0 ? existingPayments[0] : null;
 
-  // Also fetch reservations table row if options.totalAmount is not provided
-  let resTotalAmount = 0;
-  if (options?.totalAmount === undefined) {
-    const { data: resRow } = await supabase
-      .from('reservations')
-      .select('total_amount, advance_paid')
-      .eq('id', reservationId)
-      .maybeSingle();
-    if (resRow?.total_amount) {
-      resTotalAmount = Number(resRow.total_amount);
+  // Determine current total amount
+  let currentTotalAmount = options?.totalAmount !== undefined && options?.totalAmount > 0
+    ? Number(options.totalAmount)
+    : 0;
+
+  if (!currentTotalAmount) {
+    if (existing?.total_amount) {
+      currentTotalAmount = Number(existing.total_amount);
+    } else {
+      const { data: resRow } = await supabase
+        .from('reservations')
+        .select('remarks')
+        .eq('id', targetResId)
+        .maybeSingle();
+
+      if (resRow?.remarks) {
+        const { totalAmount: parsedTotal } = parsePaymentMetadata(resRow.remarks);
+        if (parsedTotal > 0) {
+          currentTotalAmount = parsedTotal;
+        }
+      }
     }
   }
-
-  // 2. Read existing values
-  const currentTotalAmount = options?.totalAmount !== undefined
-    ? Number(options.totalAmount)
-    : Number(existing?.total_amount || resTotalAmount || 0);
 
   const currentAdvancePaid = Number(existing?.advance_paid || 0);
   const currentAmountCollected = Number(existing?.amount_collected || existing?.collected_amount || 0);
 
-  const collectedNow = Number(paymentAmount || 0);
+  // remaining = total_amount - amount_collected
+  const currentRemaining = currentTotalAmount > 0 ? Math.max(0, currentTotalAmount - currentAmountCollected) : 0;
 
-  // 3. Perform calculations
-  const newAdvancePaid = currentAdvancePaid + (isAdvance ? collectedNow : 0);
-  const newAmountCollected = currentAmountCollected + collectedNow;
-  const newRemainingBalance = Math.max(0, currentTotalAmount - newAmountCollected);
+  // 4. Already Paid Protection:
+  // If remaining_balance == 0 (and currentTotalAmount > 0)
+  // Skip payment processing completely. Do not update payments. Do not insert due_payment_transactions.
+  if (existing && currentTotalAmount > 0 && currentRemaining === 0) {
+    console.log('[PAYMENT LOG] remaining_balance is 0. Skipping payment processing completely.');
+    return existing;
+  }
 
+  // 3. Check-In / Payment Calculation:
+  // paymentToApply = Math.min(paymentEntered, remaining)
+  const paymentEntered = Number(paymentAmount || 0);
+  const remainingForCalc = currentTotalAmount > 0 ? (existing ? currentRemaining : currentTotalAmount) : paymentEntered;
+  const paymentToApply = Math.min(paymentEntered, remainingForCalc);
+
+  // amount_collected = amount_collected + paymentToApply
+  const newAmountCollected = currentAmountCollected + paymentToApply;
+  // Never allow amount_collected > total_amount
+  const finalAmountCollected = currentTotalAmount > 0 ? Math.min(newAmountCollected, currentTotalAmount) : newAmountCollected;
+
+  // remaining_balance = total_amount - amount_collected
+  const newRemainingBalance = currentTotalAmount > 0 ? Math.max(0, currentTotalAmount - finalAmountCollected) : 0;
+
+  const newAdvancePaid = currentAdvancePaid + (isAdvance ? paymentToApply : 0);
+
+  // payment_status =
+  // remaining_balance == 0 ? "paid"
+  // : amount_collected == 0 ? "pending"
+  // : "partial"
   let newPaymentStatus: 'pending' | 'partial' | 'paid' = 'pending';
-  if (newAmountCollected >= currentTotalAmount && currentTotalAmount > 0) {
+  if (newRemainingBalance === 0 && currentTotalAmount > 0) {
     newPaymentStatus = 'paid';
-  } else if (newAmountCollected > 0) {
-    newPaymentStatus = 'partial';
-  } else {
+  } else if (finalAmountCollected === 0) {
     newPaymentStatus = 'pending';
+  } else {
+    newPaymentStatus = 'partial';
   }
 
   const isBalanceDue = options?.balanceDueWallet !== undefined
@@ -114,13 +183,99 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
     ? remarks.trim()
     : (existing?.remarks || (isAdvance ? 'Advance payment' : 'Payment collected'));
 
-  // 4. Create new transaction row in due_payment_transactions if money was collected
-  let txRecord = null;
-  if (collectedNow > 0) {
+  // Payload sent to Supabase
+  const paymentPayload = {
+    reservation_id: targetResId,
+    total_amount: currentTotalAmount,
+    advance_paid: newAdvancePaid,
+    amount_collected: finalAmountCollected,
+    collected_amount: finalAmountCollected,
+    remaining_balance: newRemainingBalance,
+    payment_status: newPaymentStatus,
+    balance_due_wallet: isBalanceDue,
+    transfer_to_irshad: transferToIrshad,
+    transferred_to_irshad: transferredToIrshad,
+    remarks: finalRemarks,
+  };
+
+  // LOG 1: Existing payment row before update
+  console.log('[PAYMENT LOG] 1. Existing payment row before update:', existing);
+  // LOG 2: Payload sent to Supabase
+  console.log('[PAYMENT LOG] 2. Payload sent to Supabase:', paymentPayload);
+
+  let paymentRecord = null;
+  let payErrOut: any = null;
+
+  if (existing) {
+    logQuery('payments', 'UPDATE', `id = ${existing.id}`, paymentPayload);
+    const { data: updatedPay, error: payErr } = await supabase
+      .from('payments')
+      .update(paymentPayload)
+      .eq('id', existing.id)
+      .select();
+
+    logResponse(updatedPay, payErr);
+    payErrOut = payErr;
+
+    if (payErr) {
+      console.error('[PAYMENT LOG ERROR] 4. Supabase payment update error:', payErr);
+      throw payErr;
+    }
+    if (!updatedPay || updatedPay.length !== 1) {
+      const err = new Error(`UPDATE on payments table failed: returned row count ${updatedPay ? updatedPay.length : 0}, expected 1.`);
+      console.error('[PAYMENT LOG ERROR] 4. Supabase payment update error:', err);
+      throw err;
+    }
+    paymentRecord = updatedPay[0];
+  } else {
+    logQuery('payments', 'INSERT', 'N/A', paymentPayload);
+    const { data: insertedPay, error: payErr } = await supabase
+      .from('payments')
+      .insert(paymentPayload)
+      .select();
+
+    logResponse(insertedPay, payErr);
+    payErrOut = payErr;
+
+    if (payErr) {
+      console.error('[PAYMENT LOG ERROR] 4. Supabase payment insert error:', payErr);
+      throw payErr;
+    }
+    if (!insertedPay || insertedPay.length !== 1) {
+      const err = new Error(`INSERT into payments table failed: returned row count ${insertedPay ? insertedPay.length : 0}, expected 1.`);
+      console.error('[PAYMENT LOG ERROR] 4. Supabase payment insert error:', err);
+      throw err;
+    }
+    paymentRecord = insertedPay[0];
+  }
+
+  // LOG 3: Returned payment row
+  console.log('[PAYMENT LOG] 3. Returned payment row:', paymentRecord);
+  // LOG 4: Any Supabase error
+  console.log('[PAYMENT LOG] 4. Any Supabase error:', payErrOut || 'None');
+  // LOG 5: amount_collected before and after
+  console.log(`[PAYMENT LOG] 5. amount_collected before: ${currentAmountCollected}, after: ${finalAmountCollected}`);
+  // LOG 6: advance_paid before and after
+  console.log(`[PAYMENT LOG] 6. advance_paid before: ${currentAdvancePaid}, after: ${newAdvancePaid}`);
+  // LOG 7: remaining_balance before and after
+  console.log(`[PAYMENT LOG] 7. remaining_balance before: ${existing?.remaining_balance ?? (currentTotalAmount - currentAmountCollected)}, after: ${newRemainingBalance}`);
+  // LOG 8: payment_status before and after
+  console.log(`[PAYMENT LOG] 8. payment_status before: ${existing?.payment_status ?? 'N/A'}, after: ${newPaymentStatus}`);
+
+  // Validate paymentId is NOT null
+  const paymentId = paymentRecord?.id;
+  if (!paymentId) {
+    const missingErr = new Error('Payment row missing before inserting transaction');
+    console.error('[PAYMENT LOG ERROR] 4. Supabase error:', missingErr);
+    throw missingErr;
+  }
+
+  // Insert ONE due_payment_transactions record ONLY for the money collected in the current action
+  if (paymentToApply > 0) {
     const txPayload = {
-      payment_id: existing?.id || null,
-      reservation_id: reservationId,
-      amount: collectedNow,
+      payment_id: paymentId,
+      reservation_id: targetResId,
+      amount: paymentToApply,
       payment_method: paymentMethod,
       remarks: finalRemarks,
       created_at: paymentDate || new Date().toISOString(),
@@ -134,93 +289,22 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
 
     logResponse(txData, txErr);
     if (txErr) {
-      console.error('Failed to insert due_payment_transactions:', txErr);
+      console.error('[PAYMENT LOG ERROR] 4. Supabase due_payment_transactions error:', txErr);
+      console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: FALSE');
       throw txErr;
     }
     if (!txData || txData.length !== 1) {
-      throw new Error(`INSERT into due_payment_transactions failed: returned row count ${txData ? txData.length : 0}, expected 1.`);
+      const txCountErr = new Error(`INSERT into due_payment_transactions failed: returned row count ${txData ? txData.length : 0}, expected 1.`);
+      console.error('[PAYMENT LOG ERROR] 4. Supabase due_payment_transactions error:', txCountErr);
+      console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: FALSE');
+      throw txCountErr;
     }
-    txRecord = txData[0];
-  }
-
-  // 5. Update or insert into payments table
-  const paymentPayload = {
-    reservation_id: reservationId,
-    total_amount: currentTotalAmount,
-    advance_paid: newAdvancePaid,
-    amount_collected: newAmountCollected,
-    collected_amount: newAmountCollected,
-    remaining_balance: newRemainingBalance,
-    payment_status: newPaymentStatus,
-    balance_due_wallet: isBalanceDue,
-    transfer_to_irshad: transferToIrshad,
-    transferred_to_irshad: transferredToIrshad,
-    remarks: finalRemarks,
-  };
-
-  let paymentRecord = null;
-  if (existing) {
-    logQuery('payments', 'UPDATE', `id = ${existing.id}`, paymentPayload);
-    const { data: updatedPay, error: payErr } = await supabase
-      .from('payments')
-      .update(paymentPayload)
-      .eq('id', existing.id)
-      .select();
-
-    logResponse(updatedPay, payErr);
-    if (payErr) {
-      console.error('Failed to update payments table:', payErr);
-      throw payErr;
-    }
-    if (!updatedPay || updatedPay.length !== 1) {
-      throw new Error(`UPDATE on payments table failed: returned row count ${updatedPay ? updatedPay.length : 0}, expected 1.`);
-    }
-    paymentRecord = updatedPay[0];
+    console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: TRUE');
   } else {
-    logQuery('payments', 'INSERT', 'N/A', paymentPayload);
-    const { data: insertedPay, error: payErr } = await supabase
-      .from('payments')
-      .insert(paymentPayload)
-      .select();
-
-    logResponse(insertedPay, payErr);
-    if (payErr) {
-      console.error('Failed to insert payments table:', payErr);
-      throw payErr;
-    }
-    if (!insertedPay || insertedPay.length !== 1) {
-      throw new Error(`INSERT into payments table failed: returned row count ${insertedPay ? insertedPay.length : 0}, expected 1.`);
-    }
-    paymentRecord = insertedPay[0];
-
-    // If transaction was created prior to payment insertion, link payment_id on transaction
-    if (txRecord && txRecord.id && paymentRecord.id) {
-      await supabase
-        .from('due_payment_transactions')
-        .update({ payment_id: paymentRecord.id })
-        .eq('id', txRecord.id);
-    }
+    console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: N/A (no new money collected in this transaction)');
   }
 
-  // 6. Keep reservations table total_amount, advance_paid, payment_status in sync
-  logQuery('reservations', 'UPDATE', `id = ${reservationId}`, {
-    total_amount: currentTotalAmount,
-    advance_paid: newAdvancePaid,
-    payment_status: newPaymentStatus,
-  });
-  const { data: resUpdated, error: resErr } = await supabase
-    .from('reservations')
-    .update({
-      total_amount: currentTotalAmount,
-      advance_paid: newAdvancePaid,
-      payment_status: newPaymentStatus,
-    })
-    .eq('id', reservationId)
-    .select();
-
-  if (resErr) {
-    console.error('Failed to update reservations table:', resErr);
-  }
-
+  // DO NOT UPDATE RESERVATIONS TABLE WITH PAYMENT FIELDS!
   return paymentRecord;
 }
+

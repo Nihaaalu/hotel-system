@@ -131,25 +131,19 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         parsedPayments = payRes.data.map((p: any) => {
           const resId = String(p.reservation_id || p.booking_id || '');
           const totAmt = Number(p.total_amount || 0);
-          const advPaid = Number(p.advance_paid ?? p.amount ?? 0);
+          const collAmt = Number(p.amount_collected ?? p.advance_paid ?? p.amount ?? 0);
           const pStatus: 'paid' | 'pending' =
             p.payment_status === 'paid' || p.status === 'paid'
               ? 'paid'
-              : advPaid >= totAmt && totAmt > 0
+              : collAmt >= totAmt && totAmt > 0
               ? 'paid'
               : 'pending';
 
           if (resId) {
-            const existing = paymentByResId.get(resId) || {
-              totalAmount: 0,
-              advancePaid: 0,
-              paymentStatus: 'pending',
-            };
-
             paymentByResId.set(resId, {
-              totalAmount: totAmt > 0 ? totAmt : existing.totalAmount,
-              advancePaid: existing.advancePaid + advPaid,
-              paymentStatus: pStatus === 'paid' || existing.paymentStatus === 'paid' ? 'paid' : 'pending',
+              totalAmount: totAmt,
+              advancePaid: collAmt,
+              paymentStatus: pStatus,
             });
           }
 
@@ -157,9 +151,9 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             id: String(p.id ?? p.payment_id ?? ''),
             bookingId: resId,
             reservationId: resId,
-            amount: advPaid,
+            amount: collAmt,
             totalAmount: totAmt,
-            advancePaid: advPaid,
+            advancePaid: collAmt,
             amountCollected: p.amount_collected !== undefined && p.amount_collected !== null ? Number(p.amount_collected) : undefined,
             transferredToIrshad: p.transferred_to_irshad !== undefined && p.transferred_to_irshad !== null ? Number(p.transferred_to_irshad) : undefined,
             transferToIrshad: Boolean(p.transfer_to_irshad),

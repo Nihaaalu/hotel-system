@@ -53,6 +53,24 @@ const MONTH_NAMES = [
   'December',
 ];
 
+function getPreviousMonths(startMonth: string, targetMonth: string): string[] {
+  if (!startMonth || !targetMonth || startMonth >= targetMonth) return [];
+  const months: string[] = [];
+  let [currY, currM] = startMonth.split('-').map(Number);
+  const [targetY, targetM] = targetMonth.split('-').map(Number);
+
+  while (currY < targetY || (currY === targetY && currM < targetM)) {
+    const mStr = `${currY}-${String(currM).padStart(2, '0')}`;
+    months.push(mStr);
+    currM++;
+    if (currM > 12) {
+      currM = 1;
+      currY++;
+    }
+  }
+  return months;
+}
+
 const formatMonthName = (monthStr: string) => {
   if (!monthStr) return '';
   const [y, m] = monthStr.split('-').map(Number);
@@ -60,7 +78,7 @@ const formatMonthName = (monthStr: string) => {
   return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 };
 
-export default function SalaryRent() {
+export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number }) {
   // Always default to Indian Standard Time (IST) current date and month
   const todayIST = getISTDateStr();
   const currentMonthIST = getISTMonthStr();
@@ -181,6 +199,15 @@ export default function SalaryRent() {
   const [salaryPayRemarksInput, setSalaryPayRemarksInput] = useState('');
   const [salaryPayDateInput, setSalaryPayDateInput] = useState(todayIST);
 
+  // Pay Wallet Modal
+  const [isPayWalletModalOpen, setIsPayWalletModalOpen] = useState(false);
+  const [payWalletTargetEmp, setPayWalletTargetEmp] = useState<SalaryEmployee | null>(null);
+  const [payWalletAmountInput, setPayWalletAmountInput] = useState<number | ''>('');
+  const [payWalletMethodInput, setPayWalletMethodInput] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
+  const [payWalletPaidBy, setPayWalletPaidBy] = useState<'resort' | 'irshad'>('resort');
+  const [payWalletRemarksInput, setPayWalletRemarksInput] = useState('');
+  const [payWalletDateInput, setPayWalletDateInput] = useState(todayIST);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { refreshData } = useHotelData();
@@ -206,18 +233,60 @@ export default function SalaryRent() {
     }
   }, [refreshData]);
 
-  // Fetch employee_wallet_balance matched by employee_id
-  const getEmployeeWalletBalance = useCallback(
-    (empId: string): number => {
-      const matched = walletBalances.find((w) => String(w.employeeId) === String(empId));
-      return matched ? matched.walletBalance : 0;
+  // Compute previous wallet balance (sum of all unpaid salary balances from months starting from employee creation month up to targetM)
+  const getEmployeePreviousWallet = useCallback(
+    (emp: SalaryEmployee, targetM: string): number => {
+      const empStartMonth = emp.effectiveMonth || (emp.createdAt ? emp.createdAt.substring(0, 7) : targetM);
+      if (empStartMonth >= targetM) return 0;
+
+      const prevMonths = getPreviousMonths(empStartMonth, targetM);
+      let totalUnpaid = 0;
+
+      prevMonths.forEach((m) => {
+        const empHist = salaryHistory
+          .filter((h) => h.employeeId === emp.id && h.effectiveMonth <= m)
+          .sort((a, b) => b.effectiveMonth.localeCompare(a.effectiveMonth));
+
+        const baseSalary = empHist.length > 0 ? empHist[0].baseSalary : emp.baseSalary;
+
+        const mAdjs = adjustments.filter(
+          (a) => a.employeeId === emp.id && a.month === m
+        );
+        const mBonus = mAdjs
+          .filter((a) => a.type === 'bonus')
+          .reduce((sum, a) => sum + a.amount, 0);
+        const mCut = mAdjs
+          .filter((a) => a.type === 'cut')
+          .reduce((sum, a) => sum + a.amount, 0);
+
+        const mPays = salaryPayments.filter(
+          (p) => p.employeeId === emp.id && p.month === m
+        );
+        const mPaid = mPays.reduce((sum, p) => sum + p.amount, 0);
+
+        const monthPayable = baseSalary + mBonus - mCut;
+        const monthUnpaid = Math.max(0, monthPayable - mPaid);
+
+        totalUnpaid += monthUnpaid;
+      });
+
+      return totalUnpaid;
     },
-    [walletBalances]
+    [salaryHistory, adjustments, salaryPayments]
+  );
+
+  const getEmployeeWalletBalance = useCallback(
+    (empId: string, targetM: string = selectedMonth): number => {
+      const emp = employees.find((e) => e.id === empId);
+      if (!emp) return 0;
+      return getEmployeePreviousWallet(emp, targetM);
+    },
+    [employees, selectedMonth, getEmployeePreviousWallet]
   );
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData, refreshTrigger]);
 
   // --- RENT CALCULATIONS FOR SELECTED MONTH ---
   const getRentDataForMonth = useCallback(
@@ -270,13 +339,15 @@ export default function SalaryRent() {
       );
       const paidThisMonth = monthPays.reduce((sum, p) => sum + p.amount, 0);
 
+      const previousWallet = getEmployeePreviousWallet(emp, targetM);
+
       // Shared payroll formula calculation
       const payroll = calculatePayroll({
         monthlySalary: baseSalary,
         bonus: totalBonus,
         salaryCut: totalCut,
         payments: paidThisMonth,
-        previousWallet: 0,
+        previousWallet: previousWallet,
       });
 
       return {
@@ -284,14 +355,16 @@ export default function SalaryRent() {
         totalBonus: payroll.bonus,
         totalCut: payroll.salaryCut,
         totalDueThisMonth: payroll.finalSalary,
+        previousWallet: payroll.previousWallet,
+        totalPayable: payroll.totalPayable,
         paidThisMonth: payroll.payments,
-        remainingBalance: Math.max(0, payroll.finalSalary - payroll.payments),
+        remainingBalance: payroll.remainingBalance,
         inventoryExpense: payroll.inventoryExpense,
         monthPays,
         monthAdjs,
       };
     },
-    [salaryHistory, adjustments, salaryPayments]
+    [salaryHistory, adjustments, salaryPayments, getEmployeePreviousWallet]
   );
 
   // Aggregate Salary Totals
@@ -310,7 +383,7 @@ export default function SalaryRent() {
       totalBase += calc.baseSalary;
       totalBonus += calc.totalBonus;
       totalCut += calc.totalCut;
-      totalDue += calc.totalDueThisMonth;
+      totalDue += calc.totalPayable;
       totalPaid += calc.paidThisMonth;
       totalOutstanding += calc.remainingBalance;
     });
@@ -393,7 +466,20 @@ export default function SalaryRent() {
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!empNameInput.trim() || !empSalaryInput || Number(empSalaryInput) <= 0) return;
+    console.log("[EMPLOYEE] Save button clicked");
+    console.log("[EMPLOYEE] Name:", empNameInput);
+    console.log("[EMPLOYEE] Salary:", empSalaryInput);
+
+    if (!empNameInput.trim()) {
+      console.log("[EMPLOYEE] Validation blocked execution: Name is empty");
+      return;
+    }
+
+    if (!empSalaryInput || Number(empSalaryInput) <= 0) {
+      console.log("[EMPLOYEE] Validation blocked execution: Salary must be greater than 0");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await SalaryRentService.addEmployee(
@@ -409,6 +495,7 @@ export default function SalaryRent() {
       setEmpSalaryInput('');
       showToast('✓ Employee added successfully');
     } catch (err: any) {
+      console.error("[EMPLOYEE] Error in handleAddEmployee:", err);
       alert(err.message || 'Failed to add employee');
     } finally {
       setIsSubmitting(false);
@@ -518,6 +605,91 @@ export default function SalaryRent() {
       showToast('✓ Salary payment recorded');
     } catch (err: any) {
       alert(err.message || 'Failed to record salary payment');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handlePayWalletSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payWalletTargetEmp) return;
+    const amt = Number(payWalletAmountInput);
+    if (isNaN(amt) || amt <= 0) {
+      showToast('Please enter a valid positive payment amount');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const emp = payWalletTargetEmp;
+      const empStartMonth = emp.effectiveMonth || (emp.createdAt ? emp.createdAt.substring(0, 7) : selectedMonth);
+      const prevMonths = getPreviousMonths(empStartMonth, selectedMonth);
+
+      let remainingToPay = amt;
+
+      for (const m of prevMonths) {
+        if (remainingToPay <= 0) break;
+
+        const empHist = salaryHistory
+          .filter((h) => h.employeeId === emp.id && h.effectiveMonth <= m)
+          .sort((a, b) => b.effectiveMonth.localeCompare(a.effectiveMonth));
+
+        const baseSalary = empHist.length > 0 ? empHist[0].baseSalary : emp.baseSalary;
+
+        const mAdjs = adjustments.filter(
+          (a) => a.employeeId === emp.id && a.month === m
+        );
+        const mBonus = mAdjs
+          .filter((a) => a.type === 'bonus')
+          .reduce((sum, a) => sum + a.amount, 0);
+        const mCut = mAdjs
+          .filter((a) => a.type === 'cut')
+          .reduce((sum, a) => sum + a.amount, 0);
+
+        const mPays = salaryPayments.filter(
+          (p) => p.employeeId === emp.id && p.month === m
+        );
+        const mPaid = mPays.reduce((sum, p) => sum + p.amount, 0);
+
+        const monthPayable = baseSalary + mBonus - mCut;
+        const monthUnpaid = Math.max(0, monthPayable - mPaid);
+
+        if (monthUnpaid > 0) {
+          const payForThisMonth = Math.min(remainingToPay, monthUnpaid);
+          await SalaryRentService.addSalaryPayment(
+            emp.id,
+            m,
+            payForThisMonth,
+            payWalletMethodInput,
+            payWalletRemarksInput ? `Wallet Payment (${m}): ${payWalletRemarksInput}` : `Wallet Payment (${m})`,
+            payWalletDateInput || todayIST,
+            payWalletPaidBy
+          );
+          remainingToPay -= payForThisMonth;
+        }
+      }
+
+      if (remainingToPay > 0 && prevMonths.length > 0) {
+        const lastPrevMonth = prevMonths[prevMonths.length - 1];
+        await SalaryRentService.addSalaryPayment(
+          emp.id,
+          lastPrevMonth,
+          remainingToPay,
+          payWalletMethodInput,
+          payWalletRemarksInput ? `Wallet Payment (${lastPrevMonth}): ${payWalletRemarksInput}` : `Wallet Payment (${lastPrevMonth})`,
+          payWalletDateInput || todayIST,
+          payWalletPaidBy
+        );
+      }
+
+      showToast(`✓ Wallet payment of ₹${amt.toLocaleString()} recorded`);
+      setIsPayWalletModalOpen(false);
+      setPayWalletTargetEmp(null);
+      setPayWalletAmountInput('');
+      setPayWalletRemarksInput('');
+      await loadData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to record wallet payment');
     } finally {
       setIsSubmitting(false);
     }
@@ -780,82 +952,129 @@ export default function SalaryRent() {
                       </span>
                     </div>
 
-                    {/* Single Clean Breakdown Section (Merged Wallet + Salary) */}
-                    <div className="bg-slate-50/90 border border-slate-200/80 rounded-xl p-3 divide-y divide-slate-200/70 text-xs">
-                      {/* Wallet */}
-                      <div className="flex items-center justify-between pb-2">
-                        <span className="font-bold text-slate-600">Wallet</span>
-                        <span className={`font-extrabold text-sm ${walletBal >= 0 ? 'text-indigo-900' : 'text-rose-600'}`}>
-                          ₹{walletBal.toLocaleString()}
-                        </span>
-                      </div>
+                    {/* Section 1: Current Month Salary */}
+                    {(() => {
+                      const currentPayable = calc.baseSalary + calc.totalBonus - calc.totalCut;
+                      const currentRemaining = Math.max(0, currentPayable - calc.paidThisMonth);
 
-                      {/* Salary */}
-                      <div className="flex items-center justify-between py-2">
-                        <span className="font-bold text-slate-600">Salary</span>
-                        <span className="font-extrabold text-slate-900 text-sm">
-                          ₹{calc.baseSalary.toLocaleString()}
-                        </span>
-                      </div>
+                      return (
+                        <div className="bg-slate-50/90 border border-slate-200/80 rounded-xl p-3 text-xs space-y-2.5">
+                          <div className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider border-b border-slate-200/70 pb-1.5 flex items-center justify-between">
+                            <span>Section 1 • Current Month Salary</span>
+                          </div>
 
-                      {/* Adjustments (if any) */}
-                      {(calc.totalBonus > 0 || calc.totalCut > 0) && (
-                        <div className="flex items-center justify-between py-1.5 text-[11px] font-semibold text-slate-500">
-                          <span>Adjustments</span>
-                          <span>
-                            {calc.totalBonus > 0 && <span className="text-emerald-600">+{calc.totalBonus} Bonus </span>}
-                            {calc.totalCut > 0 && <span className="text-rose-600">-{calc.totalCut} Cut</span>}
-                          </span>
+                          <div className="divide-y divide-slate-200/70">
+                            <div className="flex items-center justify-between pb-2">
+                              <span className="font-bold text-slate-600">Salary</span>
+                              <span className="font-extrabold text-slate-900 text-sm">
+                                ₹{calc.baseSalary.toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between py-2">
+                              <span className="font-bold text-slate-600">Bonus</span>
+                              <span className="font-extrabold text-emerald-700 text-sm">
+                                ₹{calc.totalBonus.toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between py-2">
+                              <span className="font-bold text-slate-600">Salary Cut</span>
+                              <span className="font-extrabold text-rose-600 text-sm">
+                                ₹{calc.totalCut.toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between py-2 font-bold text-slate-800">
+                              <span>Total Payable</span>
+                              <span className="font-black text-indigo-950 text-sm">
+                                ₹{currentPayable.toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between py-2">
+                              <span className="font-bold text-slate-600">Paid This Month</span>
+                              <span className="font-extrabold text-emerald-700 text-sm">
+                                ₹{calc.paidThisMonth.toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-2">
+                              <span className="font-extrabold text-slate-800">Remaining</span>
+                              <span className={`font-black text-base ${
+                                currentRemaining === 0 ? 'text-emerald-600' : 'text-rose-600'
+                              }`}>
+                                ₹{currentRemaining.toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Section 1 Buttons: Pay & More Options */}
+                          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/70">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPayTargetEmp(emp);
+                                setSelectedPayEmpId(emp.id);
+                                setSalaryPayAmountInput(currentRemaining > 0 ? currentRemaining : '');
+                                setSalaryPayRemarksInput('');
+                                setIsSalaryPayModalOpen(true);
+                              }}
+                              className="h-10 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                            >
+                              <CreditCard className="w-4 h-4" />
+                              <span>Pay</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedEmpForMore(emp);
+                                setIsEmpMoreSheetOpen(true);
+                              }}
+                              className="h-10 bg-slate-100 border border-slate-200/90 hover:bg-slate-200 text-slate-800 font-extrabold text-xs rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                            >
+                              <MoreVertical className="w-4 h-4 text-slate-600" />
+                              <span>More Options</span>
+                            </button>
+                          </div>
                         </div>
-                      )}
+                      );
+                    })()}
 
-                      {/* Paid */}
-                      <div className="flex items-center justify-between py-2">
-                        <span className="font-bold text-slate-600">Paid</span>
-                        <span className="font-extrabold text-emerald-700 text-sm">
-                          ₹{calc.paidThisMonth.toLocaleString()}
+                    {/* Section 2: Wallet (Carry Forward) */}
+                    <div className="bg-slate-50/90 border border-slate-200/80 rounded-xl p-3 text-xs space-y-2.5">
+                      <div className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider border-b border-slate-200/70 pb-1.5 flex items-center justify-between">
+                        <span>Section 2 • Wallet (Carry Forward)</span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1">
+                        <span className="font-bold text-slate-600">Wallet Balance</span>
+                        <span className={`font-black text-sm ${calc.previousWallet > 0 ? 'text-indigo-900' : 'text-slate-500'}`}>
+                          ₹{calc.previousWallet.toLocaleString()}
                         </span>
                       </div>
 
-                      {/* Remaining */}
-                      <div className="flex items-center justify-between pt-2">
-                        <span className="font-extrabold text-slate-800">Remaining</span>
-                        <span className={`font-black text-base ${
-                          calc.remainingBalance === 0 ? 'text-emerald-600' : 'text-rose-600'
-                        }`}>
-                          ₹{calc.remainingBalance.toLocaleString()}
-                        </span>
+                      <div className="pt-2 border-t border-slate-200/70">
+                        <button
+                          type="button"
+                          disabled={calc.previousWallet <= 0}
+                          onClick={() => {
+                            setPayWalletTargetEmp(emp);
+                            setPayWalletAmountInput(calc.previousWallet > 0 ? calc.previousWallet : '');
+                            setPayWalletRemarksInput('');
+                            setIsPayWalletModalOpen(true);
+                          }}
+                          className={`w-full h-10 font-extrabold text-xs rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 ${
+                            calc.previousWallet > 0
+                              ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs'
+                              : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                          }`}
+                        >
+                          <Wallet className="w-4 h-4" />
+                          <span>Pay Wallet</span>
+                        </button>
                       </div>
-                    </div>
-
-                    {/* Compact Action Buttons: Pay & More */}
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPayTargetEmp(emp);
-                          setSelectedPayEmpId(emp.id);
-                          setSalaryPayAmountInput(calc.remainingBalance > 0 ? calc.remainingBalance : '');
-                          setSalaryPayRemarksInput('');
-                          setIsSalaryPayModalOpen(true);
-                        }}
-                        className="h-10 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
-                      >
-                        <CreditCard className="w-4 h-4" />
-                        <span>Pay</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedEmpForMore(emp);
-                          setIsEmpMoreSheetOpen(true);
-                        }}
-                        className="h-10 bg-slate-100 border border-slate-200/90 hover:bg-slate-200 text-slate-800 font-extrabold text-xs rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
-                      >
-                        <MoreVertical className="w-4 h-4 text-slate-600" />
-                        <span>More Options</span>
-                      </button>
                     </div>
                   </div>
                 );
@@ -1227,22 +1446,6 @@ export default function SalaryRent() {
               >
                 <PlusCircle className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Bonus / Salary Cut</span>
-              </button>
-
-              {/* Wallet Adjustment */}
-              <button
-                type="button"
-                onClick={() => {
-                  setManualAdjTargetEmp(selectedEmpForMore);
-                  setManualAdjAmountInput('');
-                  setManualAdjRemarksInput('');
-                  setIsEmpMoreSheetOpen(false);
-                  setIsManualAdjModalOpen(true);
-                }}
-                className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 font-bold text-slate-800 flex items-center gap-2.5 transition cursor-pointer"
-              >
-                <SlidersHorizontal className="w-4 h-4 text-purple-600 shrink-0" />
-                <span>Wallet Balance Adjustment</span>
               </button>
 
               {/* View History */}
@@ -1845,82 +2048,6 @@ export default function SalaryRent() {
         </div>
       )}
 
-      {/* 9. MANUAL WALLET ADJUSTMENT MODAL */}
-      {isManualAdjModalOpen && manualAdjTargetEmp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-sm my-auto overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
-              <h3 className="font-black text-xs text-slate-900 uppercase">
-                Wallet Adjustment • {manualAdjTargetEmp.name}
-              </h3>
-              <button type="button" onClick={() => setIsManualAdjModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleManualAdjustment} className="p-4 space-y-3.5 text-xs">
-              <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-between">
-                <span className="text-[11px] font-bold text-indigo-900">Current Wallet Balance:</span>
-                <span className="font-black text-sm text-indigo-950">
-                  ₹{getEmployeeWalletBalance(manualAdjTargetEmp.id).toLocaleString()}
-                </span>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Adjustment Amount (₹) *</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  required
-                  value={manualAdjAmountInput === '' ? '' : manualAdjAmountInput}
-                  onChange={(e) => {
-                    const raw = e.target.value.replace(/[^0-9-]/g, '');
-                    if (raw === '' || raw === '-') {
-                      setManualAdjAmountInput(raw as any);
-                    } else {
-                      const num = Number(raw);
-                      setManualAdjAmountInput(isNaN(num) ? '' : num);
-                    }
-                  }}
-                  placeholder="Enter amount (e.g. 500 or -500)"
-                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Positive adds to wallet balance, negative reduces it.</p>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Remarks / Reason *</label>
-                <input
-                  type="text"
-                  required
-                  value={manualAdjRemarksInput}
-                  onChange={(e) => setManualAdjRemarksInput(e.target.value)}
-                  placeholder="e.g. Opening balance adjustment"
-                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsManualAdjModalOpen(false)}
-                  className="flex-1 py-2.5 border border-slate-200 font-bold text-slate-700 rounded-xl hover:bg-slate-50 cursor-pointer min-h-[42px]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl shadow-2xs cursor-pointer min-h-[42px]"
-                >
-                  {isSubmitting ? 'Saving...' : 'Record Adjustment'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* 10. INDIVIDUAL EMPLOYEE HISTORY MODAL */}
       {isEmpHistoryModalOpen && historyEmp && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs animate-fade-in overflow-y-auto">
@@ -2029,6 +2156,141 @@ export default function SalaryRent() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 11. PAY WALLET BALANCE MODAL */}
+      {isPayWalletModalOpen && payWalletTargetEmp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-sm my-auto overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+              <div className="flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-amber-600" />
+                <h3 className="font-black text-xs text-slate-900 uppercase">
+                  Pay Wallet Balance • {payWalletTargetEmp.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPayWalletModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handlePayWalletSubmit} className="p-4 space-y-3.5 text-xs">
+              <div className="p-2.5 bg-amber-50 border border-amber-200/80 rounded-xl flex items-center justify-between">
+                <span className="text-[11px] font-bold text-amber-900">Wallet Balance (Carry Forward):</span>
+                <span className="font-black text-sm text-amber-950">
+                  ₹{getEmployeeWalletBalance(payWalletTargetEmp.id).toLocaleString()}
+                </span>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Payment Amount (₹) *</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  required
+                  value={payWalletAmountInput === '' ? '' : payWalletAmountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setPayWalletAmountInput('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setPayWalletAmountInput(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter payment amount"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 min-h-[44px]"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Payment Method</label>
+                <select
+                  value={payWalletMethodInput}
+                  onChange={(e) => setPayWalletMethodInput(e.target.value as any)}
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 min-h-[44px]"
+                >
+                  <option value="cash">Cash</option>
+                  <option value="upi">UPI / GPay</option>
+                  <option value="net_banking">Bank Transfer</option>
+                  <option value="card">Card</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Paid By</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPayWalletPaidBy('resort')}
+                    className={`py-2 rounded-xl font-bold border transition cursor-pointer ${
+                      payWalletPaidBy === 'resort'
+                        ? 'bg-amber-600 text-white border-amber-600 font-black'
+                        : 'bg-slate-50 text-slate-700 border-slate-200'
+                    }`}
+                  >
+                    Resort Account
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPayWalletPaidBy('irshad')}
+                    className={`py-2 rounded-xl font-bold border transition cursor-pointer ${
+                      payWalletPaidBy === 'irshad'
+                        ? 'bg-purple-600 text-white border-purple-600 font-black'
+                        : 'bg-slate-50 text-slate-700 border-slate-200'
+                    }`}
+                  >
+                    Irshad Personal
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Payment Date</label>
+                <input
+                  type="date"
+                  required
+                  value={payWalletDateInput}
+                  onChange={(e) => setPayWalletDateInput(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 min-h-[44px]"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">Remarks / Notes</label>
+                <input
+                  type="text"
+                  value={payWalletRemarksInput}
+                  onChange={(e) => setPayWalletRemarksInput(e.target.value)}
+                  placeholder="e.g. Previous month wallet settlement"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 min-h-[44px]"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPayWalletModalOpen(false)}
+                  className="flex-1 py-2.5 border border-slate-200 font-bold text-slate-700 rounded-xl hover:bg-slate-50 cursor-pointer min-h-[42px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl shadow-2xs cursor-pointer min-h-[42px]"
+                >
+                  {isSubmitting ? 'Processing...' : 'Record Wallet Payment'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

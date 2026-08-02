@@ -54,14 +54,15 @@ export default function Dashboard({
     const staying = todayActiveBookings.filter((b) => b.status === 'checked-in');
 
     // Financial calculations grouped by unique reservation
-    const uniqueTodayResMap = new Map<string, { totalAmount: number; advancePaid: number; paymentStatus: string; status: string }>();
+    const uniqueTodayResMap = new Map<string, { resId: string; totalAmount: number; advancePaid: number; paymentStatus: string; status: string }>();
     todayActiveBookings.forEach((b) => {
       const groupId = b.bookingGroupId || b.id;
       if (!uniqueTodayResMap.has(groupId)) {
         uniqueTodayResMap.set(groupId, {
+          resId: groupId,
           totalAmount: Number(b.totalAmount || 0),
           advancePaid: Number(b.advancePaid || 0),
-          paymentStatus: b.paymentStatus,
+          paymentStatus: b.paymentStatus || 'pending',
           status: b.status,
         });
       } else {
@@ -76,14 +77,20 @@ export default function Dashboard({
     let balanceSum = 0;
 
     uniqueTodayResMap.forEach((res) => {
-      totalAmountSum += res.totalAmount;
-      advancePaidSum += res.advancePaid;
+      const resId = res.resId;
+      const pay = payments.find((p) => String(p.reservationId || p.bookingId) === resId);
 
-      // When Guest is Checked In or payment_status === 'paid', remaining balance is 0
-      if (res.status === 'checked-in' || res.status === 'checked-out' || res.paymentStatus === 'paid') {
-        balanceSum += 0;
+      const totAmt = pay?.totalAmount !== undefined ? pay.totalAmount : res.totalAmount;
+      const advPaid = pay?.amountCollected !== undefined ? pay.amountCollected : (pay?.advancePaid !== undefined ? pay.advancePaid : res.advancePaid);
+      const remBal = pay?.remainingBalance !== undefined ? pay.remainingBalance : Math.max(0, totAmt - advPaid);
+
+      totalAmountSum += totAmt;
+      advancePaidSum += advPaid;
+
+      if (pay?.paymentStatus === 'paid' || pay?.balanceDueWallet === false) {
+        balanceSum += remBal;
       } else {
-        balanceSum += Math.max(0, res.totalAmount - res.advancePaid);
+        balanceSum += remBal;
       }
     });
 

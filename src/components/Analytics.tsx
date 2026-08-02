@@ -5,7 +5,7 @@ import { SalaryRentService } from '../services/salaryRent';
 import { IrshadWalletService } from '../services/irshadWallet';
 import { DuesService } from '../services/dues';
 import { getISTDateStr, getISTMonthStr } from '../utils/formatters';
-import { SalaryPayment, RentPayment } from '../types';
+import { SalaryPayment, RentPayment, IrshadWalletSummary, IrshadWalletNetSummary } from '../types';
 import {
   DollarSign,
   TrendingUp,
@@ -227,7 +227,7 @@ const DailyChartTooltip = React.memo(({ active, payload, metrics, chartType }: a
   );
 });
 
-export default function Analytics() {
+export default function Analytics({ refreshTrigger }: { refreshTrigger?: number }) {
   const { bookings, expenses, payments, dueTransactions, isLoading } = useHotelData();
 
   const currentISTDateStr = useMemo(() => getISTDateStr(), []);
@@ -239,6 +239,12 @@ export default function Analytics() {
 
   const [allSalaryPayments, setAllSalaryPayments] = useState<SalaryPayment[]>([]);
   const [allRentPayments, setAllRentPayments] = useState<RentPayment[]>([]);
+  const [walletNetSummary, setWalletNetSummary] = useState<IrshadWalletNetSummary>({
+    bookingTransferred: 0,
+    expenseByIrshad: 0,
+    settlementPaid: 0,
+    walletNet: 0,
+  });
   const [irshadWalletBalance, setIrshadWalletBalance] = useState<number>(0);
   const [outstandingDuesBalance, setOutstandingDuesBalance] = useState<number>(0);
 
@@ -268,9 +274,10 @@ export default function Analytics() {
     }
     async function loadIrshadWallet() {
       try {
-        const summary = await IrshadWalletService.getWalletSummary();
-        const netBal = (summary.expense_by_irshad + summary.bookings_with_irshad) - (summary.resort_paid - summary.irshad_paid);
-        setIrshadWalletBalance(netBal);
+        const netSummary = await IrshadWalletService.getIrshadWalletNetSummary();
+        setWalletNetSummary(netSummary);
+        setIrshadWalletBalance(netSummary.walletNet);
+        console.log("Analytics Summary", netSummary);
       } catch (err) {
         console.error('Error fetching Irshad wallet summary', err);
       }
@@ -358,7 +365,7 @@ export default function Analytics() {
   }, [bookings]);
 
   // 2. Calculate Metrics for Selected Month
-  // Revenue = SUM(payments.amount_collected) + SUM(due_payment_transactions.amount)
+  // Revenue = SUM(payments.amount_collected) for selected month
   // ONLY money actually collected counts as Revenue!
   const metrics = useMemo(() => {
     let monthRev = 0;
@@ -379,15 +386,6 @@ export default function Analytics() {
           monthRev += amt;
         }
       });
-    }
-
-    if (dueTransactions && dueTransactions.length > 0) {
-      dueTransactions.forEach((dt) => {
-        const dtDate = (dt.created_at || '').split('T')[0];
-        if (dtDate.startsWith(selectedMonth)) {
-          monthRev += Number(dt.amount || 0);
-        }
-      });
     } else {
       // Fallback
       uniqueBookingsMap.forEach((b) => {
@@ -398,7 +396,7 @@ export default function Analytics() {
       });
     }
 
-    let monthInventoryExp = 0;
+    let monthInventoryExpTotal = 0;
     let monthSalaryInExp = 0;
     let monthRentInExp = 0;
 
@@ -407,7 +405,7 @@ export default function Analytics() {
       if (e.expenseDate && e.expenseDate.startsWith(selectedMonth)) {
         if (e.category === 'Salary') monthSalaryInExp += amt;
         else if (e.category === 'Rent') monthRentInExp += amt;
-        else monthInventoryExp += amt;
+        else monthInventoryExpTotal += amt;
       }
     });
 
@@ -422,19 +420,15 @@ export default function Analytics() {
     const effectiveSalaryMonthExp = monthSalaryInExp > 0 ? monthSalaryInExp : salaryPaidThisMonth;
     const effectiveRentMonthExp = monthRentInExp > 0 ? monthRentInExp : rentPaidThisMonth;
 
-    const totalMonthAllExp = monthInventoryExp + effectiveSalaryMonthExp + effectiveRentMonthExp;
-
-    // Outstanding Dues = SUM(payments.remaining_balance) WHERE balance_due_wallet = true AND remaining_balance > 0 AND payment_status = 'pending'
-    const outstandingBalance = outstandingDuesBalance;
-
-    // Net Profit = Collected Revenue - Inventory - Salary - Rent
+    // Step 1: Calculate Business Profit = Revenue - Inventory - Salary - Rent
+    const totalMonthAllExp = monthInventoryExpTotal + effectiveSalaryMonthExp + effectiveRentMonthExp;
     const netIncome = monthRev - totalMonthAllExp;
 
     return {
       monthRevenue: monthRev,
       advanceReceived: monthAdv,
-      outstandingBalance,
-      monthInventoryExp,
+      outstandingBalance: outstandingDuesBalance,
+      monthInventoryExp: monthInventoryExpTotal,
       monthSalaryExp: effectiveSalaryMonthExp,
       monthRentExp: effectiveRentMonthExp,
       totalMonthAllExp,
@@ -667,28 +661,14 @@ export default function Analytics() {
         return pDate === dateKey;
       });
 
-      let dayCollected = 0;
-      if (dayPayments.length > 0) {
-        dayPayments.forEach((p) => {
-          dayCollected += Number(
-            p.amountCollected !== undefined
-              ? p.amountCollected
-              : p.amount !== undefined
-              ? p.amount
-              : p.advancePaid || 0
-          );
-        });
-      } else {
-        dayBookings.forEach((b) => {
-          dayCollected += Number(b.advancePaid || 0);
-        });
-      }
-
-      let dayDue = 0;
+      // Group day bookings by reservation
+      const resGroupMap = new Map<string, typeof dayBookings>();
       dayBookings.forEach((b) => {
-        if (b.balanceDueWallet || (b.remainingBalance && b.remainingBalance > 0)) {
-          dayDue += Number(b.remainingBalance || 0);
+        const key = b.bookingGroupId || b.id;
+        if (!resGroupMap.has(key)) {
+          resGroupMap.set(key, []);
         }
+        resGroupMap.get(key)!.push(b);
       });
 
       const items: Array<{
@@ -703,31 +683,51 @@ export default function Analytics() {
         status: string;
       }> = [];
 
-      const processedIds = new Set<string>();
+      const processedResIds = new Set<string>();
 
-      dayBookings.forEach((b) => {
-        processedIds.add(b.id);
-        const isIrshad = Boolean(b.transferToIrshad || b.transferredToIrshad);
-        const isDueWallet = Boolean(b.balanceDueWallet || (b.remainingBalance && b.remainingBalance > 0));
-        const collected = Number(b.advancePaid || b.amountCollected || 0);
-        const remaining = Number(b.remainingBalance || 0);
+      resGroupMap.forEach((group, resId) => {
+        processedResIds.add(resId);
+        const primary = group[0];
+        const roomNumbersStr = group
+          .map((b) => b.roomNumber)
+          .filter(Boolean)
+          .sort((a, b) => Number(a) - Number(b))
+          .join(', ');
+
+        const p = payments.find((pay) => String(pay.reservationId || pay.bookingId) === resId);
+
+        const collected = p
+          ? Number(
+              p.amountCollected !== undefined
+                ? p.amountCollected
+                : p.amount !== undefined
+                ? p.amount
+                : p.advancePaid || 0
+            )
+          : Number(primary.advancePaid || 0);
+
+        const remaining = p ? Number(p.remainingBalance || 0) : Number(primary.remainingBalance || 0);
+        const isIrshad = p ? Boolean(p.transferToIrshad) : Boolean(primary.transferToIrshad || primary.transferredToIrshad);
+        const isDueWallet = p ? Boolean(p.balanceDueWallet) : Boolean(primary.balanceDueWallet || (remaining > 0));
+        const paymentMethod = p ? p.paymentMethod : (primary.paymentMethod || 'cash');
 
         items.push({
-          id: b.id,
-          customerName: b.guestName || 'Guest',
-          roomNumber: b.roomNumber,
+          id: resId,
+          customerName: primary.guestName || 'Guest',
+          roomNumber: roomNumbersStr || primary.roomNumber,
           collectedAmount: collected,
           remainingDue: remaining,
-          paymentMethod: b.paymentMethod || 'cash',
+          paymentMethod: paymentMethod || 'cash',
           isIrshadWallet: isIrshad,
           isBalanceDueWallet: isDueWallet,
-          status: b.status || 'checked_in',
+          status: primary.status || 'checked_in',
         });
       });
 
       dayPayments.forEach((p) => {
-        if (p.paymentType === 'due_collection' && !processedIds.has(p.id)) {
-          const matchingBooking = bookings.find((b) => b.id === p.reservationId || b.id === p.bookingId);
+        const pResId = String(p.reservationId || p.bookingId || p.id);
+        if (p.paymentType === 'due_collection' && !processedResIds.has(pResId)) {
+          const matchingBooking = bookings.find((b) => b.id === pResId || b.bookingGroupId === pResId);
           items.push({
             id: p.id,
             customerName: matchingBooking ? matchingBooking.guestName : 'Due Collection',
@@ -741,6 +741,9 @@ export default function Analytics() {
           });
         }
       });
+
+      const dayCollected = items.reduce((sum, item) => sum + item.collectedAmount, 0);
+      const dayDue = items.reduce((sum, item) => sum + item.remainingDue, 0);
 
       list.push({
         dayNum: day,
@@ -939,16 +942,16 @@ export default function Analytics() {
         {/* Row 4: Month Net Profit (Full Width - Most Prominent Card with Partner Split) */}
         <div className="p-4 sm:p-5 bg-slate-900 text-white rounded-2xl shadow-xl border border-slate-800 space-y-4">
           {/* Main Net Profit Header */}
-          <div className="flex items-center justify-between text-slate-300 pb-3 border-b border-slate-800">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between text-slate-300 pb-3 border-b border-slate-800 gap-2">
             <div>
               <span className="text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 text-slate-200">
-                <Receipt className="w-4 h-4 text-emerald-400 shrink-0" /> Month Net Profit
+                <Receipt className="w-4 h-4 text-emerald-400 shrink-0" /> Business Net Profit
               </span>
               <p className="text-[10px] text-slate-400 font-medium">
-                Revenue minus All Operating Expenses ({formatMonthLabel(selectedMonth)})
+                Revenue (₹{metrics.monthRevenue.toLocaleString('en-IN')}) - Operating Expenses (₹{metrics.totalMonthAllExp.toLocaleString('en-IN')}) ({formatMonthLabel(selectedMonth)})
               </p>
             </div>
-            <div className="text-right">
+            <div className="sm:text-right">
               <p className="text-2xl sm:text-3xl font-black font-sans tracking-tight">
                 <AnimatedNumber
                   value={metrics.netIncome}
@@ -961,57 +964,85 @@ export default function Analytics() {
           {/* 50/50 Profit Share Breakdown */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             {/* Ansari Share (50%) */}
-            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/80 flex flex-col justify-between">
+            <div className="p-3.5 bg-slate-800/80 rounded-xl border border-slate-700/80 flex flex-col justify-between space-y-2">
               <div className="flex items-center justify-between text-slate-400 mb-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-300">Ansari Share (50%)</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 bg-indigo-950/60 text-indigo-300 rounded border border-indigo-800/60">Partner</span>
               </div>
-              <p className="text-xl font-extrabold text-white my-1">
-                <AnimatedNumber value={metrics.netIncome * 0.5} className={metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
-              </p>
+              <div>
+                <p className="text-[11px] font-medium text-slate-400 mb-0.5">Profit Share (50%):</p>
+                <p className="text-2xl font-black text-white">
+                  <AnimatedNumber value={metrics.netIncome * 0.5} className={metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
+                </p>
+              </div>
               <p className="text-[10px] text-slate-400">Direct 50% Profit Share</p>
             </div>
 
-            {/* Irshad Share (50%) & Wallet Settlement */}
-            <div className="p-3 bg-purple-950/40 rounded-xl border border-purple-800/60 space-y-2">
-              <div className="flex items-center justify-between text-purple-300">
-                <span className="text-[11px] font-bold uppercase tracking-wider">Irshad Share (50%)</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 bg-purple-900/60 text-purple-200 rounded border border-purple-700/60">Partner</span>
-              </div>
+            {/* Irshad Share (50%) & Settlement */}
+            {(() => {
+              const irshadProfitShare = metrics.netIncome * 0.5;
+              const { bookingTransferred, expenseByIrshad, settlementPaid, walletNet } = walletNetSummary;
 
-              <div className="flex items-baseline justify-between border-b border-purple-800/40 pb-2">
-                <span className="text-xs font-medium text-purple-200">Base Share (50%):</span>
-                <span className="text-lg font-black text-emerald-400">
-                  <AnimatedNumber value={metrics.netIncome * 0.5} />
-                </span>
-              </div>
+              const irshadFinal = irshadProfitShare - walletNet;
 
-              <div className="space-y-1 text-[11px]">
-                <div className="flex items-center justify-between text-slate-300">
-                  <span>Irshad Wallet Balance:</span>
-                  <span className={`font-bold ${irshadWalletBalance >= 0 ? 'text-purple-300' : 'text-rose-300'}`}>
-                    <AnimatedNumber value={irshadWalletBalance} />
-                  </span>
-                </div>
+              return (
+                <div className="p-3.5 bg-purple-950/40 rounded-xl border border-purple-800/60 space-y-2.5">
+                  <div className="flex items-center justify-between text-purple-300">
+                    <span className="text-[11px] font-bold uppercase tracking-wider">Irshad Share &amp; Settlement</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 bg-purple-900/60 text-purple-200 rounded border border-purple-700/60">Partner</span>
+                  </div>
 
-                {(() => {
-                  const irshadShare = metrics.netIncome * 0.5;
-                  const finalAmount = irshadShare + irshadWalletBalance;
-                  const isReceivable = finalAmount >= 0;
-
-                  return (
-                    <div className="pt-2 border-t border-purple-800/60 flex items-center justify-between">
-                      <span className="font-extrabold text-xs text-white">
-                        {isReceivable ? 'Final Irshad Receivable:' : 'Final Irshad Payable:'}
-                      </span>
-                      <span className={`text-base font-black ${isReceivable ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        <AnimatedNumber value={finalAmount} />
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span>Irshad Profit Share:</span>
+                      <span className="font-extrabold text-emerald-400">
+                        <AnimatedNumber value={irshadProfitShare} />
                       </span>
                     </div>
-                  );
-                })()}
-              </div>
-            </div>
+
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span>Booking Dues:</span>
+                      <span className="font-extrabold text-rose-400">
+                        -₹{bookingTransferred.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span>Expense Credit:</span>
+                      <span className="font-extrabold text-emerald-400">
+                        +₹{expenseByIrshad.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span>Settlement Paid:</span>
+                      <span className={`font-extrabold ${settlementPaid >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {settlementPaid >= 0 ? `+₹${settlementPaid.toLocaleString('en-IN')}` : `-₹${Math.abs(settlementPaid).toLocaleString('en-IN')}`}
+                      </span>
+                    </div>
+
+                    <div className="pt-2 border-t border-purple-800/60 flex items-center justify-between">
+                      <span className="font-extrabold text-white">Final Settlement:</span>
+                      <span className={`text-base font-black ${irshadFinal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <AnimatedNumber value={irshadFinal} />
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-1">
+                    {irshadFinal < 0 ? (
+                      <div className="p-2 bg-rose-950/80 border border-rose-800/80 rounded-lg text-rose-200 text-[11px] font-bold text-center">
+                        Status: Irshad should pay Resort ₹{Math.abs(irshadFinal).toLocaleString('en-IN')}
+                      </div>
+                    ) : (
+                      <div className="p-2 bg-emerald-950/80 border border-emerald-800/80 rounded-lg text-emerald-200 text-[11px] font-bold text-center">
+                        Status: Irshad receives ₹{irshadFinal.toLocaleString('en-IN')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>

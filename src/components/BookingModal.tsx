@@ -660,18 +660,8 @@ export default function BookingModal({
       });
 
       // 2. Execute check-in for this booking (or group)
-      if (loadedBooking.bookingGroupId && groupBookingsSameGroup.length > 1) {
-        const targetBookings = groupBookingsSameGroup.filter((b) => b.status === 'booked');
-        const toUpdate = targetBookings.map((b) => b.id);
-        if (!toUpdate.includes(loadedBooking.id) && loadedBooking.status === 'booked') {
-          toUpdate.push(loadedBooking.id);
-        }
-        for (const bid of toUpdate) {
-          await BookingService.checkInGuest(bid, loadedBooking.remarks);
-        }
-      } else {
-        await BookingService.checkInGuest(loadedBooking.id, loadedBooking.remarks);
-      }
+      const targetResId = loadedBooking.bookingGroupId || loadedBooking.id;
+      await BookingService.checkInGuest(targetResId, loadedBooking.remarks);
 
       setIsCheckInModalOpen(false);
       await refreshData();
@@ -691,18 +681,8 @@ export default function BookingModal({
 
     try {
       setIsSubmitting(true);
-      if (loadedBooking.bookingGroupId && groupBookingsSameGroup.length > 1) {
-        const targetBookings = groupBookingsSameGroup.filter((b) => b.status === 'checked-in');
-        const toUpdate = targetBookings.map((b) => b.id);
-        if (!toUpdate.includes(loadedBooking.id) && loadedBooking.status === 'checked-in') {
-          toUpdate.push(loadedBooking.id);
-        }
-        for (const bid of toUpdate) {
-          await BookingService.checkoutGuest(bid, loadedBooking.remarks);
-        }
-      } else {
-        await BookingService.checkoutGuest(loadedBooking.id, loadedBooking.remarks);
-      }
+      const targetResId = loadedBooking.bookingGroupId || loadedBooking.id;
+      await BookingService.checkoutGuest(targetResId, loadedBooking.remarks);
       await refreshData();
       onSuccess();
       onClose();

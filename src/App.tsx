@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Menu } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Menu, RefreshCw } from 'lucide-react';
 import Sidebar, { AppTab } from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import BookingCalendar from './components/BookingCalendar';
@@ -11,10 +11,64 @@ import Dues from './components/Dues';
 import Analytics from './components/Analytics';
 import { useHotelData } from './context/HotelContext';
 
+const VALID_TABS: AppTab[] = ['dashboard', 'calendar', 'inventory', 'salary-rent', 'irshad', 'dues', 'analytics'];
+
+function getInitialTab(): AppTab {
+  if (typeof window !== 'undefined') {
+    const hash = window.location.hash.replace('#', '') as AppTab;
+    if (VALID_TABS.includes(hash)) {
+      return hash;
+    }
+    const saved = localStorage.getItem('pms_active_tab') as AppTab;
+    if (saved && VALID_TABS.includes(saved)) {
+      return saved;
+    }
+  }
+  return 'dashboard';
+}
+
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<AppTab>('dashboard');
+  const [currentTab, setCurrentTab] = useState<AppTab>(getInitialTab);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const { refreshData } = useHotelData();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Sync route and localStorage
+  const handleTabChange = (tab: AppTab) => {
+    setCurrentTab(tab);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pms_active_tab', tab);
+      if (window.location.hash !== `#${tab}`) {
+        window.history.pushState(null, '', `#${tab}`);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const hash = window.location.hash.replace('#', '') as AppTab;
+      if (VALID_TABS.includes(hash)) {
+        setCurrentTab(hash);
+        localStorage.setItem('pms_active_tab', hash);
+      }
+    };
+
+    window.addEventListener('hashchange', handleLocationChange);
+    window.addEventListener('popstate', handleLocationChange);
+    return () => {
+      window.removeEventListener('hashchange', handleLocationChange);
+      window.removeEventListener('popstate', handleLocationChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pms_active_tab', currentTab);
+      if (window.location.hash !== `#${currentTab}`) {
+        window.history.replaceState(null, '', `#${currentTab}`);
+      }
+    }
+  }, [currentTab]);
 
   // Modal controllers
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -25,6 +79,18 @@ export default function App() {
   // Trigger state to let children refresh their active datasets
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isAdminMode] = useState(true);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      setRefreshTrigger((prev) => prev + 1);
+      await refreshData();
+    } catch (err) {
+      console.error('Error refreshing page data:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const triggerRefresh = () => {
     setRefreshTrigger((prev) => prev + 1);
@@ -73,7 +139,7 @@ export default function App() {
       {/* 1. Sidebar Panel */}
       <Sidebar
         currentTab={currentTab}
-        onTabChange={setCurrentTab}
+        onTabChange={handleTabChange}
         isMobileDrawerOpen={isMobileDrawerOpen}
         setIsMobileDrawerOpen={setIsMobileDrawerOpen}
       />
@@ -105,10 +171,22 @@ export default function App() {
             </h1>
           </div>
 
-          {/* Right: Operator Badge & Avatar */}
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          {/* Right: Refresh Button & Operator Badge & Avatar */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {/* Refresh Button on Header */}
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed border border-slate-200 shrink-0 shadow-2xs"
+              aria-label="Refresh Page Data"
+              title="Refresh current page data"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-indigo-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+            </button>
+
             {/* Operator info label */}
-            <div className="hidden md:block text-right border-r border-gray-100 pr-4">
+            <div className="hidden md:block text-right border-r border-gray-100 pr-3">
               <span className="text-3xs font-semibold text-gray-400 font-mono uppercase block">Time Shift</span>
               <span className="text-xs font-bold font-mono text-gray-800">{currentLocalTime} • {getShiftName()}</span>
             </div>
@@ -139,7 +217,7 @@ export default function App() {
               <Dashboard
                 onSelectBooking={handleSelectBooking}
                 onSelectCell={handleSelectCell}
-                onNavigateToCalendar={() => setCurrentTab('calendar')}
+                onNavigateToCalendar={() => handleTabChange('calendar')}
                 refreshTrigger={refreshTrigger}
               />
             )}
@@ -153,23 +231,23 @@ export default function App() {
             )}
 
             {currentTab === 'inventory' && (
-              <Inventory />
+              <Inventory refreshTrigger={refreshTrigger} />
             )}
 
             {currentTab === 'salary-rent' && (
-              <SalaryRent />
+              <SalaryRent refreshTrigger={refreshTrigger} />
             )}
 
             {currentTab === 'irshad' && (
-              <Irshad />
+              <Irshad refreshTrigger={refreshTrigger} />
             )}
 
             {currentTab === 'dues' && (
-              <Dues />
+              <Dues refreshTrigger={refreshTrigger} />
             )}
 
             {currentTab === 'analytics' && (
-              <Analytics />
+              <Analytics refreshTrigger={refreshTrigger} />
             )}
             
           </div>

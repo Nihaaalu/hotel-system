@@ -19,7 +19,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 
-export default function Irshad() {
+export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) {
   const [summary, setSummary] = useState<IrshadWalletSummary>({
     expense_by_irshad: 0,
     bookings_with_irshad: 0,
@@ -73,7 +73,7 @@ export default function Irshad() {
 
   useEffect(() => {
     loadAllData();
-  }, [loadAllData]);
+  }, [loadAllData, refreshTrigger]);
 
   // Derived Calculations
   const totalExpenses = useMemo(() => {
@@ -84,21 +84,17 @@ export default function Irshad() {
     return summary.bookings_with_irshad || bookings.reduce((s, b) => s + (b.transferredToIrshad || b.amount || 0), 0);
   }, [summary, bookings]);
 
-  const totalSettlementPaid = useMemo(() => {
-    const resPaid = summary.resort_paid || 0;
-    const irsPaid = summary.irshad_paid || 0;
-    const fromList = settlements.reduce((s, st) => {
-      if (st.transactionType === 'resort_paid_irshad') return s + st.amount;
-      if (st.transactionType === 'irshad_paid_resort') return s - st.amount;
-      return s;
-    }, 0);
-    return (resPaid - irsPaid) || fromList;
-  }, [summary, settlements]);
+  const resortPaid = summary.resort_paid || 0;
+  const irshadPaid = summary.irshad_paid || 0;
 
-  // Net Balance = (Expenses Paid by Irshad + Booking Amounts Transferred to Irshad) - Settlement Paid by Resort
+  // net = booking_due_to_resort - expense_due_to_irshad
+  // booking_due_to_resort = totalBookings - irshadPaid
+  // expense_due_to_irshad = totalExpenses - resortPaid
   const netWalletBalance = useMemo(() => {
-    return (totalExpenses + totalBookings) - totalSettlementPaid;
-  }, [totalExpenses, totalBookings, totalSettlementPaid]);
+    const bookingDueToResort = totalBookings - irshadPaid;
+    const expenseDueToIrshad = totalExpenses - resortPaid;
+    return bookingDueToResort - expenseDueToIrshad;
+  }, [totalBookings, totalExpenses, resortPaid, irshadPaid]);
 
   // Handle Record Settlement Submission
   const handleRecordSettlement = async (e: React.FormEvent) => {
@@ -245,14 +241,14 @@ export default function Irshad() {
         <div className="p-3.5 bg-emerald-50/90 border border-emerald-200/90 rounded-2xl shadow-2xs flex flex-col justify-between min-h-[96px]">
           <div className="flex items-center justify-between text-emerald-900">
             <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" /> Settlement Paid
+              <CheckCircle2 className="w-3 h-3 text-emerald-700 shrink-0" /> Settlement Paid
             </span>
             <span className="text-[9px] font-extrabold bg-emerald-200/80 text-emerald-950 px-2 py-0.5 rounded-md">
               Cleared
             </span>
           </div>
           <p className="text-2xl font-black tracking-tight text-emerald-950 my-1">
-            ₹{Math.abs(totalSettlementPaid).toLocaleString('en-IN')}
+            ₹{Math.abs(resortPaid - irshadPaid).toLocaleString('en-IN')}
           </p>
           <p className="text-[10px] font-semibold text-emerald-800/90 truncate">
             {settlements.length} settlement transaction {settlements.length === 1 ? 'record' : 'records'}
@@ -266,7 +262,7 @@ export default function Irshad() {
               <Wallet className="w-4 h-4 text-purple-400 shrink-0" /> Net Wallet Balance
             </span>
             <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${netWalletBalance > 0 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : netWalletBalance < 0 ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'}`}>
-              {netWalletBalance > 0 ? 'Resort Owes Irshad' : netWalletBalance < 0 ? 'Irshad Owes Resort' : 'Settled'}
+              {netWalletBalance > 0 ? 'Irshad Owes Resort' : netWalletBalance < 0 ? 'Resort Owes Irshad' : 'All Settled'}
             </span>
           </div>
           <p className="text-2xl font-black tracking-tight text-white my-1">
@@ -274,10 +270,10 @@ export default function Irshad() {
           </p>
           <p className="text-[10px] font-medium text-slate-400 truncate">
             {netWalletBalance > 0
-              ? `Resort needs to pay ₹${netWalletBalance.toLocaleString('en-IN')} to Irshad`
+              ? `Irshad should pay Resort: ₹${netWalletBalance.toLocaleString('en-IN')}`
               : netWalletBalance < 0
-              ? `Irshad needs to pay ₹${Math.abs(netWalletBalance).toLocaleString('en-IN')} to Resort`
-              : 'All accounts completely clear'}
+              ? `Resort should pay Irshad: ₹${Math.abs(netWalletBalance).toLocaleString('en-IN')}`
+              : 'All Settled ₹0'}
           </p>
         </div>
       </div>

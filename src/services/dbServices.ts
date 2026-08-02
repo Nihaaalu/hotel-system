@@ -177,7 +177,7 @@ export const PaymentService = {
       return data.map((p: any) => ({
         id: String(p.id ?? p.payment_id ?? ''),
         bookingId: String(p.reservation_id || p.booking_id || bookingId),
-        amount: Number(p.amount || 0),
+        amount: Number(p.amount_collected || p.collected_amount || p.advance_paid || p.amount || 0),
         paymentMethod: (p.payment_method || 'cash') as Payment['paymentMethod'],
         paymentDate: String(p.payment_date || p.created_at || new Date().toISOString()),
         remarks: String(p.remarks || ''),
@@ -217,7 +217,8 @@ export const PaymentService = {
           remarks,
         });
       } catch (err: any) {
-        console.warn('Exception updating payment row in addPayment:', err?.message || err);
+        console.error('Exception updating payment row in addPayment:', err?.message || err);
+        throw err;
       }
     }
 
@@ -242,7 +243,7 @@ export const PaymentService = {
       return data.map((p: any) => ({
         id: String(p.id ?? p.payment_id ?? ''),
         bookingId: String(p.reservation_id || p.booking_id || ''),
-        amount: Number(p.amount || 0),
+        amount: Number(p.amount_collected || p.collected_amount || p.advance_paid || p.amount || 0),
         paymentMethod: (p.payment_method || 'cash') as Payment['paymentMethod'],
         paymentDate: String(p.payment_date || p.created_at || new Date().toISOString()),
         remarks: String(p.remarks || ''),

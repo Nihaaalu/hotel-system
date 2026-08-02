@@ -186,7 +186,7 @@ export type DateFilterOption =
 
 export type StatusFilterOption = 'ALL' | 'with_notes' | 'without_notes';
 
-export default function Inventory() {
+export default function Inventory({ refreshTrigger }: { refreshTrigger?: number }) {
   const { expenses, addExpense, updateExpense, deleteExpense } = useHotelData();
 
   // 1. Single Source of Truth for Date Engine (Default = IST Today e.g., 01/08/2026)
