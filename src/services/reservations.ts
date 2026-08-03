@@ -1,7 +1,9 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Booking, Guest } from '../types';
 import { RoomService } from './rooms';
-import { updatePaymentSummary } from './paymentSummary';
+import { updatePaymentSummary, getCleanReservationId, getCleanRoomRowId } from './paymentSummary';
+import { getISTDateStr } from '../utils/formatters';
+import { parsePaymentMetadata, parseRoomTimeline, getRoomIntervalsFromTimeline } from '../utils/timeline';
 
 function logQuery(table: string, action: string, where: string, payload?: any) {
   console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
@@ -10,20 +12,6 @@ function logQuery(table: string, action: string, where: string, payload?: any) {
 function logResponse(data: any, error: any) {
   console.log(`Returned data:\n${JSON.stringify(data ?? null, null, 2)}`);
   console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
-}
-
-function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advancePaid: number; cleanRemarks: string } {
-  if (!remarksStr) return { totalAmount: 0, advancePaid: 0, cleanRemarks: '' };
-  
-  const match = remarksStr.match(/\[PAYMENT:total=([\d.]+),advance=([\d.]+)\]/);
-  if (match) {
-    const totalAmount = Number(match[1]) || 0;
-    const advancePaid = Number(match[2]) || 0;
-    const cleanRemarks = remarksStr.replace(/\[PAYMENT:total=[\d.]+,advance=[\d.]+\]\s*/, '').trim();
-    return { totalAmount, advancePaid, cleanRemarks };
-  }
-  
-  return { totalAmount: 0, advancePaid: 0, cleanRemarks: remarksStr };
 }
 
 /**
@@ -92,53 +80,86 @@ export const ReservationService = {
       });
 
       if (roomsData && roomsData.length > 0) {
+        const rrByResId = new Map<string, any[]>();
+        (roomsData || []).forEach((rr: any) => {
+          const resIdKey = String(rr.reservation_id);
+          if (!rrByResId.has(resIdKey)) {
+            rrByResId.set(resIdKey, []);
+          }
+          rrByResId.get(resIdKey)!.push(rr);
+        });
+
         const bookings: Booking[] = [];
 
-        for (const rr of roomsData) {
-          const parentRes = resMap.get(String(rr.reservation_id));
-          if (!parentRes) continue; // Skip orphan room reservations if parent doesn't exist
+        for (const [resId, rrList] of rrByResId.entries()) {
+          const parentRes = resMap.get(resId);
+          if (!parentRes) continue;
 
-          const isCancelled = rr.cancelled === true || rr.status === 'Cancelled' || rr.status === 'cancelled' || parentRes.status === 'Cancelled' || parentRes.status === 'cancelled';
-          const rawStatus = isCancelled ? 'Cancelled' : String(rr.status || parentRes.status || 'Booked');
-          const mappedStatus: Booking['status'] =
-            rawStatus === 'Booked' || rawStatus === 'reserved' || rawStatus === 'booked'
-              ? 'booked'
-              : rawStatus === 'Checked In' || rawStatus === 'checked_in' || rawStatus === 'checked-in'
-              ? 'checked-in'
-              : rawStatus === 'Checked Out' || rawStatus === 'checked_out' || rawStatus === 'checked-out'
-              ? 'checked-out'
-              : rawStatus === 'Cancelled' || rawStatus === 'cancelled'
-              ? 'cancelled'
-              : 'booked';
+          const defaultCheckIn = String(parentRes.check_in_date || '').split('T')[0].trim();
+          const defaultCheckOut = String(parentRes.check_out_date || '').split('T')[0].trim();
 
-          const roomNum =
-            roomIdToNumMap.get(rr.room_id) ??
-            roomIdToNumMap.get(String(rr.room_id)) ??
-            Number(rr.room_id || 0);
+          const allocatedRooms: number[] = [];
+          const rrByRoomNum = new Map<number, any>();
 
-          const checkIn = String(parentRes.check_in_date || '');
-          const checkOut = String(parentRes.check_out_date || '');
-          const name = String(parentRes.booking_name || 'Guest');
+          for (const rr of rrList) {
+            const roomNum =
+              roomIdToNumMap.get(rr.room_id) ??
+              roomIdToNumMap.get(String(rr.room_id)) ??
+              Number(rr.room_id || 0);
 
-          const { totalAmount: parsedTotal, advancePaid: parsedAdvance, cleanRemarks } = parsePaymentMetadata(String(parentRes.remarks || rr.remarks || ''));
+            if (roomNum > 0) {
+              allocatedRooms.push(roomNum);
+              rrByRoomNum.set(roomNum, rr);
+            }
+          }
 
-          bookings.push({
-            id: String(rr.id || `${rr.reservation_id}_${roomNum}`),
-            bookingGroupId: String(parentRes.id),
-            guestId: String(parentRes.id),
-            guestName: name,
-            guestPhone: '',
-            guestIdProof: '',
-            roomNumber: roomNum,
-            checkInDate: checkIn,
-            checkOutDate: checkOut,
-            status: mappedStatus,
-            totalAmount: parsedTotal,
-            advancePaid: parsedAdvance,
-            remarks: cleanRemarks,
-            createdAt: String(parentRes.created_at || rr.created_at || new Date().toISOString()),
-            updatedAt: String(parentRes.created_at || rr.created_at || new Date().toISOString()),
-          });
+          const { timeline } = parseRoomTimeline(String(parentRes.remarks || ''));
+          const intervals = getRoomIntervalsFromTimeline(
+            timeline,
+            defaultCheckIn,
+            defaultCheckOut,
+            allocatedRooms
+          );
+
+          const { totalAmount: parsedTotal, advancePaid: parsedAdvance, cleanRemarks } = parsePaymentMetadata(String(parentRes.remarks || ''));
+
+          for (const interval of intervals) {
+            const rr = rrByRoomNum.get(interval.roomNumber);
+            const isCancelled =
+              (rr && (rr.cancelled === true || rr.status === 'Cancelled' || rr.status === 'cancelled')) ||
+              parentRes.status === 'Cancelled' ||
+              parentRes.status === 'cancelled';
+
+            const rawStatus = isCancelled ? 'Cancelled' : String(rr?.status || parentRes.status || 'Booked');
+            const mappedStatus: Booking['status'] =
+              rawStatus === 'Booked' || rawStatus === 'reserved' || rawStatus === 'booked'
+                ? 'booked'
+                : rawStatus === 'Checked In' || rawStatus === 'checked_in' || rawStatus === 'checked-in'
+                ? 'checked-in'
+                : rawStatus === 'Checked Out' || rawStatus === 'checked_out' || rawStatus === 'checked-out'
+                ? 'checked-out'
+                : rawStatus === 'Cancelled' || rawStatus === 'cancelled'
+                ? 'cancelled'
+                : 'booked';
+
+            bookings.push({
+              id: String(rr?.id ? `${rr.id}_${interval.startDate}` : `${parentRes.id}_${interval.roomNumber}_${interval.startDate}`),
+              bookingGroupId: String(parentRes.id),
+              guestId: String(parentRes.id),
+              guestName: String(parentRes.booking_name || 'Guest'),
+              guestPhone: '',
+              guestIdProof: '',
+              roomNumber: interval.roomNumber,
+              checkInDate: interval.startDate,
+              checkOutDate: interval.endDate,
+              status: mappedStatus,
+              totalAmount: parsedTotal,
+              advancePaid: parsedAdvance,
+              remarks: cleanRemarks,
+              createdAt: String(rr?.created_at || parentRes.created_at || new Date().toISOString()),
+              updatedAt: String(rr?.created_at || parentRes.created_at || new Date().toISOString()),
+            });
+          }
         }
 
         if (bookings.length > 0) {
@@ -336,15 +357,22 @@ export const ReservationService = {
   ): Promise<void> {
     if (!isSupabaseConfigured) return;
 
-    // Fetch target reservation_room row to find reservation_id if necessary
-    logQuery('reservation_rooms', 'SELECT', `id = ${id}`);
-    let { data: roomRow } = await supabase
-      .from('reservation_rooms')
-      .select('reservation_id')
-      .eq('id', id)
+    const reservationId = await getCleanReservationId(id);
+
+    // Fetch reservation details to validate check-in date
+    const { data: resData } = await supabase
+      .from('reservations')
+      .select('check_in_date')
+      .eq('id', reservationId)
       .maybeSingle();
 
-    const reservationId = roomRow?.reservation_id || id;
+    if (resData?.check_in_date) {
+      const checkInDateYMD = String(resData.check_in_date).split('T')[0].split(' ')[0].trim();
+      const todayStr = getISTDateStr();
+      if (checkInDateYMD && checkInDateYMD > todayStr) {
+        throw new Error('Check-in is not allowed before the reservation date.');
+      }
+    }
 
     // 1. Update ALL reservation_rooms for this reservation: status = "Checked In"
     const rrPayload = { status: 'Checked In', cancelled: false };
@@ -389,14 +417,7 @@ export const ReservationService = {
   async checkoutGuest(id: string, remarks?: string): Promise<void> {
     if (!isSupabaseConfigured) return;
 
-    logQuery('reservation_rooms', 'SELECT', `id = ${id}`);
-    let { data: roomRow } = await supabase
-      .from('reservation_rooms')
-      .select('reservation_id')
-      .eq('id', id)
-      .maybeSingle();
-
-    const reservationId = roomRow?.reservation_id || id;
+    const reservationId = await getCleanReservationId(id);
 
     // 1. Update ALL reservation_rooms for this reservation to 'Checked Out'
     logQuery('reservation_rooms', 'UPDATE', `reservation_id = ${reservationId}`, { status: 'Checked Out' });
@@ -426,6 +447,30 @@ export const ReservationService = {
   },
 
   /**
+   * Extend reservation check-out date and update remarks metadata
+   */
+  async extendReservation(reservationId: string, newCheckOutDate: string, updatedRemarks?: string): Promise<void> {
+    if (!isSupabaseConfigured) return;
+
+    const targetResId = await getCleanReservationId(reservationId);
+    const payload: any = { check_out_date: newCheckOutDate };
+    if (updatedRemarks !== undefined) {
+      payload.remarks = updatedRemarks;
+    }
+
+    logQuery('reservations', 'UPDATE', `id = ${targetResId}`, payload);
+    const { error } = await supabase
+      .from('reservations')
+      .update(payload)
+      .eq('id', targetResId);
+
+    if (error) {
+      console.error('Failed to extend reservation:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Records check-in payment details into payments table, including Irshad wallet transfer options
    */
   async recordCheckInPayment(
@@ -442,14 +487,22 @@ export const ReservationService = {
     if (!isSupabaseConfigured) return;
 
     try {
-      // Find parent reservation_id
-      let { data: roomRow } = await supabase
-        .from('reservation_rooms')
-        .select('*')
-        .eq('id', id)
+      const reservationId = await getCleanReservationId(id);
+
+      // Validate check-in date
+      const { data: resData } = await supabase
+        .from('reservations')
+        .select('check_in_date')
+        .eq('id', reservationId)
         .maybeSingle();
 
-      const reservationId = roomRow?.reservation_id || id;
+      if (resData?.check_in_date) {
+        const checkInDateYMD = String(resData.check_in_date).split('T')[0].split(' ')[0].trim();
+        const todayStr = getISTDateStr();
+        if (checkInDateYMD && checkInDateYMD > todayStr) {
+          throw new Error('Check-in is not allowed before the reservation date.');
+        }
+      }
 
       await updatePaymentSummary({
         reservationId,

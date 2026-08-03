@@ -3,20 +3,7 @@ import { Room, Booking, Payment, Guest, Expense, DueTransaction } from '../types
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ExpenseService } from '../services/expenses';
 import { ReservationService } from '../services/reservations';
-
-function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advancePaid: number; cleanRemarks: string } {
-  if (!remarksStr) return { totalAmount: 0, advancePaid: 0, cleanRemarks: '' };
-  
-  const match = remarksStr.match(/\[PAYMENT:total=([\d.]+),advance=([\d.]+)\]/);
-  if (match) {
-    const totalAmount = Number(match[1]) || 0;
-    const advancePaid = Number(match[2]) || 0;
-    const cleanRemarks = remarksStr.replace(/\[PAYMENT:total=[\d.]+,advance=[\d.]+\]\s*/, '').trim();
-    return { totalAmount, advancePaid, cleanRemarks };
-  }
-  
-  return { totalAmount: 0, advancePaid: 0, cleanRemarks: remarksStr };
-}
+import { parsePaymentMetadata, parseRoomTimeline, getRoomIntervalsFromTimeline } from '../utils/timeline';
 
 interface HotelContextType {
   rooms: Room[];
@@ -179,14 +166,74 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         resMap.set(String(r.id), r);
       });
 
-      const parsedBookings: Booking[] = [];
-      if (rrRes.data && rrRes.data.length > 0) {
-        for (const rr of rrRes.data) {
-          const parentRes = resMap.get(String(rr.reservation_id));
-          if (!parentRes) continue;
+      // Group reservation_rooms by reservation_id
+      const rrByResId = new Map<string, any[]>();
+      (rrRes.data || []).forEach((rr: any) => {
+        const resIdKey = String(rr.reservation_id);
+        if (!rrByResId.has(resIdKey)) {
+          rrByResId.set(resIdKey, []);
+        }
+        rrByResId.get(resIdKey)!.push(rr);
+      });
 
-          const isCancelled = rr.cancelled === true || rr.status === 'Cancelled' || rr.status === 'cancelled' || parentRes.status === 'Cancelled' || parentRes.status === 'cancelled';
-          const rawStatus = isCancelled ? 'Cancelled' : String(rr.status || parentRes.status || 'Booked');
+      const parsedBookings: Booking[] = [];
+
+      for (const [resId, rrList] of rrByResId.entries()) {
+        const parentRes = resMap.get(resId);
+        if (!parentRes) continue;
+
+        const defaultCheckIn = String(parentRes.check_in_date || '').split('T')[0].trim();
+        const defaultCheckOut = String(parentRes.check_out_date || '').split('T')[0].trim();
+
+        // Get room numbers from rrList
+        const allocatedRooms: number[] = [];
+        const rrByRoomNum = new Map<number, any>();
+
+        for (const rr of rrList) {
+          const roomNum =
+            roomIdToNumMap.get(rr.room_id) ??
+            roomIdToNumMap.get(String(rr.room_id)) ??
+            Number(rr.room_id || 0);
+
+          if (roomNum > 0) {
+            allocatedRooms.push(roomNum);
+            rrByRoomNum.set(roomNum, rr);
+          }
+        }
+
+        const { timeline } = parseRoomTimeline(String(parentRes.remarks || ''));
+        const intervals = getRoomIntervalsFromTimeline(
+          timeline,
+          defaultCheckIn,
+          defaultCheckOut,
+          allocatedRooms
+        );
+
+        const { totalAmount: parsedTotal, advancePaid: parsedAdvance, cleanRemarks } = parsePaymentMetadata(String(parentRes.remarks || ''));
+
+        const payInfo = paymentByResId.get(String(parentRes.id)) || {
+          totalAmount: Number(parentRes.total_amount || parsedTotal || 0),
+          advancePaid: Number(parentRes.advance_paid || parsedAdvance || 0),
+          paymentStatus: 'pending',
+        };
+
+        if (payInfo.totalAmount === 0 && parsedTotal > 0) payInfo.totalAmount = parsedTotal;
+        if (payInfo.advancePaid === 0 && parsedAdvance > 0) payInfo.advancePaid = parsedAdvance;
+
+        const effectivePaymentStatus: 'paid' | 'pending' =
+          payInfo.paymentStatus === 'paid' ||
+          (payInfo.advancePaid >= payInfo.totalAmount && payInfo.totalAmount > 0)
+            ? 'paid'
+            : 'pending';
+
+        for (const interval of intervals) {
+          const rr = rrByRoomNum.get(interval.roomNumber);
+          const isCancelled =
+            (rr && (rr.cancelled === true || rr.status === 'Cancelled' || rr.status === 'cancelled')) ||
+            parentRes.status === 'Cancelled' ||
+            parentRes.status === 'cancelled';
+
+          const rawStatus = isCancelled ? 'Cancelled' : String(rr?.status || parentRes.status || 'Booked');
           const mappedStatus: Booking['status'] =
             rawStatus === 'Booked' || rawStatus === 'reserved' || rawStatus === 'booked'
               ? 'booked'
@@ -198,48 +245,27 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               ? 'cancelled'
               : 'booked';
 
-          const roomNum =
-            roomIdToNumMap.get(rr.room_id) ??
-            roomIdToNumMap.get(String(rr.room_id)) ??
-            Number(rr.room_id || 0);
-
-          const { totalAmount: parsedTotal, advancePaid: parsedAdvance, cleanRemarks } = parsePaymentMetadata(String(parentRes.remarks || rr.remarks || ''));
-
-          const payInfo = paymentByResId.get(String(parentRes.id)) || {
-            totalAmount: Number(parentRes.total_amount || parsedTotal || 0),
-            advancePaid: Number(parentRes.advance_paid || parsedAdvance || 0),
-            paymentStatus: 'pending',
-          };
-
-          if (payInfo.totalAmount === 0 && parsedTotal > 0) payInfo.totalAmount = parsedTotal;
-          if (payInfo.advancePaid === 0 && parsedAdvance > 0) payInfo.advancePaid = parsedAdvance;
-
-          const effectivePaymentStatus: 'paid' | 'pending' =
-            payInfo.paymentStatus === 'paid' ||
-            (payInfo.advancePaid >= payInfo.totalAmount && payInfo.totalAmount > 0)
-              ? 'paid'
-              : 'pending';
-
           parsedBookings.push({
-            id: String(rr.id || `${rr.reservation_id}_${roomNum}`),
+            id: String(rr?.id ? `${rr.id}_${interval.startDate}` : `${parentRes.id}_${interval.roomNumber}_${interval.startDate}`),
             bookingGroupId: String(parentRes.id),
             guestId: String(parentRes.id),
             guestName: String(parentRes.booking_name || 'Guest'),
             guestPhone: '',
             guestIdProof: '',
-            roomNumber: roomNum,
-            checkInDate: String(parentRes.check_in_date || ''),
-            checkOutDate: String(parentRes.check_out_date || ''),
+            roomNumber: interval.roomNumber,
+            checkInDate: interval.startDate,
+            checkOutDate: interval.endDate,
             status: mappedStatus,
             totalAmount: payInfo.totalAmount,
             advancePaid: payInfo.advancePaid,
             paymentStatus: effectivePaymentStatus,
             remarks: cleanRemarks,
-            createdAt: String(rr.created_at || parentRes.created_at || new Date().toISOString()),
-            updatedAt: String(rr.created_at || parentRes.created_at || new Date().toISOString()),
+            createdAt: String(rr?.created_at || parentRes.created_at || new Date().toISOString()),
+            updatedAt: String(rr?.created_at || parentRes.created_at || new Date().toISOString()),
           });
         }
       }
+
       setBookings(parsedBookings);
 
       // 4. Process Guests from Reservations

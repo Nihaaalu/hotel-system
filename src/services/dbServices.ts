@@ -79,6 +79,9 @@ export const BookingService = {
   async checkoutGuest(id: string, remarks?: string): Promise<void> {
     return ReservationService.checkoutGuest(id, remarks);
   },
+  async extendReservation(reservationId: string, newCheckOutDate: string, updatedRemarks?: string): Promise<void> {
+    return ReservationService.extendReservation(reservationId, newCheckOutDate, updatedRemarks);
+  },
   async releaseRoom(id: string): Promise<void> {
     return ReservationService.releaseRoom(id);
   },

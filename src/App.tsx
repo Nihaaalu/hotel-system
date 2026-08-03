@@ -9,6 +9,7 @@ import SalaryRent from './components/SalaryRent';
 import Irshad from './components/Irshad';
 import Dues from './components/Dues';
 import Analytics from './components/Analytics';
+import ReminderModal from './components/ReminderModal';
 import { useHotelData } from './context/HotelContext';
 
 const VALID_TABS: AppTab[] = ['dashboard', 'calendar', 'inventory', 'salary-rent', 'irshad', 'dues', 'analytics'];
@@ -30,7 +31,7 @@ function getInitialTab(): AppTab {
 export default function App() {
   const [currentTab, setCurrentTab] = useState<AppTab>(getInitialTab);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
-  const { refreshData } = useHotelData();
+  const { bookings, refreshData } = useHotelData();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Sync route and localStorage
@@ -265,6 +266,13 @@ export default function App() {
           onSuccess={triggerRefresh}
         />
       )}
+
+      {/* Automatic Check-In / Check-Out Reminder Modal */}
+      <ReminderModal
+        bookings={bookings}
+        onSelectBooking={handleSelectBooking}
+        refreshTrigger={refreshTrigger}
+      />
     </div>
   );
 }

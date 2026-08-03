@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Booking, Guest, Payment, Room } from '../types';
+import { supabase } from '../lib/supabase';
 import { BookingService, PaymentService } from '../services/dbServices';
+import { ReservationService } from '../services/reservations';
 import { updatePaymentSummary } from '../services/paymentSummary';
 import { useHotelData } from '../context/HotelContext';
-import { formatDateHuman } from '../utils/formatters';
+import { formatDateHuman, getISTDateStr } from '../utils/formatters';
+import {
+  addDaysYMD,
+  parseRoomTimeline,
+  parsePaymentMetadata,
+  encodeRoomTimeline,
+  buildCombinedRemarks,
+  RoomTimelineSegment,
+} from '../utils/timeline';
 import {
   X,
   Calendar,
@@ -65,6 +75,7 @@ export default function BookingModal({
     rooms: roomsList,
     bookings: contextBookings,
     payments: contextPayments,
+    dueTransactions,
     checkOverlappingBooking,
     updateBookingPayment,
     refreshData,
@@ -112,6 +123,29 @@ export default function BookingModal({
   const [pendingChain, setPendingChain] = useState<ChainAssignment[]>([]);
   const [conflictPrompt, setConflictPrompt] = useState<ConflictPrompt | null>(null);
   const [isChainReplaceMode, setIsChainReplaceMode] = useState<boolean>(false);
+
+  // Stay Extension States
+  const [isContinueStayOpen, setIsContinueStayOpen] = useState(false);
+  const [extensionNewCheckOutDate, setExtensionNewCheckOutDate] = useState('');
+  const [continueStayError, setContinueStayError] = useState<string | null>(null);
+  const [extensionTargetNewCheckOut, setExtensionTargetNewCheckOut] = useState<string | null>(null);
+  const [extensionPendingQueue, setExtensionPendingQueue] = useState<string[]>([]);
+
+  // Stay Extension Room Replacement Modal States
+  const [isExtensionRoomModalOpen, setIsExtensionRoomModalOpen] = useState(false);
+  const [extensionRoomItems, setExtensionRoomItems] = useState<{
+    originalRoomNumber: number;
+    isAvailable: boolean;
+    selectedRoomNumber: number | null;
+  }[]>([]);
+  const [extensionSelectedRooms, setExtensionSelectedRooms] = useState<number[]>([]);
+
+  // Stay Extension Payment Dialog States
+  const [isStayExtensionPaymentOpen, setIsStayExtensionPaymentOpen] = useState(false);
+  const [extensionExtraStayAmount, setExtensionExtraStayAmount] = useState<number | ''>('');
+  const [extensionPaymentNow, setExtensionPaymentNow] = useState<number | ''>('');
+  const [extensionPaymentMethod, setExtensionPaymentMethod] = useState<'cash' | 'upi' | 'card' | 'net_banking'>('cash');
+  const [extensionPaymentRemarks, setExtensionPaymentRemarks] = useState<string>('Stay Extension Payment');
 
   // Guest Information Edit State
   const [isEditingGuest, setIsEditingGuest] = useState(false);
@@ -256,6 +290,15 @@ export default function BookingModal({
 
   // Loaded Booking State for View Mode
   const [loadedBooking, setLoadedBooking] = useState<Booking | null>(null);
+
+  const bookingTransactions = React.useMemo(() => {
+    if (!loadedBooking || !dueTransactions) return [];
+    const targetResId = String(loadedBooking.bookingGroupId || loadedBooking.id);
+
+    return dueTransactions
+      .filter((tx) => String(tx.reservation_id) === targetResId)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  }, [loadedBooking, dueTransactions]);
 
   // Check-In Payment Confirmation State
   const [isCheckInModalOpen, setIsCheckInModalOpen] = useState(false);
@@ -558,10 +601,224 @@ export default function BookingModal({
       setConflictPrompt(null);
       setIsChainReplaceMode(false);
 
+      if (extensionTargetNewCheckOut && loadedBooking) {
+        if (extensionPendingQueue.length > 0) {
+          const nextId = extensionPendingQueue[0];
+          setExtensionPendingQueue((prev) => prev.slice(1));
+          const nextAlloc = allocatedRoomsList.find((a) => a.id === nextId);
+          if (nextAlloc) {
+            setActiveReplaceStep({
+              roomBookingId: nextAlloc.id,
+              guestName: loadedBooking.guestName || 'Guest',
+              fromRoomNumber: nextAlloc.roomNumber,
+              checkInDate: (loadedBooking.checkOutDate || '').split('T')[0].trim(),
+              checkOutDate: extensionTargetNewCheckOut,
+              bookingGroupId: loadedBooking.bookingGroupId || loadedBooking.id,
+            });
+            setIsSubmitting(false);
+            return;
+          }
+        }
+
+        // All unavailable room replacements completed for extension! Open Payment Dialog
+        const oldCheckOut = (loadedBooking.checkOutDate || '').split('T')[0].trim();
+        const oldCheckIn = (loadedBooking.checkInDate || '').split('T')[0].trim();
+        const oldNights = Math.max(1, Math.round((new Date(oldCheckOut).getTime() - new Date(oldCheckIn).getTime()) / 86400000));
+        const extraNights = Math.max(1, Math.round((new Date(extensionTargetNewCheckOut).getTime() - new Date(oldCheckOut).getTime()) / 86400000));
+        const prevTotal = Number(loadedBooking.totalAmount || 0);
+        const avgRatePerNight = Math.round(prevTotal / oldNights);
+        const defaultExtraAmt = avgRatePerNight * extraNights;
+
+        setExtensionExtraStayAmount(defaultExtraAmt > 0 ? defaultExtraAmt : '');
+        setExtensionPaymentNow('');
+        setExtensionPaymentMethod('cash');
+        setExtensionPaymentRemarks('Stay Extension Payment');
+        setIsStayExtensionPaymentOpen(true);
+        setIsSubmitting(false);
+        return;
+      }
+
       await refreshData();
       onSuccess();
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to replace room(s)');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Stay Extension Handlers
+  const handleOpenContinueStay = () => {
+    if (!loadedBooking) return;
+    const defaultNewCheckOut = addDaysYMD(loadedBooking.checkOutDate, 1);
+    setExtensionNewCheckOutDate(defaultNewCheckOut);
+    setContinueStayError(null);
+    setIsContinueStayOpen(true);
+  };
+
+  const handleExecuteStayExtension = async () => {
+    if (!loadedBooking) return;
+    setContinueStayError(null);
+
+    const oldCheckOut = (loadedBooking.checkOutDate || '').split('T')[0].trim();
+    const newCheckOut = (extensionNewCheckOutDate || '').split('T')[0].trim();
+    const targetResId = String(loadedBooking.bookingGroupId || loadedBooking.id);
+
+    if (!newCheckOut || newCheckOut <= oldCheckOut) {
+      setContinueStayError('New checkout date must be after current checkout date.');
+      return;
+    }
+
+    // Determine current allocated rooms for departure date from timeline or allocatedRoomsList
+    const { timeline } = parseRoomTimeline(loadedBooking.remarks || '');
+    const rawCurrentRooms = timeline && timeline.length > 0
+      ? [...timeline[timeline.length - 1].rooms]
+      : Array.from(new Set(allocatedRoomsList.map((r) => r.roomNumber)));
+    const currentRooms: number[] = rawCurrentRooms.map((n) => Number(n));
+
+    const roomItems: { originalRoomNumber: number; isAvailable: boolean; selectedRoomNumber: number | null }[] = [];
+    let unavailableCount = 0;
+
+    for (const rNum of currentRooms) {
+      const isOccupied = checkOverlappingBooking(rNum, oldCheckOut, newCheckOut, targetResId);
+      if (!isOccupied) {
+        roomItems.push({
+          originalRoomNumber: rNum,
+          isAvailable: true,
+          selectedRoomNumber: rNum,
+        });
+      } else {
+        unavailableCount++;
+        roomItems.push({
+          originalRoomNumber: rNum,
+          isAvailable: false,
+          selectedRoomNumber: null,
+        });
+      }
+    }
+
+    const oldCheckIn = (loadedBooking.checkInDate || '').split('T')[0].trim();
+    const oldNights = Math.max(1, Math.round((new Date(oldCheckOut).getTime() - new Date(oldCheckIn).getTime()) / 86400000));
+    const extraNights = Math.max(1, Math.round((new Date(newCheckOut).getTime() - new Date(oldCheckOut).getTime()) / 86400000));
+    const prevTotal = Number(loadedBooking.totalAmount || 0);
+    const avgRatePerNight = Math.round(prevTotal / oldNights);
+    const defaultExtraAmt = avgRatePerNight * extraNights;
+
+    setExtensionTargetNewCheckOut(newCheckOut);
+    setExtensionExtraStayAmount(defaultExtraAmt > 0 ? defaultExtraAmt : '');
+    setExtensionPaymentNow('');
+    setExtensionPaymentMethod('cash');
+    setExtensionPaymentRemarks('Stay Extension Payment');
+
+    if (unavailableCount === 0) {
+      // CASE 1: All rooms available -> Proceed to Payment Dialog
+      setExtensionSelectedRooms(currentRooms);
+      setIsContinueStayOpen(false);
+      setIsStayExtensionPaymentOpen(true);
+    } else {
+      // CASE 2: One or more rooms unavailable -> Proceed to Replace Rooms Modal
+      setExtensionRoomItems(roomItems);
+      setIsContinueStayOpen(false);
+      setIsExtensionRoomModalOpen(true);
+    }
+  };
+
+  // Finalize Stay Extension after Payment confirmation
+  const handleFinalizeExtensionWithPayment = async () => {
+    if (!loadedBooking || !extensionTargetNewCheckOut) return;
+    setIsSubmitting(true);
+    setContinueStayError(null);
+
+    try {
+      const extraStayAmt = Number(extensionExtraStayAmount) || 0;
+      const payNow = Number(extensionPaymentNow) || 0;
+
+      const previousTotal = Number(loadedBooking.totalAmount || 0);
+      const alreadyPaid = Number(loadedBooking.advancePaid || 0);
+
+      const newBookingTotal = previousTotal + extraStayAmt;
+      const newTotalPaid = alreadyPaid + payNow;
+
+      const oldCheckOut = (loadedBooking.checkOutDate || '').split('T')[0].trim();
+      const newCheckOut = extensionTargetNewCheckOut.split('T')[0].trim();
+      const targetResId = String(loadedBooking.bookingGroupId || loadedBooking.id);
+
+      // 1. Update Payment Record & Add Transaction to due_payment_transactions (if payNow > 0)
+      await updatePaymentSummary({
+        reservationId: targetResId,
+        paymentAmount: payNow,
+        isAdvance: true,
+        paymentMethod: extensionPaymentMethod,
+        remarks: extensionPaymentRemarks.trim() || 'Stay Extension Payment',
+        options: {
+          totalAmount: newBookingTotal,
+        },
+      });
+
+      // 2. Ensure extension rooms are inserted into reservation_rooms in Supabase
+      const currentAllocated = extensionSelectedRooms.length > 0
+        ? extensionSelectedRooms
+        : allocatedRoomsList.map((r) => r.roomNumber);
+
+      if (currentAllocated.length > 0) {
+        await ReservationService.addRoomsToReservation(targetResId, currentAllocated);
+      }
+
+      // 3. Build updated timeline JSON and combined remarks
+      const { timeline, cleanRemarks } = parseRoomTimeline(loadedBooking.remarks || '');
+
+      if (timeline.length === 0) {
+        timeline.push({
+          startDate: (loadedBooking.checkInDate || '').split('T')[0].trim(),
+          endDate: oldCheckOut,
+          rooms: allocatedRoomsList.map((r) => r.roomNumber),
+        });
+        timeline.push({
+          startDate: oldCheckOut,
+          endDate: newCheckOut,
+          rooms: currentAllocated,
+        });
+      } else {
+        const lastSeg = timeline[timeline.length - 1];
+        if (lastSeg && lastSeg.endDate === oldCheckOut) {
+          if (JSON.stringify([...lastSeg.rooms].sort()) === JSON.stringify([...currentAllocated].sort())) {
+            lastSeg.endDate = newCheckOut;
+          } else {
+            timeline.push({
+              startDate: oldCheckOut,
+              endDate: newCheckOut,
+              rooms: currentAllocated,
+            });
+          }
+        } else {
+          timeline.push({
+            startDate: oldCheckOut,
+            endDate: newCheckOut,
+            rooms: currentAllocated,
+          });
+        }
+      }
+
+      const newRemarks = buildCombinedRemarks(cleanRemarks, timeline, {
+        totalAmount: newBookingTotal,
+        advancePaid: newTotalPaid,
+      });
+
+      // 4. Update reservation check_out_date and remarks in Supabase
+      await BookingService.extendReservation(targetResId, newCheckOut, newRemarks);
+
+      // 5. Reset states & refresh
+      setIsStayExtensionPaymentOpen(false);
+      setIsExtensionRoomModalOpen(false);
+      setIsContinueStayOpen(false);
+      setExtensionTargetNewCheckOut(null);
+      setExtensionPendingQueue([]);
+
+      await refreshData();
+      if (onSuccess) onSuccess();
+    } catch (err: any) {
+      console.error('Error finalizing stay extension:', err);
+      setContinueStayError(err.message || 'Failed to extend stay.');
     } finally {
       setIsSubmitting(false);
     }
@@ -681,9 +938,35 @@ export default function BookingModal({
     setConflictPrompt(null);
   };
 
+  // Room Timeline calculation
+  const computedTimeline = React.useMemo(() => {
+    if (!loadedBooking) return [];
+    const { timeline } = parseRoomTimeline(loadedBooking.remarks || '');
+    if (timeline && timeline.length > 0) return timeline;
+
+    const currentAllocated = allocatedRoomsList.map((r) => r.roomNumber);
+    if (currentAllocated.length === 0) return [];
+
+    return [
+      {
+        startDate: (loadedBooking.checkInDate || '').split('T')[0].trim(),
+        endDate: (loadedBooking.checkOutDate || '').split('T')[0].trim(),
+        rooms: currentAllocated,
+      },
+    ];
+  }, [loadedBooking, allocatedRoomsList]);
+
   // Open Check-In Payment Confirmation Modal
   const handleOpenCheckInModal = () => {
     if (!loadedBooking) return;
+
+    const todayStr = getISTDateStr();
+    const cInYMD = (loadedBooking.checkInDate || '').split('T')[0].split(' ')[0].trim();
+    if (cInYMD && cInYMD > todayStr) {
+      setErrorMsg('Check-in is not allowed before the reservation date.');
+      return;
+    }
+
     const remaining = Math.max(0, loadedBooking.totalAmount - loadedBooking.advancePaid);
     setCheckInPaidNowInput(remaining);
     setTransferToIrshad(false);
@@ -696,6 +979,14 @@ export default function BookingModal({
     e.preventDefault();
     if (!loadedBooking) return;
     setErrorMsg(null);
+
+    const todayStr = getISTDateStr();
+    const cInYMD = (loadedBooking.checkInDate || '').split('T')[0].split(' ')[0].trim();
+    if (cInYMD && cInYMD > todayStr) {
+      setErrorMsg('Check-in is not allowed before the reservation date.');
+      setIsCheckInModalOpen(false);
+      return;
+    }
 
     const paidNow = Number(checkInPaidNowInput || 0);
     const remainingAfterPayment = Math.max(0, loadedBooking.totalAmount - (loadedBooking.advancePaid + paidNow));
@@ -1034,6 +1325,28 @@ export default function BookingModal({
                     </div>
                   </div>
                 )}
+
+                {/* Payment History List */}
+                {bookingTransactions.length > 0 && (
+                  <div className="pt-2 border-t border-gray-150 space-y-1.5">
+                    <span className="text-[10px] font-extrabold uppercase text-gray-500 block">
+                      Payment Transactions ({bookingTransactions.length})
+                    </span>
+                    <div className="space-y-1 max-h-32 overflow-y-auto pr-0.5">
+                      {bookingTransactions.map((tx) => (
+                        <div key={tx.id} className="p-1.5 bg-gray-50 border border-gray-150 rounded-lg flex items-center justify-between text-xs">
+                          <div>
+                            <span className="font-extrabold text-gray-800">{formatDateHuman(tx.created_at)}</span>
+                            <span className="text-gray-500 block text-[10px] font-medium">
+                              {tx.remarks || 'Payment'} ({tx.payment_method?.toUpperCase() || 'CASH'})
+                            </span>
+                          </div>
+                          <span className="font-black text-emerald-700">₹{Number(tx.amount || 0).toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 4. ROOMS SECTION (Allocated Rooms) */}
@@ -1095,6 +1408,40 @@ export default function BookingModal({
                 </div>
               </div>
 
+              {/* ROOM TIMELINE (HISTORY) */}
+              <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                    Room Timeline
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {computedTimeline.map((seg, idx) => (
+                    <div key={idx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+                      <div className="text-xs font-extrabold text-slate-800 flex items-center justify-between">
+                        <span>
+                          {formatDateHuman(seg.startDate)} → {formatDateHuman(seg.endDate)}
+                        </span>
+                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-150">
+                          {seg.rooms.length} {seg.rooms.length === 1 ? 'Room' : 'Rooms'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {seg.rooms.map((rn) => (
+                          <span
+                            key={rn}
+                            className="px-2 py-0.5 bg-white border border-slate-250 text-slate-900 font-extrabold text-xs rounded-md shadow-2xs"
+                          >
+                            Room {rn}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* 5. ACTIONS */}
               <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">Actions</span>
@@ -1110,14 +1457,25 @@ export default function BookingModal({
                     </button>
                   )}
                   {loadedBooking.status === 'checked-in' && (
-                    <button
-                      type="button"
-                      onClick={handleCheckoutGuest}
-                      disabled={isSubmitting}
-                      className="px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer"
-                    >
-                      Checkout & Close Room
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleCheckoutGuest}
+                        disabled={isSubmitting}
+                        className="px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer"
+                      >
+                        Checkout & Close Room
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenContinueStay}
+                        disabled={isSubmitting}
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>Continue Stay</span>
+                      </button>
+                    </>
                   )}
                   <button
                     type="button"
@@ -2176,6 +2534,466 @@ export default function BookingModal({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* STAY EXTENSION MODAL DIALOG */}
+      {isContinueStayOpen && loadedBooking && (
+        <div className="fixed inset-0 z-90 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 space-y-4 animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-100 text-indigo-800 rounded-xl">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-slate-900">Stay Extension</h3>
+                  <span className="text-[11px] text-slate-500 block font-medium">
+                    Current Checkout: {formatDateHuman(loadedBooking.checkOutDate)}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsContinueStayOpen(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {continueStayError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{continueStayError}</span>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-extrabold text-slate-800 block">
+                Choose New Checkout Date
+              </label>
+              <input
+                type="date"
+                value={extensionNewCheckOutDate}
+                min={addDaysYMD(loadedBooking.checkOutDate, 1)}
+                onChange={(e) => {
+                  setExtensionNewCheckOutDate(e.target.value);
+                  setContinueStayError(null);
+                }}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button
+                type="button"
+                onClick={handleExecuteStayExtension}
+                disabled={isSubmitting || !extensionNewCheckOutDate}
+                className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-extrabold text-xs rounded-xl shadow-md transition disabled:opacity-40 cursor-pointer text-center"
+              >
+                {isSubmitting ? 'Extending...' : 'Extend Stay'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsContinueStayOpen(false)}
+                className="w-full py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer text-center"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REPLACE ROOMS FOR EXTENSION MODAL DIALOG */}
+      {isExtensionRoomModalOpen && loadedBooking && (
+        <div className="fixed inset-0 z-90 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl">
+                  <RefreshCw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900">REPLACE ROOM FOR EXTENSION</h3>
+                  <span className="text-xs text-slate-500 font-medium block">
+                    Guest: {loadedBooking.guestName || 'Guest'} • Extension: {loadedBooking.checkOutDate?.split('T')[0]} → {extensionTargetNewCheckOut}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExtensionRoomModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-amber-900 text-xs font-medium space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                <span>Some rooms are unavailable for the extended dates.</span>
+              </div>
+              <p className="text-[11px] text-amber-800">
+                Available rooms remain selected. Please choose a replacement for unavailable rooms.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {extensionRoomItems.map((item, idx) => {
+                const oldCheckOut = (loadedBooking.checkOutDate || '').split('T')[0].trim();
+                const targetResId = String(loadedBooking.bookingGroupId || loadedBooking.id);
+
+                // Find valid available replacement rooms
+                const selectedOthers = extensionRoomItems
+                  .filter((_, i) => i !== idx)
+                  .map((i) => i.selectedRoomNumber)
+                  .filter((num): num is number => num !== null);
+
+                const validReplacements = roomsList.filter((r) => {
+                  // Must not be currently selected for another item in this modal
+                  if (selectedOthers.includes(r.number)) return false;
+                  // Must be available for the extension date range
+                  const isOccupied = checkOverlappingBooking(
+                    r.number,
+                    oldCheckOut,
+                    extensionTargetNewCheckOut!,
+                    targetResId
+                  );
+                  return !isOccupied;
+                });
+
+                return (
+                  <div
+                    key={item.originalRoomNumber}
+                    className={`p-3.5 rounded-xl border text-xs space-y-2 transition ${
+                      item.isAvailable
+                        ? 'bg-emerald-50/50 border-emerald-200'
+                        : 'bg-slate-50 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                        <span>Original Room {item.originalRoomNumber}</span>
+                      </div>
+                      {item.isAvailable ? (
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          Available / Selected
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full bg-rose-100 text-rose-800 font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3 text-rose-600" />
+                          Needs Replacement
+                        </span>
+                      )}
+                    </div>
+
+                    {item.isAvailable ? (
+                      <p className="text-[11px] text-emerald-700 font-medium">
+                        Room {item.originalRoomNumber} is available and remains allocated for the extension period.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5 pt-1">
+                        <label className="text-[11px] font-bold text-slate-700 block">
+                          Select Replacement Room:
+                        </label>
+                        <select
+                          value={item.selectedRoomNumber || ''}
+                          onChange={(e) => {
+                            const val = e.target.value ? Number(e.target.value) : null;
+                            setExtensionRoomItems((prev) =>
+                              prev.map((curr, i) =>
+                                i === idx ? { ...curr, selectedRoomNumber: val } : curr
+                              )
+                            );
+                          }}
+                          className="w-full bg-white border border-slate-300 rounded-xl p-2 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
+                        >
+                          <option value="">-- Select Available Room --</option>
+                          {validReplacements.map((r) => (
+                            <option key={r.number} value={r.number}>
+                              Room {r.number} ({r.type} • ₹{r.price}/night)
+                            </option>
+                          ))}
+                        </select>
+                        {item.selectedRoomNumber === null && (
+                          <span className="text-[10px] font-bold text-rose-600 block">
+                            No replacement selected yet.
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Modal Actions */}
+            {(() => {
+              const allReplaced = extensionRoomItems.every(
+                (item) => item.selectedRoomNumber !== null
+              );
+
+              return (
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const chosen = extensionRoomItems
+                        .map((item) => item.selectedRoomNumber!)
+                        .filter(Boolean);
+                      setExtensionSelectedRooms(chosen);
+                      setIsExtensionRoomModalOpen(false);
+                      setIsStayExtensionPaymentOpen(true);
+                    }}
+                    disabled={!allReplaced}
+                    className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-extrabold text-xs rounded-xl shadow-md transition disabled:opacity-40 cursor-pointer text-center"
+                  >
+                    Next: Payment →
+                  </button>
+                  {!allReplaced && (
+                    <p className="text-[11px] font-semibold text-rose-600 text-center">
+                      Please select a replacement for all unavailable rooms to continue.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsExtensionRoomModalOpen(false)}
+                    className="w-full py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer text-center"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* STAY EXTENSION PAYMENT MODAL DIALOG */}
+      {isStayExtensionPaymentOpen && loadedBooking && (
+        <div className="fixed inset-0 z-90 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-indigo-100 text-indigo-700 rounded-xl">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900">STAY EXTENSION PAYMENT</h3>
+                  <span className="text-xs text-slate-500 font-medium block">
+                    Guest: {loadedBooking.guestName || 'Guest'}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsStayExtensionPaymentOpen(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {continueStayError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{continueStayError}</span>
+              </div>
+            )}
+
+            {/* Previous Booking Section */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                Previous Booking Summary
+              </span>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="bg-white p-2 rounded-lg border border-slate-200">
+                  <div className="text-[9px] font-bold uppercase text-slate-500">Previous Booking</div>
+                  <div className="text-xs font-black text-slate-900 mt-0.5">
+                    ₹{(loadedBooking.totalAmount || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="bg-emerald-50/70 p-2 rounded-lg border border-emerald-200">
+                  <div className="text-[9px] font-bold uppercase text-emerald-700">Already Paid</div>
+                  <div className="text-xs font-black text-emerald-800 mt-0.5">
+                    ₹{(loadedBooking.advancePaid || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="bg-rose-50/70 p-2 rounded-lg border border-rose-200">
+                  <div className="text-[9px] font-bold uppercase text-rose-600">Remaining Due</div>
+                  <div className="text-xs font-black text-rose-800 mt-0.5">
+                    ₹{Math.max(0, (loadedBooking.totalAmount || 0) - (loadedBooking.advancePaid || 0)).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Editable Inputs Section */}
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-extrabold text-slate-800 block mb-1">
+                    Extra Stay Amount (editable)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">₹</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={extensionExtraStayAmount}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        if (raw === '') setExtensionExtraStayAmount('');
+                        else setExtensionExtraStayAmount(Number(raw));
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-extrabold text-slate-800 block mb-1">
+                    Payment Now
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">₹</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={extensionPaymentNow}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        if (raw === '') setExtensionPaymentNow('');
+                        else setExtensionPaymentNow(Number(raw));
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-extrabold text-slate-800 block mb-1">
+                  Payment Method
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[
+                    { id: 'cash', label: 'Cash' },
+                    { id: 'upi', label: 'UPI' },
+                    { id: 'card', label: 'Card' },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setExtensionPaymentMethod(m.id as any)}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition cursor-pointer text-center ${
+                        extensionPaymentMethod === m.id
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-extrabold text-slate-800 block mb-1">
+                  Remarks <span className="text-[10px] text-slate-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={extensionPaymentRemarks}
+                  onChange={(e) => setExtensionPaymentRemarks(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none"
+                  placeholder="e.g. Stay Extension Payment"
+                />
+              </div>
+            </div>
+
+            {/* Updated Summary Section */}
+            <div className="bg-indigo-50/80 border border-indigo-150 rounded-xl p-3.5 space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-900 block">
+                Updated Summary
+              </span>
+
+              {(() => {
+                const prevTotal = Number(loadedBooking.totalAmount || 0);
+                const prevPaid = Number(loadedBooking.advancePaid || 0);
+                const extraAmt = Number(extensionExtraStayAmount || 0);
+                const payNowAmt = Number(extensionPaymentNow || 0);
+
+                const newTotal = prevTotal + extraAmt;
+                const totalPaid = prevPaid + payNowAmt;
+                const remainingDue = Math.max(0, newTotal - totalPaid);
+
+                return (
+                  <div className="space-y-1.5 text-xs font-medium text-slate-700">
+                    <div className="flex items-center justify-between">
+                      <span>Original Booking</span>
+                      <span className="font-extrabold text-slate-900">₹{prevTotal.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-indigo-700 font-semibold">
+                      <span>Extra Stay</span>
+                      <span>+₹{extraAmt.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between font-extrabold text-slate-900 pt-1 border-t border-indigo-200/60">
+                      <span>New Booking Total</span>
+                      <span className="text-sm text-indigo-950">₹{newTotal.toLocaleString()}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span>Previously Paid</span>
+                      <span className="font-extrabold text-slate-900">₹{prevPaid.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-emerald-700 font-semibold">
+                      <span>Paid Now</span>
+                      <span>+₹{payNowAmt.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between font-extrabold text-slate-900 pt-1 border-t border-indigo-200/60">
+                      <span>Total Paid</span>
+                      <span className="text-emerald-800">₹{totalPaid.toLocaleString()}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1.5 border-t border-indigo-200 text-sm font-extrabold">
+                      <span className="text-slate-900">Remaining Due</span>
+                      <span className={remainingDue > 0 ? 'text-rose-700' : 'text-emerald-700'}>
+                        ₹{remainingDue.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleFinalizeExtensionWithPayment}
+                disabled={isSubmitting}
+                className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-extrabold text-xs rounded-xl shadow-md transition disabled:opacity-40 cursor-pointer text-center"
+              >
+                {isSubmitting ? 'Confirming Extension...' : 'Confirm Extension'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsStayExtensionPaymentOpen(false)}
+                disabled={isSubmitting}
+                className="w-full py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer text-center"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

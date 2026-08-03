@@ -48,6 +48,106 @@ export interface PaymentUpdateParams {
  * Creates a new row in due_payment_transactions for every customer payment.
  * NEVER updates payment fields on reservations table.
  */
+export async function getCleanReservationId(rawId: string | number): Promise<string> {
+  if (!rawId) return '';
+  const str = String(rawId).trim();
+  if (!str) return '';
+
+  const isNumeric = (s: string) => /^\d+$/.test(s);
+
+  const findInReservations = async (num: number): Promise<string | null> => {
+    try {
+      const { data } = await supabase
+        .from('reservations')
+        .select('id')
+        .eq('id', num)
+        .maybeSingle();
+      return data?.id ? String(data.id) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const findInReservationRooms = async (num: number): Promise<string | null> => {
+    try {
+      const { data } = await supabase
+        .from('reservation_rooms')
+        .select('reservation_id')
+        .eq('id', num)
+        .maybeSingle();
+      return data?.reservation_id ? String(data.reservation_id) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  if (isNumeric(str)) {
+    const num = Number(str);
+    const resId = await findInReservations(num);
+    if (resId) return resId;
+
+    const parentResId = await findInReservationRooms(num);
+    if (parentResId) return parentResId;
+
+    return str;
+  }
+
+  const parts = str.split('_');
+  for (const part of parts) {
+    if (isNumeric(part)) {
+      const num = Number(part);
+      const resId = await findInReservations(num);
+      if (resId) return resId;
+
+      const parentResId = await findInReservationRooms(num);
+      if (parentResId) return parentResId;
+    }
+  }
+
+  const match = str.match(/\d+/);
+  return match ? match[0] : str;
+}
+
+export async function getCleanRoomRowId(rawId: string | number): Promise<string> {
+  if (!rawId) return '';
+  const str = String(rawId).trim();
+  if (!str) return '';
+
+  const isNumeric = (s: string) => /^\d+$/.test(s);
+
+  const checkRoomRowExists = async (num: number): Promise<string | null> => {
+    try {
+      const { data } = await supabase
+        .from('reservation_rooms')
+        .select('id')
+        .eq('id', num)
+        .maybeSingle();
+      return data?.id ? String(data.id) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  if (isNumeric(str)) {
+    const num = Number(str);
+    const rowId = await checkRoomRowExists(num);
+    if (rowId) return rowId;
+    return str;
+  }
+
+  const parts = str.split('_');
+  for (const part of parts) {
+    if (isNumeric(part)) {
+      const num = Number(part);
+      const rowId = await checkRoomRowExists(num);
+      if (rowId) return rowId;
+    }
+  }
+
+  const match = str.match(/\d+/);
+  return match ? match[0] : str;
+}
+
 export async function updatePaymentSummary(params: PaymentUpdateParams): Promise<any> {
   if (!isSupabaseConfigured) return null;
 
@@ -65,25 +165,13 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
     throw new Error('updatePaymentSummary failed: reservationId is required.');
   }
 
-  let targetResId = String(reservationId);
+  let targetResId = await getCleanReservationId(reservationId);
 
-  // Check if payments row exists directly for targetResId
-  const { data: checkPay } = await supabase
-    .from('payments')
-    .select('*')
-    .eq('reservation_id', targetResId);
-
-  if (!checkPay || checkPay.length === 0) {
-    // Check if targetResId is actually a reservation_rooms row ID
-    const { data: roomRow } = await supabase
-      .from('reservation_rooms')
-      .select('reservation_id')
-      .eq('id', targetResId)
-      .maybeSingle();
-
-    if (roomRow?.reservation_id) {
-      targetResId = String(roomRow.reservation_id);
-    }
+  // Check if targetResId is valid number
+  const numericResId = Number(targetResId);
+  if (!targetResId || isNaN(numericResId)) {
+    console.error('Invalid reservation ID for payment summary:', reservationId);
+    return null;
   }
 
   // 1. Fetch current payment record for targetResId
