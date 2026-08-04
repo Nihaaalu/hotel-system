@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+
+const DEBUG = false;
 import { useHotelData } from '../context/HotelContext';
 import {
   SalaryEmployee,
@@ -466,17 +468,19 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("[EMPLOYEE] Save button clicked");
-    console.log("[EMPLOYEE] Name:", empNameInput);
-    console.log("[EMPLOYEE] Salary:", empSalaryInput);
+    if (DEBUG) {
+      console.log("[EMPLOYEE] Save button clicked");
+      console.log("[EMPLOYEE] Name:", empNameInput);
+      console.log("[EMPLOYEE] Salary:", empSalaryInput);
+    }
 
     if (!empNameInput.trim()) {
-      console.log("[EMPLOYEE] Validation blocked execution: Name is empty");
+      if (DEBUG) console.log("[EMPLOYEE] Validation blocked execution: Name is empty");
       return;
     }
 
     if (!empSalaryInput || Number(empSalaryInput) <= 0) {
-      console.log("[EMPLOYEE] Validation blocked execution: Salary must be greater than 0");
+      if (DEBUG) console.log("[EMPLOYEE] Validation blocked execution: Salary must be greater than 0");
       return;
     }
 

@@ -1,6 +1,8 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { IrshadSettlement, IrshadWalletSummary, IrshadWalletNetSummary } from '../types';
 
+const DEBUG = false;
+
 export const IrshadWalletService = {
   /**
    * Reads the irshad_wallet_summary view or calculates from base tables.
@@ -95,7 +97,7 @@ export const IrshadWalletService = {
       walletNet,
     };
 
-    console.log("Wallet Summary", result);
+    if (DEBUG) console.log("Wallet Summary", result);
     return result;
   },
 

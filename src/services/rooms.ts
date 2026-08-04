@@ -1,12 +1,14 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Room } from '../types';
 
+const DEBUG = false;
+
 function logQuery(table: string, action: string, columns: string, where: string) {
-  console.log(`TABLE: ${table} | ACTION: ${action} | COLUMNS: ${columns} | WHERE: ${where}`);
+  if (DEBUG) console.log(`TABLE: ${table} | ACTION: ${action} | COLUMNS: ${columns} | WHERE: ${where}`);
 }
 
 function logResponse(data: any, error: any) {
-  console.log(`Returned data count: ${data ? data.length : 0}`);
+  if (DEBUG) console.log(`Returned data count: ${data ? data.length : 0}`);
   if (error) {
     console.error(`Returned Supabase Error:`, JSON.stringify(error, null, 2));
   }

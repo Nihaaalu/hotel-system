@@ -1,12 +1,14 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
+const DEBUG = false;
+
 function logQuery(table: string, action: string, where: string, payload?: any) {
-  console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
+  if (DEBUG) console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
 }
 
 function logResponse(data: any, error: any) {
-  console.log(`Returned data:\n${JSON.stringify(data ?? null, null, 2)}`);
-  console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
+  if (DEBUG) console.log(`Returned data:\n${JSON.stringify(data ?? null, null, 2)}`);
+  if (DEBUG) console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
 }
 
 function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advancePaid: number; cleanRemarks: string } {
@@ -53,20 +55,14 @@ export async function getCleanReservationId(rawId: string | number): Promise<str
   const str = String(rawId).trim();
   if (!str) return '';
 
-  const isNumeric = (s: string) => /^\d+$/.test(s);
+  // 1. Check if str contains a valid UUID directly
+  const uuidMatch = str.match(/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/);
+  if (uuidMatch && uuidMatch[1]) {
+    return uuidMatch[1];
+  }
 
-  const findInReservations = async (num: number): Promise<string | null> => {
-    try {
-      const { data } = await supabase
-        .from('reservations')
-        .select('id')
-        .eq('id', num)
-        .maybeSingle();
-      return data?.id ? String(data.id) : null;
-    } catch {
-      return null;
-    }
-  };
+  // 2. If numeric or composite with integer parts (like reservation_rooms.id = 5), look up in reservation_rooms
+  const isNumeric = (s: string) => /^\d+$/.test(s);
 
   const findInReservationRooms = async (num: number): Promise<string | null> => {
     try {
@@ -83,12 +79,8 @@ export async function getCleanReservationId(rawId: string | number): Promise<str
 
   if (isNumeric(str)) {
     const num = Number(str);
-    const resId = await findInReservations(num);
-    if (resId) return resId;
-
     const parentResId = await findInReservationRooms(num);
     if (parentResId) return parentResId;
-
     return str;
   }
 
@@ -96,16 +88,12 @@ export async function getCleanReservationId(rawId: string | number): Promise<str
   for (const part of parts) {
     if (isNumeric(part)) {
       const num = Number(part);
-      const resId = await findInReservations(num);
-      if (resId) return resId;
-
       const parentResId = await findInReservationRooms(num);
       if (parentResId) return parentResId;
     }
   }
 
-  const match = str.match(/\d+/);
-  return match ? match[0] : str;
+  return str;
 }
 
 export async function getCleanRoomRowId(rawId: string | number): Promise<string> {
@@ -144,8 +132,7 @@ export async function getCleanRoomRowId(rawId: string | number): Promise<string>
     }
   }
 
-  const match = str.match(/\d+/);
-  return match ? match[0] : str;
+  return str;
 }
 
 export async function updatePaymentSummary(params: PaymentUpdateParams): Promise<any> {
@@ -167,12 +154,13 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
 
   let targetResId = await getCleanReservationId(reservationId);
 
-  // Check if targetResId is valid number
-  const numericResId = Number(targetResId);
-  if (!targetResId || isNaN(numericResId)) {
+  if (!targetResId) {
     console.error('Invalid reservation ID for payment summary:', reservationId);
     return null;
   }
+
+  console.log("Reservation UUID:", reservationId);
+  console.log("Reservation UUID Used:", targetResId);
 
   // 1. Fetch current payment record for targetResId
   logQuery('payments', 'SELECT', `reservation_id = ${targetResId}`);
@@ -287,9 +275,9 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
   };
 
   // LOG 1: Existing payment row before update
-  console.log('[PAYMENT LOG] 1. Existing payment row before update:', existing);
+  if (DEBUG) console.log('[PAYMENT LOG] 1. Existing payment row before update:', existing);
   // LOG 2: Payload sent to Supabase
-  console.log('[PAYMENT LOG] 2. Payload sent to Supabase:', paymentPayload);
+  if (DEBUG) console.log('[PAYMENT LOG] 2. Payload sent to Supabase:', paymentPayload);
 
   let paymentRecord = null;
   let payErrOut: any = null;
@@ -338,17 +326,17 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
   }
 
   // LOG 3: Returned payment row
-  console.log('[PAYMENT LOG] 3. Returned payment row:', paymentRecord);
+  if (DEBUG) console.log('[PAYMENT LOG] 3. Returned payment row:', paymentRecord);
   // LOG 4: Any Supabase error
-  console.log('[PAYMENT LOG] 4. Any Supabase error:', payErrOut || 'None');
+  if (DEBUG) console.log('[PAYMENT LOG] 4. Any Supabase error:', payErrOut || 'None');
   // LOG 5: amount_collected before and after
-  console.log(`[PAYMENT LOG] 5. amount_collected before: ${currentAmountCollected}, after: ${finalAmountCollected}`);
+  if (DEBUG) console.log(`[PAYMENT LOG] 5. amount_collected before: ${currentAmountCollected}, after: ${finalAmountCollected}`);
   // LOG 6: advance_paid before and after
-  console.log(`[PAYMENT LOG] 6. advance_paid before: ${currentAdvancePaid}, after: ${newAdvancePaid}`);
+  if (DEBUG) console.log(`[PAYMENT LOG] 6. advance_paid before: ${currentAdvancePaid}, after: ${newAdvancePaid}`);
   // LOG 7: remaining_balance before and after
-  console.log(`[PAYMENT LOG] 7. remaining_balance before: ${existing?.remaining_balance ?? (currentTotalAmount - currentAmountCollected)}, after: ${newRemainingBalance}`);
+  if (DEBUG) console.log(`[PAYMENT LOG] 7. remaining_balance before: ${existing?.remaining_balance ?? (currentTotalAmount - currentAmountCollected)}, after: ${newRemainingBalance}`);
   // LOG 8: payment_status before and after
-  console.log(`[PAYMENT LOG] 8. payment_status before: ${existing?.payment_status ?? 'N/A'}, after: ${newPaymentStatus}`);
+  if (DEBUG) console.log(`[PAYMENT LOG] 8. payment_status before: ${existing?.payment_status ?? 'N/A'}, after: ${newPaymentStatus}`);
 
   // Validate paymentId is NOT null
   const paymentId = paymentRecord?.id;
@@ -378,18 +366,18 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
     logResponse(txData, txErr);
     if (txErr) {
       console.error('[PAYMENT LOG ERROR] 4. Supabase due_payment_transactions error:', txErr);
-      console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: FALSE');
+      if (DEBUG) console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: FALSE');
       throw txErr;
     }
     if (!txData || txData.length !== 1) {
       const txCountErr = new Error(`INSERT into due_payment_transactions failed: returned row count ${txData ? txData.length : 0}, expected 1.`);
       console.error('[PAYMENT LOG ERROR] 4. Supabase due_payment_transactions error:', txCountErr);
-      console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: FALSE');
+      if (DEBUG) console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: FALSE');
       throw txCountErr;
     }
-    console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: TRUE');
+    if (DEBUG) console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: TRUE');
   } else {
-    console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: N/A (no new money collected in this transaction)');
+    if (DEBUG) console.log('[PAYMENT LOG] 9. Whether due_payment_transactions insertion succeeded: N/A (no new money collected in this transaction)');
   }
 
   // DO NOT UPDATE RESERVATIONS TABLE WITH PAYMENT FIELDS!

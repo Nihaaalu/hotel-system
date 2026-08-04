@@ -2,20 +2,22 @@ import { RoomService as SupabaseRoomService } from './rooms';
 import { ReservationService } from './reservations';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Booking, Guest, Payment, Room } from '../types';
-import { updatePaymentSummary } from './paymentSummary';
+import { updatePaymentSummary, getCleanReservationId } from './paymentSummary';
 
 export { supabase, isSupabaseConfigured } from '../lib/supabase';
 export { RoomService as SupabaseRoomService } from './rooms';
 export { ReservationService } from './reservations';
 export { CalendarService } from './calendar';
 
+const DEBUG = false;
+
 function logQuery(table: string, action: string, where: string, payload?: any) {
-  console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
+  if (DEBUG) console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
 }
 
 function logResponse(data: any, error: any) {
-  console.log(`Returned data:\n${JSON.stringify(data ?? null, null, 2)}`);
-  console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
+  if (DEBUG) console.log(`Returned data:\n${JSON.stringify(data ?? null, null, 2)}`);
+  if (DEBUG) console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
 }
 
 export const RoomService = {
@@ -101,7 +103,7 @@ export const BookingService = {
     reservationId: string,
     roomNumbers: number[],
     newTotalAmount?: number
-  ): Promise<void> {
+  ): Promise<number> {
     return ReservationService.addRoomsToReservation(reservationId, roomNumbers, newTotalAmount);
   },
   async updateBookingDetails(
@@ -170,11 +172,17 @@ export const PaymentService = {
     if (!isSupabaseConfigured) return [];
 
     try {
-      logQuery('payments', 'SELECT', `reservation_id = ${bookingId}`);
+      const reservationId = await getCleanReservationId(bookingId);
+      if (DEBUG) {
+        console.log("Reservation UUID:", bookingId);
+        console.log("Reservation UUID Used:", reservationId);
+      }
+
+      logQuery('payments', 'SELECT', `reservation_id = ${reservationId}`);
       const { data, error } = await supabase
         .from('payments')
         .select('*')
-        .eq('reservation_id', bookingId);
+        .eq('reservation_id', reservationId);
       logResponse(data, error);
 
       if (error) {

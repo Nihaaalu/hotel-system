@@ -2,13 +2,15 @@ import { Expense, ExpenseCategory } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getISTDateStr } from '../utils/formatters';
 
+const DEBUG = false;
+
 function logQuery(table: string, action: string, where: string, payload?: any) {
-  console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
+  if (DEBUG) console.log(`TABLE:\n${table}\n\nACTION:\n${action}\n\nWHERE:\n${where}\n\nPAYLOAD:\n${JSON.stringify(payload ?? {}, null, 2)}`);
 }
 
 function logResponse(data: any, error: any) {
-  console.log(`Returned data:\n${JSON.stringify(data ?? null, null, 2)}`);
-  console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
+  if (DEBUG) console.log(`Returned data:\n${JSON.stringify(data ?? null, null, 2)}`);
+  if (DEBUG) console.log(`Returned error:\n${JSON.stringify(error ?? null, null, 2)}`);
 }
 
 // In-memory fallback storage when Supabase is offline

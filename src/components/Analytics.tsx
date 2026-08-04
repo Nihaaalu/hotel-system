@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+
+const DEBUG = false;
 import { supabase } from '../lib/supabase';
 import { useHotelData } from '../context/HotelContext';
 import { SalaryRentService } from '../services/salaryRent';
@@ -277,7 +279,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
         const netSummary = await IrshadWalletService.getIrshadWalletNetSummary();
         setWalletNetSummary(netSummary);
         setIrshadWalletBalance(netSummary.walletNet);
-        console.log("Analytics Summary", netSummary);
+        if (DEBUG) console.log("Analytics Summary", netSummary);
       } catch (err) {
         console.error('Error fetching Irshad wallet summary', err);
       }

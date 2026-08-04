@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+
+const DEBUG = false;
 import { Room, Booking, Payment, Guest, Expense, DueTransaction } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ExpenseService } from '../services/expenses';
@@ -159,7 +161,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // 3. Process Reservations & Reservation Rooms
       const fetchedReservationRooms = rrRes.data || [];
       setReservationRooms(fetchedReservationRooms);
-      console.log('reservationRooms state after refresh:', fetchedReservationRooms);
+      if (DEBUG) console.log('reservationRooms state after refresh:', fetchedReservationRooms);
 
       const resMap = new Map<string, any>();
       (resRes.data || []).forEach((r: any) => {

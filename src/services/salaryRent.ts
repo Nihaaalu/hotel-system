@@ -15,6 +15,8 @@ import { getISTDateStr, getISTMonthStr } from '../utils/formatters';
 // In-memory fallback for local employees
 let localEmployees: SalaryEmployee[] = [];
 
+const DEBUG = false;
+
 export const SalaryRentService = {
   // --- WALLET METHODS ---
   async getWalletBalances(): Promise<EmployeeWalletBalance[]> {
@@ -82,8 +84,10 @@ export const SalaryRentService = {
     const cleanRole = role ? role.trim() : '';
     const salaryVal = Number(baseSalary || 0);
 
-    console.log("[EMPLOYEE] Name:", cleanName);
-    console.log("[EMPLOYEE] Salary:", salaryVal);
+    if (DEBUG) {
+      console.log("[EMPLOYEE] Name:", cleanName);
+      console.log("[EMPLOYEE] Salary:", salaryVal);
+    }
 
     let insertedData: any = null;
 
@@ -94,16 +98,20 @@ export const SalaryRentService = {
         is_active: true
       };
 
-      console.log("[EMPLOYEE] About to INSERT into salary_employees");
-      console.log(payload);
+      if (DEBUG) {
+        console.log("[EMPLOYEE] About to INSERT into salary_employees");
+        console.log(payload);
+      }
 
       const { data, error } = await supabase
         .from('salary_employees')
         .insert(payload as any)
         .select();
 
-      console.log("[EMPLOYEE] Returned data:", data);
-      console.log("[EMPLOYEE] Returned error:", error);
+      if (DEBUG) {
+        console.log("[EMPLOYEE] Returned data:", data);
+        console.log("[EMPLOYEE] Returned error:", error);
+      }
 
       if (!error && data && data.length > 0) {
         insertedData = data[0];
@@ -117,21 +125,25 @@ export const SalaryRentService = {
 
         for (const altPayload of fallbackAttempts) {
           try {
-            console.log("[EMPLOYEE] Attempting fallback INSERT into salary_employees:", altPayload);
+            if (DEBUG) {
+              console.log("[EMPLOYEE] Attempting fallback INSERT into salary_employees:", altPayload);
+            }
             const res = await supabase
               .from('salary_employees')
               .insert(altPayload as any)
               .select();
 
-            console.log("[EMPLOYEE] Returned data:", res.data);
-            console.log("[EMPLOYEE] Returned error:", res.error);
+            if (DEBUG) {
+              console.log("[EMPLOYEE] Returned data:", res.data);
+              console.log("[EMPLOYEE] Returned error:", res.error);
+            }
 
             if (!res.error && res.data && res.data.length > 0) {
               insertedData = res.data[0];
               break;
             }
           } catch (err) {
-            console.log("[EMPLOYEE] Fallback exception:", err);
+            if (DEBUG) console.log("[EMPLOYEE] Fallback exception:", err);
           }
         }
       }
@@ -160,7 +172,7 @@ export const SalaryRentService = {
     const cleanName = name.trim();
     const cleanRole = role ? role.trim() : undefined;
 
-    console.log("Updating employee:", id, cleanName);
+    if (DEBUG) console.log("Updating employee:", id, cleanName);
 
     if (isSupabaseConfigured) {
       const payload: Record<string, any> = { employee_name: cleanName };
@@ -172,8 +184,10 @@ export const SalaryRentService = {
         .eq('id', targetId)
         .select();
 
-      console.log("Supabase update result:", data);
-      console.log("Supabase update error:", error);
+      if (DEBUG) {
+        console.log("Supabase update result:", data);
+        console.log("Supabase update error:", error);
+      }
 
       if (error) {
         // Fallback to updating 'name' column
@@ -183,8 +197,10 @@ export const SalaryRentService = {
           .eq('id', targetId)
           .select();
 
-        console.log("Supabase fallback update result:", fallback.data);
-        console.log("Supabase fallback update error:", fallback.error);
+        if (DEBUG) {
+          console.log("Supabase fallback update result:", fallback.data);
+          console.log("Supabase fallback update error:", fallback.error);
+        }
 
         if (fallback.error) {
           throw error;
@@ -279,17 +295,21 @@ export const SalaryRentService = {
       remarks: cleanRemarks,
     };
 
-    console.log("TABLE:", "salary_transactions");
-    console.log("ACTION:", "INSERT");
-    console.log("PAYLOAD:", payload);
+    if (DEBUG) {
+      console.log("TABLE:", "salary_transactions");
+      console.log("ACTION:", "INSERT");
+      console.log("PAYLOAD:", payload);
+    }
 
     const { data, error } = await supabase
       .from("salary_transactions")
       .insert(payload)
       .select();
 
-    console.log("RETURNED DATA:", data);
-    console.log("RETURNED ERROR:", error);
+    if (DEBUG) {
+      console.log("RETURNED DATA:", data);
+      console.log("RETURNED ERROR:", error);
+    }
 
     if (error) {
       throw new Error(error.message || `Failed to record ${type} in salary_transactions`);
@@ -343,17 +363,21 @@ export const SalaryRentService = {
       remarks: cleanRemarks,
     };
 
-    console.log("TABLE:", "salary_transactions");
-    console.log("ACTION:", "INSERT");
-    console.log("PAYLOAD:", payload);
+    if (DEBUG) {
+      console.log("TABLE:", "salary_transactions");
+      console.log("ACTION:", "INSERT");
+      console.log("PAYLOAD:", payload);
+    }
 
     const { data, error } = await supabase
       .from("salary_transactions")
       .insert(payload)
       .select();
 
-    console.log("RETURNED DATA:", data);
-    console.log("RETURNED ERROR:", error);
+    if (DEBUG) {
+      console.log("RETURNED DATA:", data);
+      console.log("RETURNED ERROR:", error);
+    }
 
     if (error) {
       throw new Error(error.message || 'Failed to record salary transaction in salary_transactions');

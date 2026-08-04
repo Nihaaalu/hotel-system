@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+
+const DEBUG = false;
 import { Booking, Guest, Payment, Room } from '../types';
 import { supabase } from '../lib/supabase';
 import { BookingService, PaymentService } from '../services/dbServices';
@@ -743,6 +745,33 @@ export default function BookingModal({
       const newCheckOut = extensionTargetNewCheckOut.split('T')[0].trim();
       const targetResId = String(loadedBooking.bookingGroupId || loadedBooking.id);
 
+      // Determine original rooms allocation
+      const { timeline: origTimeline } = parseRoomTimeline(loadedBooking.remarks || '');
+      const origRooms = origTimeline && origTimeline.length > 0
+        ? origTimeline[0].rooms
+        : Array.from(new Set(allocatedRoomsList.map((r) => r.roomNumber)));
+
+      // Determine new extension allocation rooms
+      const currentAllocated = extensionSelectedRooms.length > 0
+        ? extensionSelectedRooms
+        : origRooms;
+
+      // Count new allocation rows being inserted (rooms not already in original allocation)
+      const existingAllocatedNums = new Set(allocatedRoomsList.map((r) => r.roomNumber));
+      const newRoomsToInsert = currentAllocated.filter((num) => !existingAllocatedNums.has(num));
+      const insertedCount = newRoomsToInsert.length;
+
+      // Log before saving strictly as required
+      if (DEBUG) {
+        console.log('Original allocation:', origRooms);
+        console.log('New extension allocation:', currentAllocated);
+        console.log('Rows being inserted:', insertedCount);
+        console.log('Rows being updated:', 0);
+        console.log('Expected result');
+        console.log('Updated rows = 0');
+        console.log(`Inserted rows = ${insertedCount}`);
+      }
+
       // 1. Update Payment Record & Add Transaction to due_payment_transactions (if payNow > 0)
       await updatePaymentSummary({
         reservationId: targetResId,
@@ -755,11 +784,7 @@ export default function BookingModal({
         },
       });
 
-      // 2. Ensure extension rooms are inserted into reservation_rooms in Supabase
-      const currentAllocated = extensionSelectedRooms.length > 0
-        ? extensionSelectedRooms
-        : allocatedRoomsList.map((r) => r.roomNumber);
-
+      // 2. Ensure extension rooms are inserted into reservation_rooms in Supabase (INSERT only)
       if (currentAllocated.length > 0) {
         await ReservationService.addRoomsToReservation(targetResId, currentAllocated);
       }
@@ -998,8 +1023,10 @@ export default function BookingModal({
     try {
       setIsSubmitting(true);
 
+      const targetResId = String(loadedBooking.bookingGroupId || loadedBooking.id);
+
       // 1. Record check-in payment details
-      await BookingService.recordCheckInPayment(loadedBooking.id, {
+      await BookingService.recordCheckInPayment(targetResId, {
         amountCollected: paidNow,
         transferredToIrshad: transferredAmount,
         transferToIrshad: isTransferred,
@@ -1013,7 +1040,6 @@ export default function BookingModal({
       });
 
       // 2. Execute check-in for this booking (or group)
-      const targetResId = loadedBooking.bookingGroupId || loadedBooking.id;
       await BookingService.checkInGuest(targetResId, loadedBooking.remarks);
 
       setIsCheckInModalOpen(false);

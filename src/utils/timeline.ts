@@ -27,16 +27,59 @@ export function parseRoomTimeline(remarksStr: string): {
 } {
   if (!remarksStr) return { timeline: [], cleanRemarks: '' };
 
-  const match = remarksStr.match(/\[ROOM_TIMELINE:(.*?)\]/);
-  if (match && match[1]) {
-    try {
-      const parsed = JSON.parse(match[1]);
-      const cleanRemarks = remarksStr.replace(/\[ROOM_TIMELINE:.*?\]\s*/, '').trim();
-      return { timeline: Array.isArray(parsed) ? parsed : [], cleanRemarks };
-    } catch (e) {
-      console.error('Error parsing room timeline JSON:', e);
+  const tag = '[ROOM_TIMELINE:';
+  const tagIdx = remarksStr.indexOf(tag);
+  if (tagIdx !== -1) {
+    const jsonStart = tagIdx + tag.length;
+    let depth = 0;
+    let jsonEnd = -1;
+    let inString = false;
+    let escape = false;
+
+    for (let i = jsonStart; i < remarksStr.length; i++) {
+      const char = remarksStr[i];
+      if (inString) {
+        if (escape) {
+          escape = false;
+        } else if (char === '\\') {
+          escape = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+      } else {
+        if (char === '"') {
+          inString = true;
+        } else if (char === '[') {
+          depth++;
+        } else if (char === ']') {
+          depth--;
+          if (depth === 0) {
+            jsonEnd = i + 1;
+            break;
+          }
+        }
+      }
+    }
+
+    if (jsonEnd !== -1) {
+      try {
+        const jsonStr = remarksStr.slice(jsonStart, jsonEnd);
+        const parsed = JSON.parse(jsonStr);
+        let tagEnd = jsonEnd;
+        if (remarksStr[tagEnd] === ']') {
+          tagEnd++;
+        }
+        const cleanRemarks = (remarksStr.slice(0, tagIdx) + remarksStr.slice(tagEnd)).replace(/\s+/g, ' ').trim();
+        return {
+          timeline: Array.isArray(parsed) ? parsed : [],
+          cleanRemarks,
+        };
+      } catch (e) {
+        console.error('Error parsing room timeline JSON:', e);
+      }
     }
   }
+
   return { timeline: [], cleanRemarks: remarksStr };
 }
 
