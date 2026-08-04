@@ -2026,31 +2026,6 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
           </div>
         </div>
 
-        {/* 3. DARK NAVY SUMMARY HEADER CARD */}
-        <div className="bg-slate-900 text-white p-4 sm:p-5 rounded-2xl shadow-sm border border-slate-800 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <span className="text-xs font-mono font-bold text-slate-400 uppercase tracking-widest block">
-              {ledgerViewMode === 'daily'
-                ? 'Revenue Today'
-                : ledgerViewMode === 'weekly'
-                ? 'Revenue This Week'
-                : ledgerViewMode === 'monthly'
-                ? 'Revenue This Month'
-                : 'Revenue In Range'}
-            </span>
-            <h4 className="text-xl sm:text-2xl font-black text-emerald-400 tracking-tight mt-0.5">
-              Revenue ₹{ledgerScopeRevenue.toLocaleString()}
-            </h4>
-          </div>
-          <div className="text-right">
-            <span className="px-3.5 py-1.5 bg-slate-800 border border-slate-700/80 rounded-xl text-xs sm:text-sm font-extrabold text-slate-200 shadow-2xs">
-              {ledgerScopeBookingCount} {ledgerScopeBookingCount === 1
-                ? ledgerViewMode === 'daily' ? 'Booking Today' : 'Booking'
-                : ledgerViewMode === 'daily' ? 'Bookings Today' : 'Bookings'}
-            </span>
-          </div>
-        </div>
-
         {/* 4. SEARCH & RESPONSIVE FILTER CHIPS TOOLBAR (NO HORIZONTAL SCROLL) */}
         <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-md py-2 space-y-2.5 border-b border-slate-100 shadow-3xs">
           {/* Search Input */}
@@ -2104,8 +2079,36 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
           </div>
         </div>
 
-        {/* 5. LEDGER ENTRIES LIST / GROUPED BY DAY */}
-        <div className="pt-1">
+        {/* 5. SINGLE REGISTER CARD CONTAINER FOR REVENUE LEDGER */}
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden" id="reservation_revenue_register_card">
+          {/* Dark Header Banner (Matching Expense Register) */}
+          <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between border-b border-slate-800">
+            <div>
+              <span className="text-xs sm:text-sm font-black uppercase tracking-wider block text-slate-100">
+                {ledgerViewMode === 'daily' && ledgerDateHeader.dateFormatted}
+                {ledgerViewMode === 'weekly' && `WEEK ${activeLedgerWeek.weekNum} (${formatLedgerDateHeader(activeLedgerWeek.startDateStr).dateFormatted.substring(0, 6)} – ${formatLedgerDateHeader(activeLedgerWeek.endDateStr).dateFormatted})`}
+                {ledgerViewMode === 'monthly' && `${formatMonthLabel(selectedMonth).toUpperCase()}`}
+                {ledgerViewMode === 'custom' && `CUSTOM RANGE (${formatLedgerDateHeader(ledgerCustomFromDate).dateFormatted.substring(0, 6)} – ${formatLedgerDateHeader(ledgerCustomToDate).dateFormatted})`}
+              </span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase mt-0.5 block">
+                {ledgerViewMode === 'daily' && ledgerDateHeader.weekday}
+                {ledgerViewMode === 'weekly' && 'Weekly Register'}
+                {ledgerViewMode === 'monthly' && 'Full Month Register'}
+                {ledgerViewMode === 'custom' && 'Custom Range Register'}
+              </span>
+            </div>
+
+            <div className="text-right">
+              <span className="text-sm sm:text-base font-extrabold text-emerald-400 block">
+                Revenue ₹{ledgerScopeRevenue.toLocaleString()}
+              </span>
+              <span className="text-[10px] text-slate-400 font-medium block">
+                {ledgerScopeBookingCount} {ledgerScopeBookingCount === 1 ? 'Booking' : 'Bookings'}
+              </span>
+            </div>
+          </div>
+
+          {/* Register Body Content */}
           {(() => {
             const renderReservationCard = (item: any) => {
               const formattedRooms = item.roomNumbers
@@ -2117,36 +2120,36 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
               return (
                 <div
                   key={item.reservationId}
-                  className="px-3.5 sm:px-5 py-3 hover:bg-slate-50/90 transition-colors duration-150 flex items-center justify-between gap-3 min-h-[80px]"
+                  className="px-3.5 py-2.5 hover:bg-slate-50 active:bg-slate-100 transition duration-150 flex items-center justify-between gap-3"
                 >
                   <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h4 className="font-black text-slate-900 text-lg sm:text-[22px] leading-tight truncate">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h4 className="font-bold text-slate-900 text-xs sm:text-sm tracking-tight truncate">
                         {item.guestName}
                       </h4>
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono font-bold text-xs sm:text-[14px] rounded-md border border-slate-200/70 shrink-0">
-                        {formattedRooms}
+                      <span className="px-2 py-0.5 bg-slate-100 text-slate-700 font-mono font-bold text-[10px] rounded-md border border-slate-200/80 shrink-0">
+                        Room {formattedRooms}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`px-2 py-0.5 rounded-full text-[11px] sm:text-[13px] font-black uppercase border ${item.statusClass}`}>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase border ${item.statusClass}`}>
                         {item.statusLabel}
                       </span>
-                      <span className={`px-2 py-0.5 rounded-full text-[11px] sm:text-[13px] font-black border ${item.paymentBadgeClass}`}>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${item.paymentBadgeClass}`}>
                         {item.paymentBadgeLabel}
                       </span>
                     </div>
                   </div>
 
-                  <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
-                    <span className="text-xl sm:text-[28px] font-black text-emerald-600 font-sans tracking-tight">
+                  <div className="text-right shrink-0 flex items-center gap-2.5 sm:gap-3">
+                    <span className="text-sm sm:text-base font-extrabold text-emerald-600 font-sans tracking-tight">
                       ₹{item.totalCollected.toLocaleString()}
                     </span>
 
                     <button
                       onClick={() => handleOpenRevenueDetailModal(item)}
-                      className="text-xs sm:text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:bg-indigo-50/80 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                      className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5 hover:bg-indigo-50/80 px-2 py-1 rounded-lg transition cursor-pointer"
                     >
                       <span>View Details</span>
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -2160,17 +2163,17 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
             if (ledgerViewMode === 'daily') {
               if (reservationsInScope.length === 0) {
                 return (
-                  <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                  <div className="py-10 px-4 text-center bg-slate-50/40 space-y-2">
                     <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
-                    <p className="font-bold text-slate-700 text-xs sm:text-sm">No collections recorded</p>
-                    <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
-                      No reservation revenue records found for {ledgerDateHeader.dateFormatted}.
+                    <p className="font-extrabold text-slate-700 text-sm">No reservations found</p>
+                    <p className="text-xs text-slate-400 max-w-xs mx-auto font-medium">
+                      There are no check-ins for the selected date.
                     </p>
                   </div>
                 );
               }
               return (
-                <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
+                <div className="divide-y divide-slate-100">
                   {reservationsInScope.map(renderReservationCard)}
                 </div>
               );
@@ -2178,6 +2181,18 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
 
             // WEEKLY MODE DISPLAY
             if (ledgerViewMode === 'weekly') {
+              if (reservationsInScope.length === 0) {
+                return (
+                  <div className="py-10 px-4 text-center bg-slate-50/40 space-y-2">
+                    <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
+                    <p className="font-extrabold text-slate-700 text-sm">No reservations found</p>
+                    <p className="text-xs text-slate-400 max-w-xs mx-auto font-medium">
+                      There are no check-ins for the selected week.
+                    </p>
+                  </div>
+                );
+              }
+
               const days: string[] = [];
               let cur = activeLedgerWeek.startDateStr;
               while (cur <= activeLedgerWeek.endDateStr) {
@@ -2185,38 +2200,35 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                 cur = addDaysToDate(cur, 1);
               }
 
+              const activeDays = days.filter((dayStr) => reservationsInScope.some((r) => r.checkInDateKey === dayStr));
+
               return (
-                <div className="space-y-4">
-                  {days.map((dayStr) => {
+                <div className="divide-y divide-slate-200/80">
+                  {activeDays.map((dayStr) => {
                     const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
                     const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
                     const headerInfo = formatLedgerDateHeader(dayStr);
 
                     return (
-                      <div key={dayStr} className="space-y-2">
-                        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-100/90 rounded-xl border border-slate-200/70">
-                          <div className="flex items-center gap-2">
-                            <CalendarIcon className="w-4 h-4 text-indigo-600" />
-                            <span className="font-extrabold text-xs sm:text-sm text-slate-900">{headerInfo.dateFormatted}</span>
-                            <span className="text-xs font-bold text-indigo-600">({headerInfo.weekday})</span>
+                      <div key={dayStr} className="bg-white">
+                        {/* Compact Date Divider (Matching Expense Ledger) */}
+                        <div className="bg-slate-50 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/80 text-slate-800">
+                          <div className="flex items-center gap-1.5 text-xs font-bold">
+                            <span className="text-slate-900 font-extrabold">{headerInfo.dateFormatted}</span>
+                            <span className="text-slate-400 font-normal">•</span>
+                            <span className="text-slate-500 font-medium text-[11px] capitalize">{headerInfo.weekday}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-black text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
-                            <span className="text-[11px] font-extrabold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                            <span className="text-xs font-extrabold text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[10px] font-bold text-slate-500">
                               {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
                             </span>
                           </div>
                         </div>
 
-                        {dayItems.length === 0 ? (
-                          <div className="p-3 text-center bg-slate-50/40 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs font-bold">
-                            No bookings checking in on this date.
-                          </div>
-                        ) : (
-                          <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
-                            {dayItems.map(renderReservationCard)}
-                          </div>
-                        )}
+                        <div className="divide-y divide-slate-100">
+                          {dayItems.map(renderReservationCard)}
+                        </div>
                       </div>
                     );
                   })}
@@ -2226,6 +2238,18 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
 
             // MONTHLY MODE DISPLAY
             if (ledgerViewMode === 'monthly') {
+              if (reservationsInScope.length === 0) {
+                return (
+                  <div className="py-10 px-4 text-center bg-slate-50/40 space-y-2">
+                    <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
+                    <p className="font-extrabold text-slate-700 text-sm">No reservations found</p>
+                    <p className="text-xs text-slate-400 max-w-xs mx-auto font-medium">
+                      There are no check-ins for the selected month.
+                    </p>
+                  </div>
+                );
+              }
+
               const parts = selectedMonth.split('-').map(Number);
               const year = parts[0] || 2026;
               const month = parts[1] || 8;
@@ -2237,38 +2261,35 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                 days.push(`${year}-${mm}-${String(d).padStart(2, '0')}`);
               }
 
+              const activeDays = days.filter((dayStr) => reservationsInScope.some((r) => r.checkInDateKey === dayStr));
+
               return (
-                <div className="space-y-4 max-h-[700px] overflow-y-auto pr-1">
-                  {days.map((dayStr) => {
+                <div className="divide-y divide-slate-200/80 max-h-[700px] overflow-y-auto">
+                  {activeDays.map((dayStr) => {
                     const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
                     const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
                     const headerInfo = formatLedgerDateHeader(dayStr);
 
                     return (
-                      <div key={dayStr} className="space-y-2">
-                        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-100/90 rounded-xl border border-slate-200/70 sticky top-0 z-10">
-                          <div className="flex items-center gap-2">
-                            <CalendarIcon className="w-4 h-4 text-indigo-600" />
-                            <span className="font-extrabold text-xs sm:text-sm text-slate-900">{headerInfo.dateFormatted}</span>
-                            <span className="text-xs font-bold text-indigo-600">({headerInfo.weekday})</span>
+                      <div key={dayStr} className="bg-white">
+                        {/* Compact Date Divider */}
+                        <div className="bg-slate-50 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/80 text-slate-800 sticky top-0 z-10">
+                          <div className="flex items-center gap-1.5 text-xs font-bold">
+                            <span className="text-slate-900 font-extrabold">{headerInfo.dateFormatted}</span>
+                            <span className="text-slate-400 font-normal">•</span>
+                            <span className="text-slate-500 font-medium text-[11px] capitalize">{headerInfo.weekday}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-black text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
-                            <span className="text-[11px] font-extrabold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                            <span className="text-xs font-extrabold text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[10px] font-bold text-slate-500">
                               {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
                             </span>
                           </div>
                         </div>
 
-                        {dayItems.length === 0 ? (
-                          <div className="p-3 text-center bg-slate-50/40 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs font-bold">
-                            No bookings checking in on this date.
-                          </div>
-                        ) : (
-                          <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
-                            {dayItems.map(renderReservationCard)}
-                          </div>
-                        )}
+                        <div className="divide-y divide-slate-100">
+                          {dayItems.map(renderReservationCard)}
+                        </div>
                       </div>
                     );
                   })}
@@ -2282,40 +2303,41 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
 
               if (uniqueDates.length === 0) {
                 return (
-                  <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                  <div className="py-10 px-4 text-center bg-slate-50/40 space-y-2">
                     <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
-                    <p className="font-bold text-slate-700 text-xs sm:text-sm">No collections recorded in selected range</p>
-                    <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
-                      Try picking a different date range or adjusting search filters.
+                    <p className="font-extrabold text-slate-700 text-sm">No reservations found</p>
+                    <p className="text-xs text-slate-400 max-w-xs mx-auto font-medium">
+                      There are no check-ins for the selected range.
                     </p>
                   </div>
                 );
               }
 
               return (
-                <div className="space-y-4">
+                <div className="divide-y divide-slate-200/80">
                   {uniqueDates.map((dayStr) => {
                     const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
                     const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
                     const headerInfo = formatLedgerDateHeader(dayStr);
 
                     return (
-                      <div key={dayStr} className="space-y-2">
-                        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-100/90 rounded-xl border border-slate-200/70">
-                          <div className="flex items-center gap-2">
-                            <CalendarIcon className="w-4 h-4 text-indigo-600" />
-                            <span className="font-extrabold text-xs sm:text-sm text-slate-900">{headerInfo.dateFormatted}</span>
-                            <span className="text-xs font-bold text-indigo-600">({headerInfo.weekday})</span>
+                      <div key={dayStr} className="bg-white">
+                        {/* Compact Date Divider */}
+                        <div className="bg-slate-50 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/80 text-slate-800">
+                          <div className="flex items-center gap-1.5 text-xs font-bold">
+                            <span className="text-slate-900 font-extrabold">{headerInfo.dateFormatted}</span>
+                            <span className="text-slate-400 font-normal">•</span>
+                            <span className="text-slate-500 font-medium text-[11px] capitalize">{headerInfo.weekday}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-black text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
-                            <span className="text-[11px] font-extrabold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                            <span className="text-xs font-extrabold text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[10px] font-bold text-slate-500">
                               {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
                             </span>
                           </div>
                         </div>
 
-                        <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
+                        <div className="divide-y divide-slate-100">
                           {dayItems.map(renderReservationCard)}
                         </div>
                       </div>
