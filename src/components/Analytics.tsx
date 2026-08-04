@@ -98,6 +98,59 @@ const addDaysToDate = (ymdStr: string, deltaDays: number): string => {
   }
 };
 
+const getDayOfWeekName = (ymdStr: string): string => {
+  try {
+    const parts = ymdStr.split('-').map(Number);
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
+    return date.toLocaleDateString('en-IN', { weekday: 'long' });
+  } catch {
+    return '';
+  }
+};
+
+export interface WeekRange {
+  weekNum: number;
+  startDateStr: string; // YYYY-MM-DD
+  endDateStr: string;   // YYYY-MM-DD
+  label: string;
+}
+
+const getWeeksOfMonth = (year: number, month1Indexed: number): WeekRange[] => {
+  const daysInMonth = new Date(year, month1Indexed, 0).getDate();
+  const weeks: WeekRange[] = [];
+
+  let currentDay = 1;
+  let weekNum = 1;
+
+  while (currentDay <= daysInMonth) {
+    const startDay = currentDay;
+    const startDateObj = new Date(year, month1Indexed - 1, startDay);
+    const dayOfWeek = startDateObj.getDay(); // 0 = Sun, 1 = Mon... 6 = Sat
+
+    const daysUntilSunday = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
+    const endDay = Math.min(daysInMonth, startDay + daysUntilSunday);
+
+    const mm = String(month1Indexed).padStart(2, '0');
+    const startStr = `${year}-${mm}-${String(startDay).padStart(2, '0')}`;
+    const endStr = `${year}-${mm}-${String(endDay).padStart(2, '0')}`;
+
+    const mNameShort = SHORT_MONTH_NAMES[month1Indexed - 1] || 'Aug';
+    const label = `Week ${weekNum} (${String(startDay).padStart(2, '0')} ${mNameShort} - ${String(endDay).padStart(2, '0')} ${mNameShort})`;
+
+    weeks.push({
+      weekNum,
+      startDateStr: startStr,
+      endDateStr: endStr,
+      label,
+    });
+
+    currentDay = endDay + 1;
+    weekNum++;
+  }
+
+  return weeks;
+};
+
 const formatLedgerDateHeader = (ymdStr: string): { dateFormatted: string; weekday: string } => {
   try {
     const parts = ymdStr.split('-').map(Number);
@@ -295,9 +348,25 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
 
   // Booking Revenue Ledger State
   const [ledgerSelectedDate, setLedgerSelectedDate] = useState<string>(currentISTDateStr);
+  const [ledgerViewMode, setLedgerViewMode] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('daily');
+  const [ledgerCustomFromDate, setLedgerCustomFromDate] = useState<string>(() => `${selectedMonth}-01`);
+  const [ledgerCustomToDate, setLedgerCustomToDate] = useState<string>(currentISTDateStr);
+  const [isLedgerCustomRangeModalOpen, setIsLedgerCustomRangeModalOpen] = useState<boolean>(false);
+  const [isLedgerDatePickerOpen, setIsLedgerDatePickerOpen] = useState<boolean>(false);
+  const [calendarYear, setCalendarYear] = useState<number>(2026);
+  const [calendarMonth, setCalendarMonth] = useState<number>(8);
   const [ledgerSearchQuery, setLedgerSearchQuery] = useState<string>('');
-  const [ledgerFilterType, setLedgerFilterType] = useState<'ALL' | 'advance' | 'balance' | 'extension' | 'additional'>('ALL');
+  const [ledgerFilterType, setLedgerFilterType] = useState<string>('ALL');
   const [selectedRevenueDetail, setSelectedRevenueDetail] = useState<any | null>(null);
+
+  const handleOpenDatePickerModal = () => {
+    const parts = ledgerSelectedDate.split('-').map(Number);
+    const y = parts[0] || parseInt(selectedMonth.split('-')[0], 10) || 2026;
+    const m = parts[1] || parseInt(selectedMonth.split('-')[1], 10) || 8;
+    setCalendarYear(y);
+    setCalendarMonth(m);
+    setIsLedgerDatePickerOpen(true);
+  };
 
   // Sync ledgerSelectedDate if top month picker changes and selected date is outside selected month
   useEffect(() => {
@@ -922,8 +991,32 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
     return dStr;
   };
 
-  // Selected Day Reservations Ledger (Grouped by Reservation Check-in Date)
-  const selectedDayReservationLedgerData = useMemo(() => {
+  // Active Ledger Week calculation for Weekly mode
+  const activeLedgerWeek = useMemo(() => {
+    const parts = ledgerSelectedDate.split('-').map(Number);
+    const year = parts[0] || 2026;
+    const month = parts[1] || 8;
+    const weeks = getWeeksOfMonth(year, month);
+
+    const found = weeks.find(
+      (w) => ledgerSelectedDate >= w.startDateStr && ledgerSelectedDate <= w.endDateStr
+    );
+    return found || weeks[0];
+  }, [ledgerSelectedDate]);
+
+  const totalDaysInLedgerCustomRange = useMemo(() => {
+    if (!ledgerCustomFromDate || !ledgerCustomToDate || ledgerCustomFromDate > ledgerCustomToDate) return 1;
+    const parts1 = ledgerCustomFromDate.split('-').map(Number);
+    const parts2 = ledgerCustomToDate.split('-').map(Number);
+    const d1 = new Date(parts1[0], parts1[1] - 1, parts1[2]);
+    const d2 = new Date(parts2[0], parts2[1] - 1, parts2[2]);
+    const diffMs = d2.getTime() - d1.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1;
+    return Math.max(1, diffDays);
+  }, [ledgerCustomFromDate, ledgerCustomToDate]);
+
+  // All Reservation Ledger Entries (Source of Truth for Ledger Cards)
+  const allReservationLedgerEntries = useMemo(() => {
     const allResIds = new Set<string>();
     bookings.forEach((b) => {
       const idStr = String(b.bookingGroupId || b.id || '');
@@ -939,6 +1032,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
       guestName: string;
       roomNumbers: string;
       checkInDate: string;
+      checkInDateKey: string;
       checkOutDate: string;
       dayCollectedAmount: number;
       totalCollected: number;
@@ -970,9 +1064,6 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
 
       const checkInDateRaw = matchingBooking?.checkInDate || allResTxs[0]?.checkInDate || '-';
       const checkInDateKey = checkInDateRaw.split('T')[0];
-
-      // GROUP BY CHECK-IN DATE: Only include reservations checking in on ledgerSelectedDate
-      if (checkInDateKey !== ledgerSelectedDate) return;
 
       const guestName = matchingBooking?.guestName || allResTxs[0]?.guestName || 'Guest';
 
@@ -1044,6 +1135,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
         guestName,
         roomNumbers: roomsStr,
         checkInDate: checkInDateRaw,
+        checkInDateKey,
         checkOutDate,
         dayCollectedAmount: totalCollected,
         totalCollected,
@@ -1064,22 +1156,11 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
     });
 
     return result;
-  }, [allRevenueTransactions, ledgerSelectedDate, bookings, payments]);
+  }, [allRevenueTransactions, bookings, payments]);
 
-  // Day Summary Metrics
-  const dayTotalRevenue = useMemo(() => {
-    return selectedDayReservationLedgerData.reduce((sum, res) => sum + res.dayCollectedAmount, 0);
-  }, [selectedDayReservationLedgerData]);
-
-  const dayBookingCount = selectedDayReservationLedgerData.length;
-
-  const dayCollectionCount = useMemo(() => {
-    return selectedDayReservationLedgerData.reduce((sum, res) => sum + res.dayTransactionsCount, 0);
-  }, [selectedDayReservationLedgerData]);
-
-  // Filtered & Searched Reservation Cards for Selected Day
-  const filteredReservationLedgerData = useMemo(() => {
-    let result = [...selectedDayReservationLedgerData];
+  // Searched & Filtered Ledger Entries across all dates
+  const searchedAndFilteredReservations = useMemo(() => {
+    let result = [...allReservationLedgerEntries];
 
     if (ledgerSearchQuery.trim()) {
       const q = ledgerSearchQuery.toLowerCase().trim();
@@ -1101,32 +1182,93 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
       }
     }
 
-    // Newest reservation activity first
     result.sort((a, b) => new Date(b.latestTimestamp).getTime() - new Date(a.latestTimestamp).getTime());
 
     return result;
-  }, [selectedDayReservationLedgerData, ledgerSearchQuery, ledgerFilterType]);
+  }, [allReservationLedgerEntries, ledgerSearchQuery, ledgerFilterType]);
 
-  // Date Header Info
+  // Mode Scoped Reservation Entries
+  const reservationsInScope = useMemo(() => {
+    if (ledgerViewMode === 'daily') {
+      return searchedAndFilteredReservations.filter((res) => res.checkInDateKey === ledgerSelectedDate);
+    }
+    if (ledgerViewMode === 'weekly') {
+      return searchedAndFilteredReservations.filter(
+        (res) => res.checkInDateKey >= activeLedgerWeek.startDateStr && res.checkInDateKey <= activeLedgerWeek.endDateStr
+      );
+    }
+    if (ledgerViewMode === 'monthly') {
+      return searchedAndFilteredReservations.filter((res) => res.checkInDateKey.startsWith(selectedMonth));
+    }
+    if (ledgerViewMode === 'custom') {
+      return searchedAndFilteredReservations.filter(
+        (res) => res.checkInDateKey >= ledgerCustomFromDate && res.checkInDateKey <= ledgerCustomToDate
+      );
+    }
+    return searchedAndFilteredReservations;
+  }, [searchedAndFilteredReservations, ledgerViewMode, ledgerSelectedDate, activeLedgerWeek, selectedMonth, ledgerCustomFromDate, ledgerCustomToDate]);
+
+  // Scope Metrics
+  const ledgerScopeRevenue = useMemo(() => {
+    return reservationsInScope.reduce((sum, res) => sum + res.totalCollected, 0);
+  }, [reservationsInScope]);
+
+  const ledgerScopeBookingCount = reservationsInScope.length;
+
+  // Date Header Info for Daily mode
   const ledgerDateHeader = useMemo(() => {
     return formatLedgerDateHeader(ledgerSelectedDate);
   }, [ledgerSelectedDate]);
 
-  const handleLedgerPrevDay = () => {
-    const prev = addDaysToDate(ledgerSelectedDate, -1);
-    setLedgerSelectedDate(prev);
-    const m = prev.substring(0, 7);
-    if (m !== selectedMonth) {
-      setSelectedMonth(m);
+  const handleLedgerPrevPage = () => {
+    if (ledgerViewMode === 'daily') {
+      const prev = addDaysToDate(ledgerSelectedDate, -1);
+      setLedgerSelectedDate(prev);
+      const m = prev.substring(0, 7);
+      if (m !== selectedMonth) setSelectedMonth(m);
+    } else if (ledgerViewMode === 'weekly') {
+      const prev = addDaysToDate(activeLedgerWeek.startDateStr, -7);
+      setLedgerSelectedDate(prev);
+      const m = prev.substring(0, 7);
+      if (m !== selectedMonth) setSelectedMonth(m);
+    } else if (ledgerViewMode === 'monthly') {
+      const parts = selectedMonth.split('-').map(Number);
+      const prevDate = new Date(parts[0], parts[1] - 2, 1);
+      const y = prevDate.getFullYear();
+      const m = String(prevDate.getMonth() + 1).padStart(2, '0');
+      const newM = `${y}-${m}`;
+      setSelectedMonth(newM);
+      setLedgerSelectedDate(`${newM}-01`);
+    } else if (ledgerViewMode === 'custom') {
+      const diffDays = totalDaysInLedgerCustomRange;
+      setLedgerCustomFromDate((prev) => addDaysToDate(prev, -diffDays));
+      setLedgerCustomToDate((prev) => addDaysToDate(prev, -diffDays));
     }
   };
 
-  const handleLedgerNextDay = () => {
-    const next = addDaysToDate(ledgerSelectedDate, 1);
-    setLedgerSelectedDate(next);
-    const m = next.substring(0, 7);
-    if (m !== selectedMonth) {
-      setSelectedMonth(m);
+  const handleLedgerNextPage = () => {
+    if (ledgerViewMode === 'daily') {
+      const next = addDaysToDate(ledgerSelectedDate, 1);
+      setLedgerSelectedDate(next);
+      const m = next.substring(0, 7);
+      if (m !== selectedMonth) setSelectedMonth(m);
+    } else if (ledgerViewMode === 'weekly') {
+      const next = addDaysToDate(activeLedgerWeek.endDateStr, 1);
+      setLedgerSelectedDate(next);
+      const m = next.substring(0, 7);
+      if (m !== selectedMonth) setSelectedMonth(m);
+    } else if (ledgerViewMode === 'monthly') {
+      const parts = selectedMonth.split('-').map(Number);
+      const nextDate = new Date(parts[0], parts[1], 1);
+      const y = nextDate.getFullYear();
+      const m = String(nextDate.getMonth() + 1).padStart(2, '0');
+      const newM = `${y}-${m}`;
+      setSelectedMonth(newM);
+      setLedgerSelectedDate(`${newM}-01`);
+    } else if (ledgerViewMode === 'custom') {
+      const diffDays = totalDaysInLedgerCustomRange;
+      setLedgerCustomFromDate((prev) => addDaysToDate(prev, diffDays));
+      setLedgerCustomToDate((prev) => addDaysToDate(prev, diffDays));
     }
   };
 
@@ -1730,7 +1872,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
         </div>
       </div>
 
-      {/* 5. BOOKING REVENUE LEDGER SECTION (Redesigned Single-Day Expense Ledger Style) */}
+      {/* 5. BOOKING REVENUE LEDGER SECTION (Redesigned Expense Ledger Navigation & Layout) */}
       <div id="booking-revenue-ledger" className="bg-white p-3.5 sm:p-5 border border-slate-200/80 rounded-2xl shadow-2xs space-y-4">
         {/* Top Title */}
         <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-3 gap-3">
@@ -1740,54 +1882,65 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
               Reservation Revenue Ledger
             </h3>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Daily reservation revenue ledger grouped cleanly by Reservation ID.
+              Reservation revenue ledger grouped cleanly by Check-in Date.
             </p>
           </div>
         </div>
 
-        {/* Date Navigation Bar (Identical to Expense Ledger) */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-2.5 sm:p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center gap-2">
+        {/* 1. TOP CONTROLS: Date Picker Selector + View Mode Switcher + Go to Today */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2 overflow-x-auto pb-0.5 sm:pb-0 scrollbar-none max-w-full">
+            {/* Dynamic Date/Month Picker Selector Button */}
             <button
-              onClick={handleLedgerPrevDay}
-              className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-extrabold text-slate-700 shadow-2xs flex items-center gap-1.5 hover:bg-slate-50 transition cursor-pointer active:scale-95"
+              onClick={() => {
+                if (ledgerViewMode === 'custom') {
+                  setIsLedgerCustomRangeModalOpen(true);
+                } else {
+                  handleOpenDatePickerModal();
+                }
+              }}
+              className="inline-flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-xl border border-slate-200/90 shadow-2xs text-slate-900 font-black text-xs hover:bg-slate-50 active:bg-slate-100 transition cursor-pointer shrink-0 min-h-[36px]"
             >
-              <ChevronLeft className="w-4 h-4 text-slate-500" />
-              <span className="hidden sm:inline">Previous Day</span>
+              <CalendarIcon className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="uppercase text-slate-900 font-black">
+                {ledgerViewMode === 'daily' && ledgerDateHeader.dateFormatted}
+                {ledgerViewMode === 'weekly' && `Week of ${ledgerDateHeader.dateFormatted}`}
+                {ledgerViewMode === 'monthly' && formatMonthLabel(selectedMonth)}
+                {ledgerViewMode === 'custom' && `${formatLedgerDateHeader(ledgerCustomFromDate).dateFormatted} - ${formatLedgerDateHeader(ledgerCustomToDate).dateFormatted}`}
+              </span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             </button>
 
-            {/* Center Date Card */}
-            <div className="relative flex items-center bg-white border border-indigo-200/90 rounded-xl px-3.5 py-1.5 shadow-2xs hover:border-indigo-400 transition cursor-pointer">
-              <CalendarIcon className="w-4 h-4 text-indigo-600 mr-2 shrink-0" />
-              <div className="text-center">
-                <span className="font-mono font-black text-xs sm:text-sm text-slate-900 block">
-                  {ledgerDateHeader.dateFormatted}
-                </span>
-                <span className="block text-[10px] font-bold text-indigo-600 uppercase tracking-wider">
-                  {ledgerDateHeader.weekday}
-                </span>
-              </div>
-              <input
-                type="date"
-                value={ledgerSelectedDate}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    setLedgerSelectedDate(e.target.value);
-                    const m = e.target.value.substring(0, 7);
-                    if (m !== selectedMonth) setSelectedMonth(m);
-                  }
-                }}
-                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-              />
+            {/* Segmented View Mode Switcher: [ Daily ] [ Weekly ] [ Monthly ] [ Custom ] */}
+            <div className="bg-slate-100/90 p-1 rounded-xl flex items-center gap-0.5 border border-slate-200/80 shadow-2xs shrink-0">
+              {[
+                { id: 'daily', label: 'Daily' },
+                { id: 'weekly', label: 'Weekly' },
+                { id: 'monthly', label: 'Monthly' },
+                { id: 'custom', label: 'Custom' },
+              ].map((tab) => {
+                const isActive = ledgerViewMode === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => {
+                      setLedgerViewMode(tab.id as any);
+                      if (tab.id === 'custom') {
+                        setIsLedgerCustomRangeModalOpen(true);
+                      }
+                    }}
+                    className={`px-2.5 sm:px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer whitespace-nowrap ${
+                      isActive
+                        ? 'bg-white text-indigo-700 shadow-2xs font-black'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50 font-bold'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
             </div>
-
-            <button
-              onClick={handleLedgerNextDay}
-              className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-extrabold text-slate-700 shadow-2xs flex items-center gap-1.5 hover:bg-slate-50 transition cursor-pointer active:scale-95"
-            >
-              <span className="hidden sm:inline">Next Day</span>
-              <ChevronRight className="w-4 h-4 text-slate-500" />
-            </button>
           </div>
 
           {/* Go to Today Button */}
@@ -1797,34 +1950,110 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                 setLedgerSelectedDate(currentISTDateStr);
                 const m = currentISTDateStr.substring(0, 7);
                 if (m !== selectedMonth) setSelectedMonth(m);
+                if (ledgerViewMode === 'custom') {
+                  setLedgerCustomFromDate(`${m}-01`);
+                  setLedgerCustomToDate(currentISTDateStr);
+                }
               }}
-              className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-xl text-xs font-extrabold text-indigo-700 transition cursor-pointer active:scale-95 ml-auto"
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-black text-xs rounded-xl shadow-2xs transition active:scale-95 cursor-pointer shrink-0 self-end sm:self-auto"
             >
               Go to Today
             </button>
           )}
         </div>
 
-        {/* Dark Navy Summary Header (Selected Day Revenue & Booking Count) */}
+        {/* 2. MODE-SPECIFIC NAVIGATION BAR */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-2xs text-center space-y-1">
+          <div className="flex items-center justify-between">
+            <button
+              onClick={handleLedgerPrevPage}
+              className="p-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 rounded-xl text-slate-800 transition active:scale-95 cursor-pointer flex items-center justify-center min-h-[42px] min-w-[42px]"
+              title={
+                ledgerViewMode === 'daily'
+                  ? 'Previous Day'
+                  : ledgerViewMode === 'weekly'
+                  ? 'Previous Week'
+                  : ledgerViewMode === 'custom'
+                  ? 'Previous Range'
+                  : 'Previous Month'
+              }
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+
+            <div
+              onClick={() => {
+                if (ledgerViewMode === 'custom') {
+                  setIsLedgerCustomRangeModalOpen(true);
+                } else {
+                  handleOpenDatePickerModal();
+                }
+              }}
+              className="space-y-0.5 min-w-0 px-2 cursor-pointer hover:opacity-80 transition"
+            >
+              <div className="text-sm sm:text-base font-black text-slate-900 tracking-tight truncate flex items-center justify-center gap-1.5">
+                <span>
+                  {ledgerViewMode === 'daily' && ledgerDateHeader.dateFormatted}
+                  {ledgerViewMode === 'weekly' && `${formatLedgerDateHeader(activeLedgerWeek.startDateStr).dateFormatted.substring(0, 6)} – ${formatLedgerDateHeader(activeLedgerWeek.endDateStr).dateFormatted}`}
+                  {ledgerViewMode === 'monthly' && `${formatMonthLabel(selectedMonth)} Register`}
+                  {ledgerViewMode === 'custom' && `${formatLedgerDateHeader(ledgerCustomFromDate).dateFormatted} ↓ ${formatLedgerDateHeader(ledgerCustomToDate).dateFormatted}`}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 inline" />
+              </div>
+              <div className="text-xs font-bold text-indigo-600 uppercase tracking-widest truncate">
+                {ledgerViewMode === 'daily' && ledgerDateHeader.weekday}
+                {ledgerViewMode === 'weekly' && formatMonthLabel(selectedMonth)}
+                {ledgerViewMode === 'monthly' && 'Full Month Register'}
+                {ledgerViewMode === 'custom' && 'Tap to edit date range'}
+              </div>
+            </div>
+
+            <button
+              onClick={handleLedgerNextPage}
+              className="p-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 rounded-xl text-slate-800 transition active:scale-95 cursor-pointer flex items-center justify-center min-h-[42px] min-w-[42px]"
+              title={
+                ledgerViewMode === 'daily'
+                  ? 'Next Day'
+                  : ledgerViewMode === 'weekly'
+                  ? 'Next Week'
+                  : ledgerViewMode === 'custom'
+                  ? 'Next Range'
+                  : 'Next Month'
+              }
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* 3. DARK NAVY SUMMARY HEADER CARD */}
         <div className="bg-slate-900 text-white p-4 sm:p-5 rounded-2xl shadow-sm border border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div>
             <span className="text-xs font-mono font-bold text-slate-400 uppercase tracking-widest block">
-              {ledgerDateHeader.dateFormatted}
+              {ledgerViewMode === 'daily'
+                ? 'Revenue Today'
+                : ledgerViewMode === 'weekly'
+                ? 'Revenue This Week'
+                : ledgerViewMode === 'monthly'
+                ? 'Revenue This Month'
+                : 'Revenue In Range'}
             </span>
             <h4 className="text-xl sm:text-2xl font-black text-emerald-400 tracking-tight mt-0.5">
-              Revenue ₹{dayTotalRevenue.toLocaleString()}
+              Revenue ₹{ledgerScopeRevenue.toLocaleString()}
             </h4>
           </div>
           <div className="text-right">
             <span className="px-3.5 py-1.5 bg-slate-800 border border-slate-700/80 rounded-xl text-xs sm:text-sm font-extrabold text-slate-200 shadow-2xs">
-              {dayBookingCount} {dayBookingCount === 1 ? 'Booking' : 'Bookings'}
+              {ledgerScopeBookingCount} {ledgerScopeBookingCount === 1
+                ? ledgerViewMode === 'daily' ? 'Booking Today' : 'Booking'
+                : ledgerViewMode === 'daily' ? 'Bookings Today' : 'Bookings'}
             </span>
           </div>
         </div>
 
-        {/* Sticky Search & Scrollable Filter Chips Toolbar */}
-        <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-md py-2 space-y-2 border-b border-slate-100 shadow-3xs">
-          {/* Full width rounded search */}
+        {/* 4. SEARCH & RESPONSIVE FILTER CHIPS TOOLBAR (NO HORIZONTAL SCROLL) */}
+        <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-md py-2 space-y-2.5 border-b border-slate-100 shadow-3xs">
+          {/* Search Input */}
           <div className="relative w-full">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
@@ -1844,8 +2073,8 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
             )}
           </div>
 
-          {/* Scrollable Filter Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+          {/* Responsive Filter Chips (Flex Wrap - No Horizontal Scroll) */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
             {[
               { id: 'ALL', label: 'All' },
               { id: 'paid', label: 'Paid' },
@@ -1853,8 +2082,8 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
               { id: 'pending', label: 'Pending' },
               { id: 'advance', label: 'Advance' },
               { id: 'balance', label: 'Balance' },
-              { id: 'extension', label: 'Extension' },
-              { id: 'additional', label: 'Additional' },
+              { id: 'extension', label: 'Extended Stay' },
+              { id: 'additional', label: 'Additional Room' },
               { id: 'combined', label: 'Combined' },
             ].map((chip) => {
               const isActive = ledgerFilterType === chip.id;
@@ -1862,7 +2091,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                 <button
                   key={chip.id}
                   onClick={() => setLedgerFilterType(chip.id)}
-                  className={`px-3 py-1 rounded-xl text-xs font-extrabold whitespace-nowrap transition cursor-pointer ${
+                  className={`px-3 py-1 rounded-xl text-xs font-extrabold transition cursor-pointer ${
                     isActive
                       ? 'bg-slate-900 text-white shadow-xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200/60'
@@ -1875,75 +2104,229 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
           </div>
         </div>
 
-        {/* Booking Entries Ledger List */}
+        {/* 5. LEDGER ENTRIES LIST / GROUPED BY DAY */}
         <div className="pt-1">
-          {filteredReservationLedgerData.length === 0 ? (
-            <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
-              <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
-              <p className="font-bold text-slate-700 text-xs sm:text-sm">No collections recorded</p>
-              <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
-                {selectedDayReservationLedgerData.length === 0
-                  ? `No reservation revenue records found for ${ledgerDateHeader.dateFormatted}.`
-                  : 'No reservations match your search or filter criteria.'}
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
-              {filteredReservationLedgerData.map((item) => {
-                const formattedRooms = item.roomNumbers
-                  .replace(/Room\s*/gi, '')
-                  .split(/[\s,]+/)
-                  .filter(Boolean)
-                  .join(' • ') || item.roomNumbers;
+          {(() => {
+            const renderReservationCard = (item: any) => {
+              const formattedRooms = item.roomNumbers
+                .replace(/Room\s*/gi, '')
+                .split(/[\s,]+/)
+                .filter(Boolean)
+                .join(' • ') || item.roomNumbers;
 
-                return (
-                  <div
-                    key={item.reservationId}
-                    className="px-3.5 sm:px-5 py-3 hover:bg-slate-50/90 transition-colors duration-150 flex items-center justify-between gap-3 min-h-[80px]"
-                  >
-                    {/* Left Side: Guest Name, Rooms & Badges */}
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-black text-slate-900 text-lg sm:text-[22px] leading-tight truncate">
-                          {item.guestName}
-                        </h4>
-                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono font-bold text-xs sm:text-[14px] rounded-md border border-slate-200/70 shrink-0">
-                          {formattedRooms}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {/* Status Badge */}
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] sm:text-[13px] font-black uppercase border ${item.statusClass}`}>
-                          {item.statusLabel}
-                        </span>
-
-                        {/* Payment Type Badge */}
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] sm:text-[13px] font-black border ${item.paymentBadgeClass}`}>
-                          {item.paymentBadgeLabel}
-                        </span>
-                      </div>
+              return (
+                <div
+                  key={item.reservationId}
+                  className="px-3.5 sm:px-5 py-3 hover:bg-slate-50/90 transition-colors duration-150 flex items-center justify-between gap-3 min-h-[80px]"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-black text-slate-900 text-lg sm:text-[22px] leading-tight truncate">
+                        {item.guestName}
+                      </h4>
+                      <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono font-bold text-xs sm:text-[14px] rounded-md border border-slate-200/70 shrink-0">
+                        {formattedRooms}
+                      </span>
                     </div>
 
-                    {/* Right Side: Collected Amount & View Details */}
-                    <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
-                      <span className="text-xl sm:text-[28px] font-black text-emerald-600 font-sans tracking-tight">
-                        ₹{item.totalCollected.toLocaleString()}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] sm:text-[13px] font-black uppercase border ${item.statusClass}`}>
+                        {item.statusLabel}
                       </span>
-
-                      <button
-                        onClick={() => handleOpenRevenueDetailModal(item)}
-                        className="text-xs sm:text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:bg-indigo-50/80 px-2.5 py-1 rounded-lg transition cursor-pointer"
-                      >
-                        <span>View Details</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] sm:text-[13px] font-black border ${item.paymentBadgeClass}`}>
+                        {item.paymentBadgeLabel}
+                      </span>
                     </div>
                   </div>
+
+                  <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
+                    <span className="text-xl sm:text-[28px] font-black text-emerald-600 font-sans tracking-tight">
+                      ₹{item.totalCollected.toLocaleString()}
+                    </span>
+
+                    <button
+                      onClick={() => handleOpenRevenueDetailModal(item)}
+                      className="text-xs sm:text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:bg-indigo-50/80 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                    >
+                      <span>View Details</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            };
+
+            // DAILY MODE DISPLAY
+            if (ledgerViewMode === 'daily') {
+              if (reservationsInScope.length === 0) {
+                return (
+                  <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                    <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
+                    <p className="font-bold text-slate-700 text-xs sm:text-sm">No collections recorded</p>
+                    <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                      No reservation revenue records found for {ledgerDateHeader.dateFormatted}.
+                    </p>
+                  </div>
                 );
-              })}
-            </div>
-          )}
+              }
+              return (
+                <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
+                  {reservationsInScope.map(renderReservationCard)}
+                </div>
+              );
+            }
+
+            // WEEKLY MODE DISPLAY
+            if (ledgerViewMode === 'weekly') {
+              const days: string[] = [];
+              let cur = activeLedgerWeek.startDateStr;
+              while (cur <= activeLedgerWeek.endDateStr) {
+                days.push(cur);
+                cur = addDaysToDate(cur, 1);
+              }
+
+              return (
+                <div className="space-y-4">
+                  {days.map((dayStr) => {
+                    const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
+                    const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
+                    const headerInfo = formatLedgerDateHeader(dayStr);
+
+                    return (
+                      <div key={dayStr} className="space-y-2">
+                        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-100/90 rounded-xl border border-slate-200/70">
+                          <div className="flex items-center gap-2">
+                            <CalendarIcon className="w-4 h-4 text-indigo-600" />
+                            <span className="font-extrabold text-xs sm:text-sm text-slate-900">{headerInfo.dateFormatted}</span>
+                            <span className="text-xs font-bold text-indigo-600">({headerInfo.weekday})</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[11px] font-extrabold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                              {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {dayItems.length === 0 ? (
+                          <div className="p-3 text-center bg-slate-50/40 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs font-bold">
+                            No bookings checking in on this date.
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
+                            {dayItems.map(renderReservationCard)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            }
+
+            // MONTHLY MODE DISPLAY
+            if (ledgerViewMode === 'monthly') {
+              const parts = selectedMonth.split('-').map(Number);
+              const year = parts[0] || 2026;
+              const month = parts[1] || 8;
+              const daysInMonth = new Date(year, month, 0).getDate();
+              const mm = String(month).padStart(2, '0');
+
+              const days: string[] = [];
+              for (let d = 1; d <= daysInMonth; d++) {
+                days.push(`${year}-${mm}-${String(d).padStart(2, '0')}`);
+              }
+
+              return (
+                <div className="space-y-4 max-h-[700px] overflow-y-auto pr-1">
+                  {days.map((dayStr) => {
+                    const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
+                    const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
+                    const headerInfo = formatLedgerDateHeader(dayStr);
+
+                    return (
+                      <div key={dayStr} className="space-y-2">
+                        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-100/90 rounded-xl border border-slate-200/70 sticky top-0 z-10">
+                          <div className="flex items-center gap-2">
+                            <CalendarIcon className="w-4 h-4 text-indigo-600" />
+                            <span className="font-extrabold text-xs sm:text-sm text-slate-900">{headerInfo.dateFormatted}</span>
+                            <span className="text-xs font-bold text-indigo-600">({headerInfo.weekday})</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[11px] font-extrabold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                              {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {dayItems.length === 0 ? (
+                          <div className="p-3 text-center bg-slate-50/40 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs font-bold">
+                            No bookings checking in on this date.
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
+                            {dayItems.map(renderReservationCard)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            }
+
+            // CUSTOM MODE DISPLAY
+            if (ledgerViewMode === 'custom') {
+              const uniqueDates = (Array.from(new Set(reservationsInScope.map((r) => r.checkInDateKey))) as string[]).sort();
+
+              if (uniqueDates.length === 0) {
+                return (
+                  <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                    <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
+                    <p className="font-bold text-slate-700 text-xs sm:text-sm">No collections recorded in selected range</p>
+                    <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                      Try picking a different date range or adjusting search filters.
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-4">
+                  {uniqueDates.map((dayStr) => {
+                    const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
+                    const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
+                    const headerInfo = formatLedgerDateHeader(dayStr);
+
+                    return (
+                      <div key={dayStr} className="space-y-2">
+                        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-100/90 rounded-xl border border-slate-200/70">
+                          <div className="flex items-center gap-2">
+                            <CalendarIcon className="w-4 h-4 text-indigo-600" />
+                            <span className="font-extrabold text-xs sm:text-sm text-slate-900">{headerInfo.dateFormatted}</span>
+                            <span className="text-xs font-bold text-indigo-600">({headerInfo.weekday})</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[11px] font-extrabold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                              {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
+                          {dayItems.map(renderReservationCard)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            }
+
+            return null;
+          })()}
         </div>
       </div>
 
@@ -2084,6 +2467,255 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
               <button
                 onClick={() => setSelectedRevenueDetail(null)}
                 className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM DATE RANGE MODAL FOR REVENUE LEDGER */}
+      {isLedgerCustomRangeModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-4 sm:p-5 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <h3 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-2">
+                <CalendarIcon className="w-4 h-4 text-indigo-600" />
+                Select Custom Date Range
+              </h3>
+              <button
+                onClick={() => setIsLedgerCustomRangeModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">From Date</label>
+                <input
+                  type="date"
+                  value={ledgerCustomFromDate}
+                  onChange={(e) => setLedgerCustomFromDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:bg-white cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">To Date</label>
+                <input
+                  type="date"
+                  value={ledgerCustomToDate}
+                  onChange={(e) => setLedgerCustomToDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:bg-white cursor-pointer"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                onClick={() => setIsLedgerCustomRangeModalOpen(false)}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setLedgerViewMode('custom');
+                  setIsLedgerCustomRangeModalOpen(false);
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl transition shadow-xs cursor-pointer"
+              >
+                Apply Range
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REAL INTERACTIVE CALENDAR DATE PICKER MODAL FOR LEDGER */}
+      {isLedgerDatePickerOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-4 sm:p-5 shadow-2xl border border-slate-100 space-y-4">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <h3 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-2">
+                <CalendarIcon className="w-4 h-4 text-indigo-600" />
+                {ledgerViewMode === 'monthly' ? 'Select Month & Year' : 'Select Date'}
+              </h3>
+              <button
+                onClick={() => setIsLedgerDatePickerOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Month & Year Jump Selectors */}
+            <div className="flex items-center justify-between gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200/80">
+              <button
+                onClick={() => {
+                  if (calendarMonth === 1) {
+                    setCalendarMonth(12);
+                    setCalendarYear((y) => y - 1);
+                  } else {
+                    setCalendarMonth((m) => m - 1);
+                  }
+                }}
+                className="p-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-slate-700 transition cursor-pointer"
+                title="Previous Month"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-1.5 font-black text-xs text-slate-900">
+                {/* Month Dropdown */}
+                <select
+                  value={calendarMonth}
+                  onChange={(e) => setCalendarMonth(Number(e.target.value))}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 font-extrabold text-xs text-slate-800 cursor-pointer focus:ring-2 focus:ring-indigo-500"
+                >
+                  {MONTH_NAMES.map((mName, idx) => (
+                    <option key={mName} value={idx + 1}>
+                      {mName}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Year Dropdown */}
+                <select
+                  value={calendarYear}
+                  onChange={(e) => setCalendarYear(Number(e.target.value))}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 font-extrabold text-xs text-slate-800 cursor-pointer focus:ring-2 focus:ring-indigo-500"
+                >
+                  {[2022, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032].map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (calendarMonth === 12) {
+                    setCalendarMonth(1);
+                    setCalendarYear((y) => y + 1);
+                  } else {
+                    setCalendarMonth((m) => m + 1);
+                  }
+                }}
+                className="p-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-slate-700 transition cursor-pointer"
+                title="Next Month"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Calendar Body Grid */}
+            {ledgerViewMode === 'monthly' ? (
+              /* Month Selector Grid for Monthly View Mode */
+              <div className="grid grid-cols-3 gap-2 py-1">
+                {SHORT_MONTH_NAMES.map((mName, idx) => {
+                  const mNum = idx + 1;
+                  const mStr = `${calendarYear}-${String(mNum).padStart(2, '0')}`;
+                  const isSelected = mStr === selectedMonth;
+                  return (
+                    <button
+                      key={mName}
+                      onClick={() => {
+                        setSelectedMonth(mStr);
+                        setLedgerSelectedDate(`${mStr}-01`);
+                        setIsLedgerDatePickerOpen(false);
+                      }}
+                      className={`py-3 px-2 rounded-xl text-xs font-extrabold transition cursor-pointer border ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700'
+                      }`}
+                    >
+                      {mName}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Daily/Weekly Calendar Grid */
+              <div className="space-y-1">
+                {/* Day of Week Header */}
+                <div className="grid grid-cols-7 text-center">
+                  {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+                    <div key={d} className="text-[11px] font-black text-slate-400 py-1 uppercase">
+                      {d}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Day Number Cells */}
+                <div className="grid grid-cols-7 gap-1">
+                  {(() => {
+                    const firstDayOffset = new Date(calendarYear, calendarMonth - 1, 1).getDay();
+                    const daysInM = new Date(calendarYear, calendarMonth, 0).getDate();
+                    const cells = [];
+
+                    // Blank offset cells
+                    for (let i = 0; i < firstDayOffset; i++) {
+                      cells.push(<div key={`empty-${i}`} className="h-8 w-8" />);
+                    }
+
+                    // Days 1..daysInM
+                    for (let day = 1; day <= daysInM; day++) {
+                      const dayStr = `${calendarYear}-${String(calendarMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                      const isSelected = dayStr === ledgerSelectedDate;
+                      const isToday = dayStr === currentISTDateStr;
+
+                      cells.push(
+                        <button
+                          key={day}
+                          onClick={() => {
+                            setLedgerSelectedDate(dayStr);
+                            const mStr = `${calendarYear}-${String(calendarMonth).padStart(2, '0')}`;
+                            if (mStr !== selectedMonth) setSelectedMonth(mStr);
+                            setIsLedgerDatePickerOpen(false);
+                          }}
+                          className={`h-8 w-8 mx-auto flex items-center justify-center rounded-xl text-xs font-black transition cursor-pointer ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white shadow-xs scale-105'
+                              : isToday
+                              ? 'border-2 border-indigo-500 text-indigo-700 font-bold bg-indigo-50/50'
+                              : 'text-slate-700 font-bold hover:bg-indigo-50 hover:text-indigo-600'
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      );
+                    }
+
+                    return cells;
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Modal Footer */}
+            <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+              <button
+                onClick={() => {
+                  setLedgerSelectedDate(currentISTDateStr);
+                  const mStr = currentISTDateStr.substring(0, 7);
+                  if (mStr !== selectedMonth) setSelectedMonth(mStr);
+                  setIsLedgerDatePickerOpen(false);
+                }}
+                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-black text-xs rounded-xl transition cursor-pointer"
+              >
+                Go to Today
+              </button>
+
+              <button
+                onClick={() => setIsLedgerDatePickerOpen(false)}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition cursor-pointer"
               >
                 Close
               </button>
