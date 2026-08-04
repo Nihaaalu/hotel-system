@@ -26,6 +26,14 @@ import {
   ZoomIn,
   ZoomOut,
   Info,
+  Search,
+  X,
+  Clock,
+  Filter,
+  User,
+  BarChart3,
+  CreditCard,
+  ArrowRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -75,6 +83,37 @@ function formatMonthLabel(monthStr: string) {
   const monthIdx = parseInt(m, 10) - 1;
   return `${MONTH_NAMES[monthIdx] || ''} ${y}`;
 }
+
+const addDaysToDate = (ymdStr: string, deltaDays: number): string => {
+  try {
+    const parts = ymdStr.split('-').map(Number);
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
+    date.setDate(date.getDate() + deltaDays);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  } catch {
+    return ymdStr;
+  }
+};
+
+const formatLedgerDateHeader = (ymdStr: string): { dateFormatted: string; weekday: string } => {
+  try {
+    const parts = ymdStr.split('-').map(Number);
+    const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+    const day = String(parts[2]).padStart(2, '0');
+    const monthShort = MONTH_NAMES[parts[1] - 1]?.substring(0, 3) || 'Aug';
+    const year = parts[0];
+    const weekday = dateObj.toLocaleDateString('en-IN', { weekday: 'long' });
+    return {
+      dateFormatted: `${day} ${monthShort} ${year}`,
+      weekday,
+    };
+  } catch {
+    return { dateFormatted: ymdStr, weekday: '' };
+  }
+};
 
 // Number counting animation component (using clean, modern sans-serif typography)
 const AnimatedNumber = React.memo(({ value, prefix = '₹', className = '' }: { value: number; prefix?: string; className?: string }) => {
@@ -254,15 +293,22 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
   const [revChartZoom, setRevChartZoom] = useState<number>(1);
   const [invChartZoom, setInvChartZoom] = useState<number>(1);
 
-  // Expanded days map for Booking Revenue Ledger
-  const [expandedDaysMap, setExpandedDaysMap] = useState<Record<string, boolean>>({});
+  // Booking Revenue Ledger State
+  const [ledgerSelectedDate, setLedgerSelectedDate] = useState<string>(currentISTDateStr);
+  const [ledgerSearchQuery, setLedgerSearchQuery] = useState<string>('');
+  const [ledgerFilterType, setLedgerFilterType] = useState<'ALL' | 'advance' | 'balance' | 'extension' | 'additional'>('ALL');
+  const [selectedRevenueDetail, setSelectedRevenueDetail] = useState<any | null>(null);
 
-  const toggleDayExpansion = (dateKey: string) => {
-    setExpandedDaysMap((prev) => ({
-      ...prev,
-      [dateKey]: !prev[dateKey],
-    }));
-  };
+  // Sync ledgerSelectedDate if top month picker changes and selected date is outside selected month
+  useEffect(() => {
+    if (selectedMonth && ledgerSelectedDate.substring(0, 7) !== selectedMonth) {
+      if (currentISTDateStr.substring(0, 7) === selectedMonth) {
+        setLedgerSelectedDate(currentISTDateStr);
+      } else {
+        setLedgerSelectedDate(`${selectedMonth}-01`);
+      }
+    }
+  }, [selectedMonth, currentISTDateStr]);
 
   useEffect(() => {
     async function loadSalaryRentAnalytics() {
@@ -289,9 +335,8 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
         const { data: payData } = await supabase
           .from('payments')
           .select('remaining_balance')
-          .eq('balance_due_wallet', true)
           .gt('remaining_balance', 0)
-          .eq('payment_status', 'pending');
+          .neq('payment_status', 'paid');
 
         const sum = (payData || []).reduce((acc: any, p: any) => acc + Number(p.remaining_balance || 0), 0);
         setOutstandingDuesBalance(sum);
@@ -638,129 +683,506 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
     };
   }, [selectedMonth, defaultMonthStr, currentISTDateStr, payments, uniqueBookingsMap, expenses]);
 
-  // 5. Booking Revenue Ledger Data (grouped by day for selectedMonth)
-  const bookingRevenueLedgerData = useMemo(() => {
-    if (!selectedMonth || !selectedMonth.includes('-')) return [];
+  // 5. Unified Revenue Collection Transactions (Source of Truth)
+  const allRevenueTransactions = useMemo(() => {
+    const resMetadataMap = new Map<string, { guestName: string; roomNumbers: string; checkInDate: string; checkOutDate: string }>();
 
-    const [yStr, mStr] = selectedMonth.split('-');
-    const year = parseInt(yStr, 10);
-    const month = parseInt(mStr, 10);
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const monthShort = SHORT_MONTH_NAMES[month - 1] || '';
+    // Group bookings by reservation / bookingGroupId
+    const bookingGroups = new Map<string, typeof bookings>();
+    bookings.forEach((b) => {
+      const key = String(b.bookingGroupId || b.id);
+      if (!bookingGroups.has(key)) {
+        bookingGroups.set(key, []);
+      }
+      bookingGroups.get(key)!.push(b);
+    });
 
-    const list = [];
+    bookingGroups.forEach((group, resId) => {
+      const primary = group[0];
+      const roomsStr = group
+        .map((b) => b.roomNumber)
+        .filter(Boolean)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((r) => `Room ${r}`)
+        .join(', ');
 
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dayStr = String(day).padStart(2, '0');
-      const dateKey = `${selectedMonth}-${dayStr}`;
+      resMetadataMap.set(resId, {
+        guestName: primary.guestName || 'Guest',
+        roomNumbers: roomsStr || (primary.roomNumber ? `Room ${primary.roomNumber}` : '-'),
+        checkInDate: primary.checkInDate || '-',
+        checkOutDate: primary.checkOutDate || '-',
+      });
+    });
 
-      const dayBookings = bookings.filter(
-        (b) => b.status !== 'cancelled' && b.checkInDate === dateKey
+    const resIdsInDueTx = new Set<string>();
+
+    const txList: Array<{
+      id: string;
+      paymentId: string;
+      reservationId: string;
+      guestName: string;
+      roomNumbers: string;
+      checkInDate: string;
+      checkOutDate: string;
+      collectedAmount: number;
+      collectionDate: string; // YYYY-MM-DD
+      collectionTime: string; // e.g. "02:30 PM"
+      paymentMethod: string;
+      remarks: string;
+      badgeType: 'advance' | 'balance' | 'extension' | 'additional' | 'paid';
+      badgeLabel: string;
+      badgeClass: string;
+      collector: string;
+      rawTimestamp: string;
+    }> = [];
+
+    const formatTimeStr = (isoOrDateStr?: string) => {
+      if (!isoOrDateStr) return '10:00 AM';
+      try {
+        const d = new Date(isoOrDateStr);
+        if (isNaN(d.getTime())) return '10:00 AM';
+        return d.toLocaleTimeString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        });
+      } catch {
+        return '10:00 AM';
+      }
+    };
+
+    const getBadgeInfo = (
+      remarks: string,
+      isFirstTx: boolean,
+      resRemainingBalance: number
+    ): { badgeType: 'advance' | 'balance' | 'extension' | 'additional' | 'paid'; badgeLabel: string; badgeClass: string } => {
+      const lower = (remarks || '').toLowerCase();
+      if (lower.includes('extension') || lower.includes('extended stay') || lower.includes('extend')) {
+        return {
+          badgeType: 'extension',
+          badgeLabel: 'Extended Stay',
+          badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
+        };
+      }
+      if (lower.includes('additional advance') || lower.includes('extra advance')) {
+        return {
+          badgeType: 'additional',
+          badgeLabel: 'Additional Advance',
+          badgeClass: 'bg-teal-100 text-teal-800 border-teal-200',
+        };
+      }
+      if (lower.includes('advance') || lower.includes('initial')) {
+        return {
+          badgeType: 'advance',
+          badgeLabel: 'Advance',
+          badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+        };
+      }
+      if (lower.includes('due') || lower.includes('balance') || lower.includes('settlement')) {
+        return {
+          badgeType: 'balance',
+          badgeLabel: 'Balance',
+          badgeClass: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+        };
+      }
+      if (isFirstTx) {
+        return {
+          badgeType: 'advance',
+          badgeLabel: 'Advance',
+          badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+        };
+      }
+      if (resRemainingBalance === 0) {
+        return {
+          badgeType: 'paid',
+          badgeLabel: 'Paid',
+          badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+        };
+      }
+      return {
+        badgeType: 'balance',
+        badgeLabel: 'Balance',
+        badgeClass: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+      };
+    };
+
+    if (dueTransactions && dueTransactions.length > 0) {
+      const sortedDueTx = [...dueTransactions].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       );
 
-      const dayPayments = payments.filter((p) => {
-        const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
-        return pDate === dateKey;
-      });
+      const seenResMap = new Map<string, number>();
 
-      // Group day bookings by reservation
-      const resGroupMap = new Map<string, typeof dayBookings>();
-      dayBookings.forEach((b) => {
-        const key = b.bookingGroupId || b.id;
-        if (!resGroupMap.has(key)) {
-          resGroupMap.set(key, []);
-        }
-        resGroupMap.get(key)!.push(b);
-      });
+      sortedDueTx.forEach((dt) => {
+        const amt = Number(dt.amount || 0);
+        if (amt <= 0) return;
 
-      const items: Array<{
-        id: string;
-        customerName: string;
-        roomNumber: number | string;
-        collectedAmount: number;
-        remainingDue: number;
-        paymentMethod: string;
-        isIrshadWallet: boolean;
-        isBalanceDueWallet: boolean;
-        status: string;
-      }> = [];
+        const resId = String(dt.reservation_id || '');
+        if (resId) resIdsInDueTx.add(resId);
 
-      const processedResIds = new Set<string>();
+        const count = (seenResMap.get(resId) || 0) + 1;
+        seenResMap.set(resId, count);
 
-      resGroupMap.forEach((group, resId) => {
-        processedResIds.add(resId);
-        const primary = group[0];
-        const roomNumbersStr = group
-          .map((b) => b.roomNumber)
-          .filter(Boolean)
-          .sort((a, b) => Number(a) - Number(b))
-          .join(', ');
+        const meta = resMetadataMap.get(resId) || {
+          guestName: 'Guest',
+          roomNumbers: '-',
+          checkInDate: '-',
+          checkOutDate: '-',
+        };
 
-        const p = payments.find((pay) => String(pay.reservationId || pay.bookingId) === resId);
+        const paymentRow = payments.find((p) => String(p.reservationId || p.bookingId) === resId);
+        const remBal = paymentRow ? Number(paymentRow.remainingBalance || 0) : 0;
 
-        const collected = p
-          ? Number(
-              p.amountCollected !== undefined
-                ? p.amountCollected
-                : p.amount !== undefined
-                ? p.amount
-                : p.advancePaid || 0
-            )
-          : Number(primary.advancePaid || 0);
+        const dateStr = dt.created_at ? dt.created_at.split('T')[0] : getISTDateStr();
+        const timeStr = formatTimeStr(dt.created_at);
+        const badge = getBadgeInfo(dt.remarks, count === 1, remBal);
+        const collector = (dt as any).collector_name || (dt as any).staff_name || (dt as any).created_by || 'Front Desk Staff';
 
-        const remaining = p ? Number(p.remainingBalance || 0) : Number(primary.remainingBalance || 0);
-        const isIrshad = p ? Boolean(p.transferToIrshad) : Boolean(primary.transferToIrshad || primary.transferredToIrshad);
-        const isDueWallet = p ? Boolean(p.balanceDueWallet) : Boolean(primary.balanceDueWallet || (remaining > 0));
-        const paymentMethod = p ? p.paymentMethod : (primary.paymentMethod || 'cash');
-
-        items.push({
-          id: resId,
-          customerName: primary.guestName || 'Guest',
-          roomNumber: roomNumbersStr || primary.roomNumber,
-          collectedAmount: collected,
-          remainingDue: remaining,
-          paymentMethod: paymentMethod || 'cash',
-          isIrshadWallet: isIrshad,
-          isBalanceDueWallet: isDueWallet,
-          status: primary.status || 'checked_in',
+        txList.push({
+          id: dt.id || `dt_${Math.random()}`,
+          paymentId: dt.payment_id || '',
+          reservationId: resId,
+          guestName: meta.guestName,
+          roomNumbers: meta.roomNumbers,
+          checkInDate: meta.checkInDate,
+          checkOutDate: meta.checkOutDate,
+          collectedAmount: amt,
+          collectionDate: dateStr,
+          collectionTime: timeStr,
+          paymentMethod: dt.payment_method || 'cash',
+          remarks: dt.remarks || '',
+          badgeType: badge.badgeType,
+          badgeLabel: badge.badgeLabel,
+          badgeClass: badge.badgeClass,
+          collector,
+          rawTimestamp: dt.created_at || new Date().toISOString(),
         });
-      });
-
-      dayPayments.forEach((p) => {
-        const pResId = String(p.reservationId || p.bookingId || p.id);
-        if (p.paymentType === 'due_collection' && !processedResIds.has(pResId)) {
-          const matchingBooking = bookings.find((b) => b.id === pResId || b.bookingGroupId === pResId);
-          items.push({
-            id: p.id,
-            customerName: matchingBooking ? matchingBooking.guestName : 'Due Collection',
-            roomNumber: matchingBooking ? matchingBooking.roomNumber : '-',
-            collectedAmount: Number(p.amountCollected || p.amount || 0),
-            remainingDue: Number(p.remainingBalance || 0),
-            paymentMethod: p.paymentMethod || 'cash',
-            isIrshadWallet: Boolean(p.transferToIrshad),
-            isBalanceDueWallet: Boolean(p.balanceDueWallet),
-            status: 'paid',
-          });
-        }
-      });
-
-      const dayCollected = items.reduce((sum, item) => sum + item.collectedAmount, 0);
-      const dayDue = items.reduce((sum, item) => sum + item.remainingDue, 0);
-
-      list.push({
-        dayNum: day,
-        dateKey,
-        label: `${day} ${monthShort} ${year}`,
-        shortLabel: String(day),
-        bookingsCount: dayBookings.length,
-        collectedAmount: dayCollected,
-        outstandingBalance: dayDue,
-        items,
       });
     }
 
-    return list;
-  }, [selectedMonth, bookings, payments]);
+    payments.forEach((p) => {
+      const resId = String(p.reservationId || p.bookingId || p.id);
+      if (resIdsInDueTx.has(resId)) return;
+
+      const amt = Number(p.amountCollected ?? p.advancePaid ?? p.amount ?? 0);
+      if (amt <= 0) return;
+
+      const meta = resMetadataMap.get(resId) || {
+        guestName: 'Guest',
+        roomNumbers: '-',
+        checkInDate: '-',
+        checkOutDate: '-',
+      };
+
+      const dateStr = (p.paymentDate || p.createdAt || getISTDateStr()).split('T')[0];
+      const timeStr = formatTimeStr(p.createdAt || p.paymentDate);
+      const remBal = Number(p.remainingBalance || 0);
+      const badge = getBadgeInfo(p.remarks, true, remBal);
+      const collector = (p as any).collector_name || (p as any).staff_name || (p as any).collectedBy || 'Front Desk Staff';
+
+      txList.push({
+        id: p.id || `p_${Math.random()}`,
+        paymentId: p.id || '',
+        reservationId: resId,
+        guestName: meta.guestName,
+        roomNumbers: meta.roomNumbers,
+        checkInDate: meta.checkInDate,
+        checkOutDate: meta.checkOutDate,
+        collectedAmount: amt,
+        collectionDate: dateStr,
+        collectionTime: timeStr,
+        paymentMethod: p.paymentMethod || 'cash',
+        remarks: p.remarks || '',
+        badgeType: badge.badgeType,
+        badgeLabel: badge.badgeLabel,
+        badgeClass: badge.badgeClass,
+        collector,
+        rawTimestamp: p.createdAt || p.paymentDate || new Date().toISOString(),
+      });
+    });
+
+    return txList;
+  }, [bookings, payments, dueTransactions]);
+
+  // Helper to format dates to DD MMM YYYY (e.g. 04 Aug 2026)
+  const formatDisplayDate = (dStr?: string) => {
+    if (!dStr || dStr === '-') return '-';
+    const clean = dStr.split('T')[0];
+    const parts = clean.split('-');
+    if (parts.length === 3) {
+      const y = parts[0];
+      const m = parseInt(parts[1], 10);
+      const d = parseInt(parts[2], 10);
+      const mShort = SHORT_MONTH_NAMES[m - 1] || '';
+      if (mShort) {
+        return `${d.toString().padStart(2, '0')} ${mShort} ${y}`;
+      }
+    }
+    return dStr;
+  };
+
+  // Selected Day Reservations Ledger (Grouped by Reservation Check-in Date)
+  const selectedDayReservationLedgerData = useMemo(() => {
+    const allResIds = new Set<string>();
+    bookings.forEach((b) => {
+      const idStr = String(b.bookingGroupId || b.id || '');
+      if (idStr) allResIds.add(idStr);
+    });
+    allRevenueTransactions.forEach((tx) => {
+      const idStr = String(tx.reservationId || '');
+      if (idStr) allResIds.add(idStr);
+    });
+
+    const result: Array<{
+      reservationId: string;
+      guestName: string;
+      roomNumbers: string;
+      checkInDate: string;
+      checkOutDate: string;
+      dayCollectedAmount: number;
+      totalCollected: number;
+      totalBookingAmount: number;
+      remainingBalance: number;
+      status: 'paid' | 'partial' | 'pending';
+      statusLabel: string;
+      statusClass: string;
+      paymentBadgeLabel: string;
+      paymentBadgeClass: string;
+      badgeTypes: string[];
+      lastCollectionTime: string;
+      latestTimestamp: string;
+      dayTransactionsCount: number;
+      dayTransactions: typeof allRevenueTransactions;
+      allTransactions: typeof allRevenueTransactions;
+    }> = [];
+
+    allResIds.forEach((resId) => {
+      const allResTxs = allRevenueTransactions
+        .filter((tx) => String(tx.reservationId) === resId)
+        .sort((a, b) => new Date(a.rawTimestamp).getTime() - new Date(b.rawTimestamp).getTime());
+
+      const matchingBookingGroup = bookings.filter(
+        (b) => String(b.id) === resId || String(b.bookingGroupId) === resId
+      );
+      const matchingBooking = matchingBookingGroup[0];
+      const matchingPayment = payments.find((p) => String(p.reservationId || p.bookingId) === resId);
+
+      const checkInDateRaw = matchingBooking?.checkInDate || allResTxs[0]?.checkInDate || '-';
+      const checkInDateKey = checkInDateRaw.split('T')[0];
+
+      // GROUP BY CHECK-IN DATE: Only include reservations checking in on ledgerSelectedDate
+      if (checkInDateKey !== ledgerSelectedDate) return;
+
+      const guestName = matchingBooking?.guestName || allResTxs[0]?.guestName || 'Guest';
+
+      let roomsStr = '-';
+      if (matchingBookingGroup.length > 0) {
+        roomsStr = matchingBookingGroup
+          .map((b) => b.roomNumber)
+          .filter(Boolean)
+          .sort((a, b) => Number(a) - Number(b))
+          .map((r) => `Room ${r}`)
+          .join(', ');
+      } else if (allResTxs[0]?.roomNumbers) {
+        roomsStr = allResTxs[0].roomNumbers;
+      }
+
+      const checkOutDate = matchingBooking?.checkOutDate || allResTxs[0]?.checkOutDate || '-';
+      const totalCollected = allResTxs.reduce((sum, tx) => sum + tx.collectedAmount, 0);
+
+      const originalBookingTotal = Number(
+        matchingPayment?.totalAmount || matchingBooking?.totalAmount || 0
+      );
+      const totalBookingAmount = originalBookingTotal > 0
+        ? Math.max(originalBookingTotal, totalCollected)
+        : totalCollected;
+
+      const remainingBalance = Math.max(0, totalBookingAmount - totalCollected);
+
+      // Status Badge logic
+      let status: 'paid' | 'partial' | 'pending' = 'pending';
+      let statusLabel = 'Pending';
+      let statusClass = 'bg-rose-100 text-rose-800 border-rose-300 font-extrabold';
+
+      if (totalCollected >= totalBookingAmount && totalBookingAmount > 0) {
+        status = 'paid';
+        statusLabel = 'Paid';
+        statusClass = 'bg-emerald-100 text-emerald-800 border-emerald-300 font-extrabold';
+      } else if (totalCollected > 0) {
+        status = 'partial';
+        statusLabel = 'Partial';
+        statusClass = 'bg-amber-100 text-amber-800 border-amber-300 font-extrabold';
+      }
+
+      // Payment Type Badges
+      const badgeTypes: string[] = Array.from(new Set(allResTxs.map((tx) => tx.badgeType)));
+      let paymentBadgeLabel = 'Advance';
+      let paymentBadgeClass = 'bg-blue-50 text-blue-700 border-blue-200 font-bold';
+
+      if (badgeTypes.length > 1) {
+        paymentBadgeLabel = 'Combined';
+        paymentBadgeClass = 'bg-purple-50 text-purple-700 border-purple-200 font-bold';
+      } else if (badgeTypes[0] === 'advance') {
+        paymentBadgeLabel = 'Advance';
+        paymentBadgeClass = 'bg-blue-50 text-blue-700 border-blue-200 font-bold';
+      } else if (badgeTypes[0] === 'balance') {
+        paymentBadgeLabel = 'Balance';
+        paymentBadgeClass = 'bg-sky-50 text-sky-700 border-sky-200 font-bold';
+      } else if (badgeTypes[0] === 'extension') {
+        paymentBadgeLabel = 'Extension';
+        paymentBadgeClass = 'bg-amber-50 text-amber-700 border-amber-200 font-bold';
+      } else if (badgeTypes[0] === 'additional') {
+        paymentBadgeLabel = 'Additional';
+        paymentBadgeClass = 'bg-teal-50 text-teal-700 border-teal-200 font-bold';
+      }
+
+      const latestTx = allResTxs[allResTxs.length - 1];
+
+      result.push({
+        reservationId: resId,
+        guestName,
+        roomNumbers: roomsStr,
+        checkInDate: checkInDateRaw,
+        checkOutDate,
+        dayCollectedAmount: totalCollected,
+        totalCollected,
+        totalBookingAmount,
+        remainingBalance,
+        status,
+        statusLabel,
+        statusClass,
+        paymentBadgeLabel,
+        paymentBadgeClass,
+        badgeTypes,
+        lastCollectionTime: latestTx?.collectionTime || '-',
+        latestTimestamp: latestTx?.rawTimestamp || new Date().toISOString(),
+        dayTransactionsCount: allResTxs.length,
+        dayTransactions: allResTxs,
+        allTransactions: allResTxs,
+      });
+    });
+
+    return result;
+  }, [allRevenueTransactions, ledgerSelectedDate, bookings, payments]);
+
+  // Day Summary Metrics
+  const dayTotalRevenue = useMemo(() => {
+    return selectedDayReservationLedgerData.reduce((sum, res) => sum + res.dayCollectedAmount, 0);
+  }, [selectedDayReservationLedgerData]);
+
+  const dayBookingCount = selectedDayReservationLedgerData.length;
+
+  const dayCollectionCount = useMemo(() => {
+    return selectedDayReservationLedgerData.reduce((sum, res) => sum + res.dayTransactionsCount, 0);
+  }, [selectedDayReservationLedgerData]);
+
+  // Filtered & Searched Reservation Cards for Selected Day
+  const filteredReservationLedgerData = useMemo(() => {
+    let result = [...selectedDayReservationLedgerData];
+
+    if (ledgerSearchQuery.trim()) {
+      const q = ledgerSearchQuery.toLowerCase().trim();
+      result = result.filter(
+        (res) =>
+          res.guestName.toLowerCase().includes(q) ||
+          res.reservationId.toLowerCase().includes(q) ||
+          res.roomNumbers.toLowerCase().includes(q)
+      );
+    }
+
+    if (ledgerFilterType !== 'ALL') {
+      if (['paid', 'partial', 'pending'].includes(ledgerFilterType)) {
+        result = result.filter((res) => res.status === ledgerFilterType);
+      } else if (ledgerFilterType === 'combined') {
+        result = result.filter((res) => res.badgeTypes.length > 1);
+      } else {
+        result = result.filter((res) => res.badgeTypes.includes(ledgerFilterType));
+      }
+    }
+
+    // Newest reservation activity first
+    result.sort((a, b) => new Date(b.latestTimestamp).getTime() - new Date(a.latestTimestamp).getTime());
+
+    return result;
+  }, [selectedDayReservationLedgerData, ledgerSearchQuery, ledgerFilterType]);
+
+  // Date Header Info
+  const ledgerDateHeader = useMemo(() => {
+    return formatLedgerDateHeader(ledgerSelectedDate);
+  }, [ledgerSelectedDate]);
+
+  const handleLedgerPrevDay = () => {
+    const prev = addDaysToDate(ledgerSelectedDate, -1);
+    setLedgerSelectedDate(prev);
+    const m = prev.substring(0, 7);
+    if (m !== selectedMonth) {
+      setSelectedMonth(m);
+    }
+  };
+
+  const handleLedgerNextDay = () => {
+    const next = addDaysToDate(ledgerSelectedDate, 1);
+    setLedgerSelectedDate(next);
+    const m = next.substring(0, 7);
+    if (m !== selectedMonth) {
+      setSelectedMonth(m);
+    }
+  };
+
+  const handleOpenRevenueDetailModal = (item: any) => {
+    const resId = item.reservationId;
+    const matchingBooking = bookings.find((b) => String(b.id) === resId || String(b.bookingGroupId) === resId);
+    const matchingPayment = payments.find((p) => String(p.reservationId || p.bookingId) === String(resId));
+
+    const historyToUse = item.allTransactions && item.allTransactions.length > 0
+      ? item.allTransactions
+      : allRevenueTransactions
+          .filter((tx) => String(tx.reservationId) === String(resId))
+          .sort((a, b) => new Date(a.rawTimestamp).getTime() - new Date(b.rawTimestamp).getTime());
+
+    // Sum of all payment transactions collected
+    const currentTotalPaid = historyToUse.reduce((s: number, tx: any) => s + (Number(tx.collectedAmount) || 0), 0);
+
+    // Single source of truth for the final booking payable amount
+    const rawTotalFromSystem = Number(
+      matchingPayment?.totalAmount || matchingBooking?.totalAmount || item.totalBookingAmount || 0
+    );
+    const currentTotalBookingAmount = rawTotalFromSystem > 0
+      ? Math.max(rawTotalFromSystem, currentTotalPaid)
+      : currentTotalPaid;
+
+    const extensionTotal = historyToUse
+      .filter((tx: any) => tx.badgeType === 'extension')
+      .reduce((s: number, tx: any) => s + (Number(tx.collectedAmount) || 0), 0);
+
+    const additionalAdvanceTotal = historyToUse
+      .filter((tx: any) => tx.badgeType === 'additional')
+      .reduce((s: number, tx: any) => s + (Number(tx.collectedAmount) || 0), 0);
+
+    // Derive original booking amount by subtracting extensions from final current booking total
+    const originalBookingAmount = Math.max(0, currentTotalBookingAmount - extensionTotal);
+
+    // Remaining balance = Current Booking Total - Collected
+    const remainingBalance = Math.max(0, currentTotalBookingAmount - currentTotalPaid);
+
+    setSelectedRevenueDetail({
+      guestName: item.guestName,
+      roomNumbers: item.roomNumbers,
+      checkInDate: item.checkInDate,
+      checkOutDate: item.checkOutDate,
+      reservationId: resId,
+      summary: {
+        originalBookingAmount,
+        extensionTotal,
+        additionalAdvanceTotal,
+        currentTotalBookingAmount,
+        currentTotalPaid,
+        remainingBalance,
+      },
+      history: historyToUse,
+    });
+  };
 
   if (isLoading) {
     return (
@@ -1308,143 +1730,367 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
         </div>
       </div>
 
-      {/* 5. BOOKING REVENUE LEDGER SECTION */}
-      <div className="bg-white p-3 sm:p-5 border border-slate-200/80 rounded-2xl shadow-2xs space-y-4">
-        <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-3 gap-2">
+      {/* 5. BOOKING REVENUE LEDGER SECTION (Redesigned Single-Day Expense Ledger Style) */}
+      <div id="booking-revenue-ledger" className="bg-white p-3.5 sm:p-5 border border-slate-200/80 rounded-2xl shadow-2xs space-y-4">
+        {/* Top Title */}
+        <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-3 gap-3">
           <div>
             <h3 className="font-extrabold text-slate-900 text-sm sm:text-base flex items-center gap-2">
               <Receipt className="w-5 h-5 text-indigo-600 shrink-0" />
-              Booking Revenue Ledger ({formatMonthLabel(selectedMonth)})
+              Reservation Revenue Ledger
             </h3>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Daily breakdown of bookings, collected revenue, and outstanding customer dues.
+              Daily reservation revenue ledger grouped cleanly by Reservation ID.
             </p>
           </div>
         </div>
 
-        <div className="space-y-2">
-          {bookingRevenueLedgerData.length === 0 ? (
-            <div className="p-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs">
-              No booking revenue records available for this month.
-            </div>
-          ) : (
-            bookingRevenueLedgerData.map((dayData) => {
-              const isExpanded = Boolean(expandedDaysMap[dayData.dateKey]);
-              const hasActivity = dayData.bookingsCount > 0 || dayData.collectedAmount > 0 || dayData.items.length > 0;
+        {/* Date Navigation Bar (Identical to Expense Ledger) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-2.5 sm:p-3 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleLedgerPrevDay}
+              className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-extrabold text-slate-700 shadow-2xs flex items-center gap-1.5 hover:bg-slate-50 transition cursor-pointer active:scale-95"
+            >
+              <ChevronLeft className="w-4 h-4 text-slate-500" />
+              <span className="hidden sm:inline">Previous Day</span>
+            </button>
 
+            {/* Center Date Card */}
+            <div className="relative flex items-center bg-white border border-indigo-200/90 rounded-xl px-3.5 py-1.5 shadow-2xs hover:border-indigo-400 transition cursor-pointer">
+              <CalendarIcon className="w-4 h-4 text-indigo-600 mr-2 shrink-0" />
+              <div className="text-center">
+                <span className="font-mono font-black text-xs sm:text-sm text-slate-900 block">
+                  {ledgerDateHeader.dateFormatted}
+                </span>
+                <span className="block text-[10px] font-bold text-indigo-600 uppercase tracking-wider">
+                  {ledgerDateHeader.weekday}
+                </span>
+              </div>
+              <input
+                type="date"
+                value={ledgerSelectedDate}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setLedgerSelectedDate(e.target.value);
+                    const m = e.target.value.substring(0, 7);
+                    if (m !== selectedMonth) setSelectedMonth(m);
+                  }
+                }}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              />
+            </div>
+
+            <button
+              onClick={handleLedgerNextDay}
+              className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-extrabold text-slate-700 shadow-2xs flex items-center gap-1.5 hover:bg-slate-50 transition cursor-pointer active:scale-95"
+            >
+              <span className="hidden sm:inline">Next Day</span>
+              <ChevronRight className="w-4 h-4 text-slate-500" />
+            </button>
+          </div>
+
+          {/* Go to Today Button */}
+          {ledgerSelectedDate !== currentISTDateStr && (
+            <button
+              onClick={() => {
+                setLedgerSelectedDate(currentISTDateStr);
+                const m = currentISTDateStr.substring(0, 7);
+                if (m !== selectedMonth) setSelectedMonth(m);
+              }}
+              className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-xl text-xs font-extrabold text-indigo-700 transition cursor-pointer active:scale-95 ml-auto"
+            >
+              Go to Today
+            </button>
+          )}
+        </div>
+
+        {/* Dark Navy Summary Header (Selected Day Revenue & Booking Count) */}
+        <div className="bg-slate-900 text-white p-4 sm:p-5 rounded-2xl shadow-sm border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <span className="text-xs font-mono font-bold text-slate-400 uppercase tracking-widest block">
+              {ledgerDateHeader.dateFormatted}
+            </span>
+            <h4 className="text-xl sm:text-2xl font-black text-emerald-400 tracking-tight mt-0.5">
+              Revenue ₹{dayTotalRevenue.toLocaleString()}
+            </h4>
+          </div>
+          <div className="text-right">
+            <span className="px-3.5 py-1.5 bg-slate-800 border border-slate-700/80 rounded-xl text-xs sm:text-sm font-extrabold text-slate-200 shadow-2xs">
+              {dayBookingCount} {dayBookingCount === 1 ? 'Booking' : 'Bookings'}
+            </span>
+          </div>
+        </div>
+
+        {/* Sticky Search & Scrollable Filter Chips Toolbar */}
+        <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-md py-2 space-y-2 border-b border-slate-100 shadow-3xs">
+          {/* Full width rounded search */}
+          <div className="relative w-full">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Search Guest Name, Reservation ID, or Room..."
+              value={ledgerSearchQuery}
+              onChange={(e) => setLedgerSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-9 py-2 text-xs sm:text-sm bg-slate-50/90 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white font-medium transition"
+            />
+            {ledgerSearchQuery && (
+              <button
+                onClick={() => setLedgerSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-200 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Scrollable Filter Chips */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+            {[
+              { id: 'ALL', label: 'All' },
+              { id: 'paid', label: 'Paid' },
+              { id: 'partial', label: 'Partial' },
+              { id: 'pending', label: 'Pending' },
+              { id: 'advance', label: 'Advance' },
+              { id: 'balance', label: 'Balance' },
+              { id: 'extension', label: 'Extension' },
+              { id: 'additional', label: 'Additional' },
+              { id: 'combined', label: 'Combined' },
+            ].map((chip) => {
+              const isActive = ledgerFilterType === chip.id;
               return (
-                <div
-                  key={dayData.dateKey}
-                  className={`border rounded-xl transition-all ${
-                    hasActivity
-                      ? 'border-slate-200/90 bg-white hover:border-slate-300'
-                      : 'border-slate-100 bg-slate-50/40 opacity-70'
+                <button
+                  key={chip.id}
+                  onClick={() => setLedgerFilterType(chip.id)}
+                  className={`px-3 py-1 rounded-xl text-xs font-extrabold whitespace-nowrap transition cursor-pointer ${
+                    isActive
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200/60'
                   }`}
                 >
-                  {/* Day Header Row */}
+                  {chip.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Booking Entries Ledger List */}
+        <div className="pt-1">
+          {filteredReservationLedgerData.length === 0 ? (
+            <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
+              <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
+              <p className="font-bold text-slate-700 text-xs sm:text-sm">No collections recorded</p>
+              <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                {selectedDayReservationLedgerData.length === 0
+                  ? `No reservation revenue records found for ${ledgerDateHeader.dateFormatted}.`
+                  : 'No reservations match your search or filter criteria.'}
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white overflow-hidden shadow-2xs">
+              {filteredReservationLedgerData.map((item) => {
+                const formattedRooms = item.roomNumbers
+                  .replace(/Room\s*/gi, '')
+                  .split(/[\s,]+/)
+                  .filter(Boolean)
+                  .join(' • ') || item.roomNumbers;
+
+                return (
                   <div
-                    onClick={() => toggleDayExpansion(dayData.dateKey)}
-                    className="p-3 sm:p-3.5 flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none"
+                    key={item.reservationId}
+                    className="px-3.5 sm:px-5 py-3 hover:bg-slate-50/90 transition-colors duration-150 flex items-center justify-between gap-3 min-h-[80px]"
                   >
-                    <div className="flex items-center gap-2.5 min-w-[140px]">
-                      <span className="p-1.5 bg-indigo-50 text-indigo-700 rounded-lg font-mono font-bold text-xs border border-indigo-100">
-                        {dayData.shortLabel}
-                      </span>
-                      <div>
-                        <h4 className="font-bold text-slate-900 text-xs sm:text-sm">{dayData.label}</h4>
-                        <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium mt-0.5">
-                          <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded font-semibold text-[10px]">
-                            {dayData.bookingsCount} {dayData.bookingsCount === 1 ? 'Booking' : 'Bookings'}
-                          </span>
-                        </div>
+                    {/* Left Side: Guest Name, Rooms & Badges */}
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-black text-slate-900 text-lg sm:text-[22px] leading-tight truncate">
+                          {item.guestName}
+                        </h4>
+                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono font-bold text-xs sm:text-[14px] rounded-md border border-slate-200/70 shrink-0">
+                          {formattedRooms}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Status Badge */}
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] sm:text-[13px] font-black uppercase border ${item.statusClass}`}>
+                          {item.statusLabel}
+                        </span>
+
+                        {/* Payment Type Badge */}
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] sm:text-[13px] font-black border ${item.paymentBadgeClass}`}>
+                          {item.paymentBadgeLabel}
+                        </span>
                       </div>
                     </div>
 
-                    {/* Summary Totals */}
-                    <div className="flex items-center gap-4 sm:gap-6 ml-auto">
-                      <div className="text-right">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Collected</span>
-                        <span className="text-xs sm:text-sm font-black text-emerald-600">
-                          ₹{dayData.collectedAmount.toLocaleString()}
-                        </span>
-                      </div>
+                    {/* Right Side: Collected Amount & View Details */}
+                    <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
+                      <span className="text-xl sm:text-[28px] font-black text-emerald-600 font-sans tracking-tight">
+                        ₹{item.totalCollected.toLocaleString()}
+                      </span>
 
-                      <div className="text-right">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Outstanding Due</span>
-                        <span className={`text-xs sm:text-sm font-black ${dayData.outstandingBalance > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                          ₹{dayData.outstandingBalance.toLocaleString()}
-                        </span>
-                      </div>
-
-                      <button className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition">
-                        <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                      <button
+                        onClick={() => handleOpenRevenueDetailModal(item)}
+                        className="text-xs sm:text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:bg-indigo-50/80 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                      >
+                        <span>View Details</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
-
-                  {/* Expandable Details Drawer */}
-                  {isExpanded && (
-                    <div className="border-t border-slate-100 bg-slate-50/70 p-3 sm:p-4 space-y-2">
-                      {dayData.items.length === 0 ? (
-                        <p className="text-xs text-slate-400 text-center py-2">No bookings or collections recorded for this date.</p>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left text-xs">
-                            <thead>
-                              <tr className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500 pb-1">
-                                <th className="pb-2">Customer</th>
-                                <th className="pb-2">Room</th>
-                                <th className="pb-2">Collected</th>
-                                <th className="pb-2">Remaining Due</th>
-                                <th className="pb-2">Method</th>
-                                <th className="pb-2">Wallets / Badges</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 font-medium">
-                              {dayData.items.map((item) => (
-                                <tr key={item.id} className="hover:bg-white/60">
-                                  <td className="py-2.5 font-bold text-slate-900">{item.customerName}</td>
-                                  <td className="py-2.5 text-slate-600 font-mono">
-                                    {typeof item.roomNumber === 'number' ? `Room ${item.roomNumber}` : item.roomNumber}
-                                  </td>
-                                  <td className="py-2.5 font-extrabold text-emerald-600">₹{item.collectedAmount.toLocaleString()}</td>
-                                  <td className={`py-2.5 font-extrabold ${item.remainingDue > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                                    ₹{item.remainingDue.toLocaleString()}
-                                  </td>
-                                  <td className="py-2.5 text-slate-600 uppercase font-mono text-[10px]">{item.paymentMethod}</td>
-                                  <td className="py-2.5">
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                      {item.isIrshadWallet && (
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-100 text-purple-800 border border-purple-200">
-                                          Irshad Wallet
-                                        </span>
-                                      )}
-                                      {item.isBalanceDueWallet && (
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
-                                          Balance Due Wallet
-                                        </span>
-                                      )}
-                                      {!item.isBalanceDueWallet && item.remainingDue === 0 && (
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                          Paid
-                                        </span>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
+
+      {/* VIEW DETAILS MODAL FOR REVENUE LEDGER */}
+      {selectedRevenueDetail && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-3.5 sm:p-4 shadow-2xl border border-slate-100 space-y-3 max-h-[85vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <h3 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-1.5">
+                <Receipt className="w-4 h-4 text-indigo-600" />
+                Reservation Details
+              </h3>
+              <button
+                onClick={() => setSelectedRevenueDetail(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Compact Guest, Rooms & Dates */}
+            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-black text-slate-900 text-sm sm:text-base">{selectedRevenueDetail.guestName}</span>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Rooms</span>
+                  <span className="px-2 py-0.5 bg-slate-200/80 text-slate-800 font-mono font-bold text-xs rounded-md border border-slate-300/60 inline-block">
+                    {selectedRevenueDetail.roomNumbers.replace(/Room\s*/gi, '').split(/[\s,]+/).filter(Boolean).join(' • ') || selectedRevenueDetail.roomNumbers}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-600 pt-1 border-t border-slate-200/60">
+                <span>{formatDisplayDate(selectedRevenueDetail.checkInDate)}</span>
+                <span className="text-slate-400 font-normal">→</span>
+                <span>{formatDisplayDate(selectedRevenueDetail.checkOutDate)}</span>
+              </div>
+            </div>
+
+            {/* Financial Summary */}
+            <div className="bg-slate-900 text-white p-3 rounded-xl space-y-1.5 text-xs">
+              <div className="flex justify-between items-center pb-1 border-b border-slate-800">
+                <span className="font-extrabold uppercase text-[10px] text-slate-400 tracking-wider">Financial Breakdown</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                  selectedRevenueDetail.summary.remainingBalance === 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}>
+                  {selectedRevenueDetail.summary.remainingBalance === 0 ? 'Paid' : 'Partial'}
+                </span>
+              </div>
+
+              <div className="flex justify-between text-slate-300">
+                <span>Original Booking:</span>
+                <span className="font-mono font-bold">₹{selectedRevenueDetail.summary.originalBookingAmount.toLocaleString()}</span>
+              </div>
+
+              {selectedRevenueDetail.summary.extensionTotal > 0 && (
+                <div className="flex justify-between text-amber-300">
+                  <span>Extended Stay:</span>
+                  <span className="font-mono font-bold">+₹{selectedRevenueDetail.summary.extensionTotal.toLocaleString()}</span>
+                </div>
+              )}
+
+              {selectedRevenueDetail.summary.additionalAdvanceTotal > 0 && (
+                <div className="flex justify-between text-teal-300">
+                  <span>Additional Advance:</span>
+                  <span className="font-mono font-bold">+₹{selectedRevenueDetail.summary.additionalAdvanceTotal.toLocaleString()}</span>
+                </div>
+              )}
+
+              <div className="border-t border-slate-800 pt-1 flex justify-between font-bold text-slate-100">
+                <span>Current Total:</span>
+                <span className="font-mono text-xs sm:text-sm">₹{selectedRevenueDetail.summary.currentTotalBookingAmount.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between font-extrabold text-emerald-400">
+                <span>Collected:</span>
+                <span className="font-mono text-xs sm:text-sm">₹{selectedRevenueDetail.summary.currentTotalPaid.toLocaleString()}</span>
+              </div>
+
+              <div className="border-t border-slate-800 pt-1 flex justify-between font-extrabold">
+                <span>Remaining:</span>
+                <span className={`font-mono text-xs sm:text-sm ${selectedRevenueDetail.summary.remainingBalance > 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+                  ₹{selectedRevenueDetail.summary.remainingBalance.toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Payment Timeline */}
+            <div className="space-y-1.5">
+              <h4 className="text-[10px] font-extrabold uppercase text-slate-500 tracking-wider">Payment Timeline</h4>
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {selectedRevenueDetail.history.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-2">No payment transactions recorded.</p>
+                ) : (
+                  selectedRevenueDetail.history.map((tx: any, idx: number) => {
+                    const badgeTypeUpper = (tx.badgeLabel || tx.badgeType || 'Payment').toUpperCase();
+                    const paidOnStr = `${formatDisplayDate(tx.collectionDate)} ${tx.collectionTime || ''}`.trim();
+
+                    return (
+                      <div key={tx.id || idx} className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl text-xs space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-slate-900 text-white tracking-wider">
+                            {badgeTypeUpper}
+                          </span>
+                          <span className="font-black text-emerald-600 font-mono text-sm">₹{tx.collectedAmount.toLocaleString()}</span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
+                          <div>
+                            <span className="text-slate-400 font-medium block text-[9px] uppercase tracking-wider">Paid On</span>
+                            <span className="font-bold text-slate-800">{paidOnStr}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 font-medium block text-[9px] uppercase tracking-wider">Method</span>
+                            <span className="font-bold text-slate-800 capitalize">{tx.paymentMethod || 'Cash'}</span>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-slate-400 font-medium block text-[9px] uppercase tracking-wider">Collector</span>
+                            <span className="font-bold text-slate-800">{tx.collector || 'Front Desk'}</span>
+                          </div>
+                        </div>
+
+                        {tx.remarks && (
+                          <div className="pt-1 border-t border-slate-200/40">
+                            <span className="text-slate-400 font-medium block text-[9px] uppercase tracking-wider">Remarks</span>
+                            <span className="text-slate-700 italic text-[11px]">"{tx.remarks}"</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="pt-1.5 border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => setSelectedRevenueDetail(null)}
+                className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

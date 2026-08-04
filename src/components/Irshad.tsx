@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { IrshadWalletService } from '../services/irshadWallet';
 import { IrshadSettlement, IrshadWalletSummary } from '../types';
+import { useHotelData } from '../context/HotelContext';
 import { getISTDateStr } from '../utils/formatters';
 import {
   Wallet,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 
 export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) {
+  const { payments, refreshData } = useHotelData();
   const [summary, setSummary] = useState<IrshadWalletSummary>({
     expense_by_irshad: 0,
     bookings_with_irshad: 0,
@@ -44,6 +46,14 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
   const [settlementRemarks, setSettlementRemarks] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Booking Pay Modal State
+  const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<any | null>(null);
+  const [payAmountInput, setPayAmountInput] = useState<number | ''>('');
+  const [payMethodInput, setPayMethodInput] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
+  const [payRemarksInput, setPayRemarksInput] = useState<string>('');
+  const [payDateInput, setPayDateInput] = useState<string>(getISTDateStr());
+  const [isSubmittingBookingPay, setIsSubmittingBookingPay] = useState<boolean>(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -73,7 +83,7 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
 
   useEffect(() => {
     loadAllData();
-  }, [loadAllData, refreshTrigger]);
+  }, [loadAllData, refreshTrigger, payments]);
 
   // Derived Calculations
   const totalExpenses = useMemo(() => {
@@ -119,6 +129,48 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
       alert(err.message || 'Failed to record settlement');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Open Pay Modal for a Booking transferred to Irshad
+  const handleOpenPayModal = (b: any) => {
+    setSelectedBookingForPayment(b);
+    setPayAmountInput(b.transferredToIrshad || b.remainingBalance || b.amount || 0);
+    setPayMethodInput('cash');
+    setPayRemarksInput('');
+    setPayDateInput(getISTDateStr());
+  };
+
+  // Submit Payment for Booking from Irshad page
+  const handleCollectBookingPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedBookingForPayment) return;
+
+    const amt = Number(payAmountInput || 0);
+    if (amt <= 0) {
+      alert('Please enter a valid payment amount (> 0).');
+      return;
+    }
+
+    try {
+      setIsSubmittingBookingPay(true);
+      await IrshadWalletService.settleBookingDue(
+        selectedBookingForPayment.reservationId,
+        amt,
+        payMethodInput,
+        payRemarksInput,
+        payDateInput
+      );
+
+      showToast('Payment collected successfully! Ledger updated.');
+      setSelectedBookingForPayment(null);
+      await refreshData();
+      await loadAllData();
+    } catch (err: any) {
+      console.error('Error submitting booking payment:', err);
+      alert(err.message || 'Failed to record payment collection.');
+    } finally {
+      setIsSubmittingBookingPay(false);
     }
   };
 
@@ -431,15 +483,25 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
                         {b.remarks || 'Check-in balance assigned to Irshad'}
                       </span>
                     </div>
-                    <div className="col-span-4 sm:col-span-5 text-right">
-                      <span className="font-black text-blue-900 text-sm block">
-                        ₹{(b.transferredToIrshad || b.amount || 0).toLocaleString('en-IN')}
-                      </span>
-                      {b.amountCollected > 0 && (
-                        <span className="text-[10px] text-slate-400 block font-medium">
-                          Customer Paid: ₹{b.amountCollected.toLocaleString('en-IN')}
+                    <div className="col-span-4 sm:col-span-5 flex items-center justify-end gap-2.5">
+                      <div className="text-right min-w-0">
+                        <span className="font-black text-blue-900 text-sm block">
+                          ₹{(b.transferredToIrshad || b.remainingBalance || b.amount || 0).toLocaleString('en-IN')}
                         </span>
-                      )}
+                        {b.amountCollected > 0 && (
+                          <span className="text-[10px] text-slate-400 block font-medium">
+                            Customer Paid: ₹{b.amountCollected.toLocaleString('en-IN')}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPayModal(b)}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-black rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1 shrink-0 min-h-[34px]"
+                      >
+                        <DollarSign className="w-3.5 h-3.5" />
+                        <span>Pay</span>
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -595,6 +657,124 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
                   className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-black rounded-xl shadow-2xs cursor-pointer min-h-[42px]"
                 >
                   {isSubmitting ? 'Recording...' : 'Save Settlement'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* COLLECT BOOKING PAYMENT POPUP MODAL */}
+      {selectedBookingForPayment && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-auto overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+              <h3 className="font-black text-xs text-slate-900 uppercase flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-emerald-600" />
+                Collect Booking Payment
+              </h3>
+              <button
+                type="button"
+                onClick={() => setSelectedBookingForPayment(null)}
+                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCollectBookingPayment} className="p-4 space-y-3.5 text-xs">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                <p className="font-bold text-slate-900 text-sm">
+                  {selectedBookingForPayment.guestName}
+                </p>
+                <p className="text-[10px] text-slate-500 font-mono">
+                  Reservation ID: {selectedBookingForPayment.reservationId}
+                </p>
+                <p className="text-xs text-indigo-900 font-black pt-1">
+                  Transferred Balance: ₹{(selectedBookingForPayment.transferredToIrshad || selectedBookingForPayment.remainingBalance || selectedBookingForPayment.amount || 0).toLocaleString('en-IN')}
+                </p>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">
+                  Payment Date *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={payDateInput}
+                  onChange={(e) => setPayDateInput(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">
+                  Amount Collected (₹) *
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  required
+                  value={payAmountInput === '' ? '' : payAmountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setPayAmountInput('');
+                    } else {
+                      const clean = raw.replace(/^0+(?=\d)/, '');
+                      setPayAmountInput(clean === '' ? '' : Number(clean));
+                    }
+                  }}
+                  placeholder="Enter collected amount"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">
+                  Payment Method *
+                </label>
+                <select
+                  value={payMethodInput}
+                  onChange={(e) => setPayMethodInput(e.target.value as any)}
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px] cursor-pointer bg-white"
+                >
+                  <option value="cash">Cash</option>
+                  <option value="upi">UPI / GPay</option>
+                  <option value="card">Credit/Debit Card</option>
+                  <option value="net_banking">Net Banking / NEFT</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 uppercase block mb-1 text-[10px]">
+                  Remarks / Ref
+                </label>
+                <input
+                  type="text"
+                  value={payRemarksInput}
+                  onChange={(e) => setPayRemarksInput(e.target.value)}
+                  placeholder="e.g. Paid in full via UPI"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedBookingForPayment(null)}
+                  className="flex-1 py-2.5 border border-slate-200 font-bold text-slate-700 rounded-xl hover:bg-slate-50 cursor-pointer min-h-[42px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingBookingPay}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl shadow-2xs cursor-pointer min-h-[42px]"
+                >
+                  {isSubmittingBookingPay ? 'Processing...' : 'Confirm Payment'}
                 </button>
               </div>
             </form>

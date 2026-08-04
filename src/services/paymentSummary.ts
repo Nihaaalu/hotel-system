@@ -243,17 +243,25 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
     newPaymentStatus = 'partial';
   }
 
-  const isBalanceDue = options?.balanceDueWallet !== undefined
+  let isBalanceDue = options?.balanceDueWallet !== undefined
     ? options.balanceDueWallet
     : (newRemainingBalance > 0);
 
-  const transferToIrshad = options?.transferToIrshad !== undefined
+  let transferToIrshad = options?.transferToIrshad !== undefined
     ? options.transferToIrshad
     : Boolean(existing?.transfer_to_irshad);
 
-  const transferredToIrshad = options?.transferredToIrshad !== undefined
+  let transferredToIrshad = options?.transferredToIrshad !== undefined
     ? Number(options.transferredToIrshad)
     : Number(existing?.transferred_to_irshad || 0);
+
+  if (newRemainingBalance === 0 || newPaymentStatus === 'paid') {
+    isBalanceDue = false;
+    transferToIrshad = false;
+    transferredToIrshad = 0;
+  } else if (transferToIrshad) {
+    transferredToIrshad = newRemainingBalance;
+  }
 
   const finalRemarks = remarks.trim()
     ? remarks.trim()
@@ -382,5 +390,37 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
 
   // DO NOT UPDATE RESERVATIONS TABLE WITH PAYMENT FIELDS!
   return paymentRecord;
+}
+
+/**
+ * Single reusable function settleBookingDue(reservationId, amount, paymentMethod, remarks, paymentDate)
+ * Settles booking dues consistently across Customer Dues page and Irshad Wallet page.
+ */
+export async function settleBookingDue(
+  reservationId: string,
+  amount: number,
+  paymentMethod: string = 'cash',
+  remarks: string = '',
+  paymentDate?: string
+): Promise<any> {
+  if (!reservationId) {
+    throw new Error('settleBookingDue failed: reservationId is required.');
+  }
+
+  const numericAmount = Number(amount || 0);
+  if (numericAmount <= 0) {
+    throw new Error('settleBookingDue failed: amount must be greater than 0.');
+  }
+
+  const cleanRemarks = remarks.trim() ? remarks.trim() : 'Customer outstanding due collected';
+
+  return await updatePaymentSummary({
+    reservationId,
+    paymentAmount: numericAmount,
+    isAdvance: false,
+    paymentMethod,
+    remarks: cleanRemarks,
+    paymentDate,
+  });
 }
 

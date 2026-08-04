@@ -1,9 +1,11 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { CustomerDue } from '../types';
 import { getISTDateStr } from '../utils/formatters';
-import { updatePaymentSummary } from './paymentSummary';
+import { updatePaymentSummary, settleBookingDue } from './paymentSummary';
 
 export const DuesService = {
+  settleBookingDue,
+
   /**
    * Fetch dues list directly from payments INNER JOIN reservations
    * WHERE payments.remaining_balance > 0
@@ -65,7 +67,7 @@ export const DuesService = {
         console.warn('Error fetching due_payment_transactions:', e);
       }
 
-      const activeDues: CustomerDue[] = (paymentsData || []).map((p: any) => {
+      const activeDues: CustomerDue[] = (paymentsData || []).filter((p: any) => Number(p.remaining_balance || 0) > 0 && p.payment_status !== 'paid').map((p: any) => {
         const parentRes = resMap.get(String(p.reservation_id));
         return {
           id: String(p.id),
@@ -94,7 +96,7 @@ export const DuesService = {
   },
 
   /**
-   * Collect payment against a customer due
+   * Collect payment against a customer due using single reusable settleBookingDue
    */
   async collectDuePayment(
     paymentId: string,
@@ -106,7 +108,7 @@ export const DuesService = {
     if (!isSupabaseConfigured) return;
 
     try {
-      // 1. Fetch current payment row
+      // 1. Fetch current payment row to get reservation_id
       const { data: payRow, error: fetchErr } = await supabase
         .from('payments')
         .select('*')
@@ -118,14 +120,13 @@ export const DuesService = {
         throw new Error('Payment record not found');
       }
 
-      await updatePaymentSummary({
-        reservationId: String(payRow.reservation_id),
-        paymentAmount: Number(collectAmount),
-        isAdvance: false,
+      await settleBookingDue(
+        String(payRow.reservation_id),
+        Number(collectAmount),
         paymentMethod,
-        remarks: remarks.trim() ? remarks.trim() : 'Customer outstanding due collected',
-        paymentDate,
-      });
+        remarks,
+        paymentDate
+      );
     } catch (err) {
       console.error('Exception in collectDuePayment:', err);
       throw err;

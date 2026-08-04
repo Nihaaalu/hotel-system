@@ -1,9 +1,12 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { IrshadSettlement, IrshadWalletSummary, IrshadWalletNetSummary } from '../types';
+import { settleBookingDue } from './paymentSummary';
 
 const DEBUG = false;
 
 export const IrshadWalletService = {
+  settleBookingDue,
+
   /**
    * Reads the irshad_wallet_summary view or calculates from base tables.
    * Provides: expense_by_irshad, bookings_with_irshad, resort_paid, irshad_paid.
@@ -25,7 +28,7 @@ export const IrshadWalletService = {
         supabase.from('salary_transactions').select('amount').eq('paid_by', 'irshad'),
         supabase.from('rent_transactions').select('amount').eq('paid_by', 'irshad'),
         supabase.from('irshad_settlements').select('amount, transaction_type'),
-        supabase.from('payments').select('transferred_to_irshad, amount_collected, amount').or('transfer_to_irshad.eq.true,transferred_to_irshad.gt.0'),
+        supabase.from('payments').select('transferred_to_irshad, amount_collected, amount, remaining_balance, payment_status, transfer_to_irshad').or('transfer_to_irshad.eq.true,transferred_to_irshad.gt.0'),
       ]);
 
       let expenseByIrshad = 0;
@@ -35,8 +38,15 @@ export const IrshadWalletService = {
 
       let bookingsWithIrshad = 0;
       (payRes.data || []).forEach((r: any) => {
-        const val = Number(r.transferred_to_irshad || r.amount_collected || r.amount || 0);
-        bookingsWithIrshad += val;
+        const remBal = Number(r.remaining_balance || 0);
+        const pStatus = String(r.payment_status || '');
+        const isPaid = remBal === 0 || pStatus === 'paid';
+        if (!isPaid) {
+          const val = Number(r.transferred_to_irshad || remBal || 0);
+          if (val > 0) {
+            bookingsWithIrshad += val;
+          }
+        }
       });
 
       let resortPaid = 0;
@@ -79,12 +89,8 @@ export const IrshadWalletService = {
    */
   async getIrshadWalletNetSummary(): Promise<IrshadWalletNetSummary> {
     const summary = await this.getWalletSummary();
-    let bookingTransferred = summary.bookings_with_irshad || 0;
-
-    if (bookingTransferred === 0) {
-      const bookings = await this.getIrshadBookings();
-      bookingTransferred = bookings.reduce((s, b) => s + (b.transferredToIrshad || b.amount || 0), 0);
-    }
+    const bookings = await this.getIrshadBookings();
+    const bookingTransferred = bookings.reduce((s, b) => s + (b.transferredToIrshad || b.remainingBalance || 0), 0);
 
     const expenseByIrshad = summary.expense_by_irshad || 0;
     const settlementPaid = (summary.resort_paid || 0) - (summary.irshad_paid || 0);
@@ -181,6 +187,8 @@ export const IrshadWalletService = {
         .from('payments')
         .select('*, reservations(booking_name)')
         .or('transfer_to_irshad.eq.true,transferred_to_irshad.gt.0')
+        .gt('remaining_balance', 0)
+        .neq('payment_status', 'paid')
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -190,34 +198,42 @@ export const IrshadWalletService = {
           .from('payments')
           .select('*')
           .or('transfer_to_irshad.eq.true,transferred_to_irshad.gt.0')
+          .gt('remaining_balance', 0)
+          .neq('payment_status', 'paid')
           .order('created_at', { ascending: false });
         if (!rawData) return [];
-        return rawData.map((p: any) => ({
-          id: String(p.id),
-          reservationId: String(p.reservation_id || ''),
-          guestName: 'Booking Guest',
-          amount: Number(p.amount || 0),
-          amountCollected: Number(p.amount_collected || 0),
-          transferredToIrshad: Number(p.transferred_to_irshad || 0),
-          paymentStatus: String(p.payment_status || 'pending'),
-          remarks: String(p.remarks || ''),
-          createdAt: String(p.created_at || ''),
-        }));
+        return rawData
+          .filter((p: any) => Number(p.remaining_balance || 0) > 0 && p.payment_status !== 'paid')
+          .map((p: any) => ({
+            id: String(p.id),
+            reservationId: String(p.reservation_id || ''),
+            guestName: 'Booking Guest',
+            amount: Number(p.total_amount || p.amount || 0),
+            amountCollected: Number(p.amount_collected || 0),
+            transferredToIrshad: Number(p.transferred_to_irshad || p.remaining_balance || 0),
+            remainingBalance: Number(p.remaining_balance || 0),
+            paymentStatus: String(p.payment_status || 'pending'),
+            remarks: String(p.remarks || ''),
+            createdAt: String(p.created_at || ''),
+          }));
       }
 
       if (!data) return [];
 
-      return data.map((p: any) => ({
-        id: String(p.id),
-        reservationId: String(p.reservation_id || ''),
-        guestName: String(p.reservations?.booking_name || 'Booking Guest'),
-        amount: Number(p.amount || 0),
-        amountCollected: Number(p.amount_collected || 0),
-        transferredToIrshad: Number(p.transferred_to_irshad || 0),
-        paymentStatus: String(p.payment_status || 'pending'),
-        remarks: String(p.remarks || ''),
-        createdAt: String(p.created_at || ''),
-      }));
+      return data
+        .filter((p: any) => Number(p.remaining_balance || 0) > 0 && p.payment_status !== 'paid')
+        .map((p: any) => ({
+          id: String(p.id),
+          reservationId: String(p.reservation_id || ''),
+          guestName: String(p.reservations?.booking_name || 'Booking Guest'),
+          amount: Number(p.total_amount || p.amount || 0),
+          amountCollected: Number(p.amount_collected || 0),
+          transferredToIrshad: Number(p.transferred_to_irshad || p.remaining_balance || 0),
+          remainingBalance: Number(p.remaining_balance || 0),
+          paymentStatus: String(p.payment_status || 'pending'),
+          remarks: String(p.remarks || ''),
+          createdAt: String(p.created_at || ''),
+        }));
     } catch (err) {
       console.error('Exception reading Irshad bookings:', err);
       return [];
