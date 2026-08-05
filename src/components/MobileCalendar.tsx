@@ -552,7 +552,7 @@ export default function MobileCalendar({
                       height: `${ROOM_ROW_HEIGHT}px`,
                       backgroundColor: '#111827',
                       borderColor: '#374151',
-                      borderRightColor: isFloorDivider ? '#CBD5E1' : '#374151',
+                      borderRightColor: isFloorDivider ? '#AEB9C8' : '#374151',
                       borderRightWidth: '1px',
                     }}
                     className="sticky top-0 z-20 border-b p-0 text-center align-middle font-bold leading-none"
@@ -638,7 +638,7 @@ export default function MobileCalendar({
               // Clean Date Column background & styling (NO WEEKDAY TEXT)
               let dateBgColor = '#FFFFFF';
               let dateTextColor = '#0F172A'; // Normal days: Dark text
-              let dateBorderColor = '#E2E8F0';
+              let dateBorderColor = '#D6DCE8';
 
               if (isToday) {
                 dateBgColor = '#EFF6FF'; // Soft blue background
@@ -716,7 +716,7 @@ export default function MobileCalendar({
                     }
 
                     let textColor = '#334155';
-                    let cellBorderColor = '#E5E7EB';
+                    let cellBorderColor = '#D6DCE8';
                     let statusTitle = 'Available';
 
                     if (booking) {
@@ -767,9 +767,11 @@ export default function MobileCalendar({
                           borderColor: isCellSelected ? '#3B82F6' : cellBorderColor,
                           borderRightColor: isCellSelected
                             ? '#3B82F6'
+                            : booking
+                            ? cellBorderColor
                             : isFloorDivider
-                            ? '#CBD5E1'
-                            : cellBorderColor,
+                            ? '#AEB9C8'
+                            : '#C7CFDB',
                           borderRightWidth: '1px',
                           backgroundColor: isCellSelected ? '#DBEAFE' : bg,
                         }}

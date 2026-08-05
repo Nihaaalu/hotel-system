@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 const DEBUG = false;
-import { Room, Booking, Payment, Guest, Expense, DueTransaction } from '../types';
+import { Room, Booking, Payment, Guest, Expense, DueTransaction, ServiceBill } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ExpenseService } from '../services/expenses';
 import { ReservationService } from '../services/reservations';
+import { ServiceBillService } from '../services/serviceBills';
 import { parsePaymentMetadata, parseRoomTimeline, getRoomIntervalsFromTimeline } from '../utils/timeline';
 
 interface HotelContextType {
@@ -15,6 +16,7 @@ interface HotelContextType {
   dueTransactions: DueTransaction[];
   guests: Guest[];
   expenses: Expense[];
+  serviceBills: ServiceBill[];
   isLoading: boolean;
   refreshData: () => Promise<void>;
   checkOverlappingBooking: (
@@ -27,6 +29,24 @@ interface HotelContextType {
   updateExpense: (id: string, expense: Partial<Omit<Expense, 'id' | 'createdAt'>>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   updateBookingPayment: (reservationId: string, totalAmount: number, advancePaid: number) => Promise<void>;
+  addServiceBill: (payload: {
+    customerType: 'resort_guest' | 'outside_customer';
+    reservationId?: string;
+    customerName?: string;
+    category: 'Food' | 'Swimming Pool' | 'Campfire' | 'Other';
+    totalAmount: number;
+    paidNow: number;
+    paymentMethod?: string;
+    balanceOption?: 'due' | 'irshad_wallet';
+    remarks?: string;
+  }) => Promise<ServiceBill | null>;
+  collectServiceBillPayment: (
+    billId: string | number,
+    collectAmount: number,
+    paymentMethod: string,
+    remarks?: string
+  ) => Promise<void>;
+  deleteServiceBill: (billId: string | number) => Promise<void>;
 }
 
 const HotelContext = createContext<HotelContextType | undefined>(undefined);
@@ -39,6 +59,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [dueTransactions, setDueTransactions] = useState<DueTransaction[]>([]);
   const [guests, setGuests] = useState<Guest[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [serviceBills, setServiceBills] = useState<ServiceBill[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const refreshData = useCallback(async () => {
@@ -51,16 +72,18 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setIsLoading(true);
 
       // Perform a single batch fetch of all core tables concurrently
-      const [roomsRes, rrRes, resRes, payRes, expList, dueTxRes] = await Promise.all([
+      const [roomsRes, rrRes, resRes, payRes, expList, dueTxRes, sBillsList] = await Promise.all([
         supabase.from('rooms').select('*').eq('is_active', true).order('room_number', { ascending: true }),
         supabase.from('reservation_rooms').select('*'),
         supabase.from('reservations').select('*'),
         supabase.from('payments').select('*'),
         ExpenseService.getExpenses(),
         supabase.from('due_payment_transactions').select('*'),
+        ServiceBillService.getServiceBills(),
       ]);
 
       setExpenses(expList);
+      setServiceBills(sBillsList);
 
       if (roomsRes.error) {
         console.error('FULL SUPABASE ERROR fetching rooms in HotelContext:', roomsRes.error);
@@ -375,6 +398,61 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [refreshData]
   );
 
+  const addServiceBill = useCallback(
+    async (payload: {
+      customerType: 'resort_guest' | 'outside_customer';
+      reservationId?: string;
+      customerName?: string;
+      category: 'Food' | 'Swimming Pool' | 'Campfire' | 'Other';
+      totalAmount: number;
+      paidNow: number;
+      paymentMethod?: string;
+      balanceOption?: 'due' | 'irshad_wallet';
+      remarks?: string;
+    }) => {
+      try {
+        const created = await ServiceBillService.createServiceBill(payload);
+        await refreshData();
+        return created;
+      } catch (err) {
+        console.error('Error adding service bill:', err);
+        throw err;
+      }
+    },
+    [refreshData]
+  );
+
+  const collectServiceBillPayment = useCallback(
+    async (
+      billId: string | number,
+      collectAmount: number,
+      paymentMethod: string,
+      remarks?: string
+    ) => {
+      try {
+        await ServiceBillService.collectPayment(billId, collectAmount, paymentMethod, remarks);
+        await refreshData();
+      } catch (err) {
+        console.error('Error collecting service bill payment:', err);
+        throw err;
+      }
+    },
+    [refreshData]
+  );
+
+  const deleteServiceBill = useCallback(
+    async (billId: string | number) => {
+      try {
+        await ServiceBillService.deleteServiceBill(billId);
+        await refreshData();
+      } catch (err) {
+        console.error('Error deleting service bill:', err);
+        throw err;
+      }
+    },
+    [refreshData]
+  );
+
   return (
     <HotelContext.Provider
       value={{
@@ -385,6 +463,7 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         dueTransactions,
         guests,
         expenses,
+        serviceBills,
         isLoading,
         refreshData,
         checkOverlappingBooking,
@@ -392,6 +471,9 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateExpense,
         deleteExpense,
         updateBookingPayment,
+        addServiceBill,
+        collectServiceBillPayment,
+        deleteServiceBill,
       }}
     >
       {children}

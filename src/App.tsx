@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard';
 import BookingCalendar from './components/BookingCalendar';
 import BookingModal from './components/BookingModal';
 import Inventory from './components/Inventory';
+import FoodActivityBill from './components/FoodActivityBill';
 import SalaryRent from './components/SalaryRent';
 import Irshad from './components/Irshad';
 import Dues from './components/Dues';
@@ -12,7 +13,7 @@ import Analytics from './components/Analytics';
 import ReminderModal from './components/ReminderModal';
 import { useHotelData } from './context/HotelContext';
 
-const VALID_TABS: AppTab[] = ['dashboard', 'calendar', 'inventory', 'salary-rent', 'irshad', 'dues', 'analytics'];
+const VALID_TABS: AppTab[] = ['dashboard', 'calendar', 'inventory', 'food-activity', 'salary-rent', 'irshad', 'dues', 'analytics'];
 
 function getInitialTab(): AppTab {
   if (typeof window !== 'undefined') {
@@ -165,6 +166,7 @@ export default function App() {
               {currentTab === 'dashboard' && 'Dashboard'}
               {currentTab === 'calendar' && 'Booking Calendar'}
               {currentTab === 'inventory' && 'Expense Ledger'}
+              {currentTab === 'food-activity' && 'Food / Activity Bill'}
               {currentTab === 'salary-rent' && 'Employee Salary & Property Rent'}
               {currentTab === 'irshad' && 'Irshad Wallet & Settlement Ledger'}
               {currentTab === 'dues' && 'Customer Dues Ledger'}
@@ -233,6 +235,10 @@ export default function App() {
 
             {currentTab === 'inventory' && (
               <Inventory refreshTrigger={refreshTrigger} />
+            )}
+
+            {currentTab === 'food-activity' && (
+              <FoodActivityBill refreshTrigger={refreshTrigger} />
             )}
 
             {currentTab === 'salary-rent' && (

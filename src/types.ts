@@ -76,6 +76,36 @@ export interface DueTransaction {
   created_at: string;
 }
 
+export interface ServiceBill {
+  id: string;
+  reservationId?: string | null;
+  serviceType: 'food' | 'swimming_pool' | 'campfire' | 'other';
+  status: 'pending' | 'partial' | 'paid' | 'cancelled';
+  remarks?: string;
+  createdAt: string;
+  updatedAt: string;
+  totalAmount: number;
+  paidAmount: number;
+  remainingBalance: number;
+  paymentMethod?: string;
+  balanceDueWallet: boolean;
+  transferToIrshad: boolean;
+  customerName?: string;
+  isOutsideCustomer: boolean;
+  // Joined or calculated fields for UI display
+  guestName?: string;
+  roomNumber?: number;
+}
+
+export interface ServiceBillPayment {
+  id: string;
+  billId: string;
+  amount: number;
+  paymentMethod?: string;
+  remarks?: string;
+  createdAt: string;
+}
+
 export interface CustomerDue {
   id: string; // payment id
   reservationId: string;
