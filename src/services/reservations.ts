@@ -1020,38 +1020,27 @@ export const ReservationService = {
   async updateBookingPayment(
     reservationId: string,
     totalAmount: number,
-    advancePaid: number
+    advancePaid?: number
   ): Promise<void> {
     if (!isSupabaseConfigured) return;
 
-    if (advancePaid > totalAmount) {
-      throw new Error('Advance paid cannot exceed total amount');
-    }
-
     let targetResId = await getCleanReservationId(reservationId);
+    if (!targetResId) return;
+
     if (DEBUG) {
       console.log("Reservation UUID:", reservationId);
       console.log("Reservation UUID Used:", targetResId);
     }
 
-    // Fetch current payment state to determine additional advance
-    const { data: payRows } = await supabase
-      .from('payments')
-      .select('*')
-      .eq('reservation_id', targetResId);
-
-    const existing = payRows && payRows.length > 0 ? payRows[0] : null;
-    const currentAdvance = Number(existing?.advance_paid || 0);
-    const additionalAdvance = Math.max(0, advancePaid - currentAdvance);
-
+    // Call updatePaymentSummary with paymentAmount = 0 so no payment transaction is modified/inserted,
+    // and total_amount, remaining_balance, and payment_status are updated based on existing payment ledger.
     await updatePaymentSummary({
       reservationId: targetResId,
-      paymentAmount: additionalAdvance,
-      isAdvance: true,
+      paymentAmount: 0,
       options: {
         totalAmount,
       },
-      remarks: 'Payment details updated',
+      remarks: 'Updated booking total',
     });
   },
 
@@ -1078,6 +1067,17 @@ export const ReservationService = {
     }
 
     if (!targetResId) return;
+
+    if (data.totalAmount !== undefined && data.totalAmount > 0) {
+      await updatePaymentSummary({
+        reservationId: targetResId,
+        paymentAmount: 0,
+        options: {
+          totalAmount: data.totalAmount,
+        },
+        remarks: 'Updated booking total',
+      });
+    }
 
     const { data: resData } = await supabase
       .from('reservations')

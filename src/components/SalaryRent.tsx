@@ -297,7 +297,14 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
         .filter((s) => s.effectiveMonth <= targetM)
         .sort((a, b) => b.effectiveMonth.localeCompare(a.effectiveMonth));
 
-      const monthlyRent = sortedSets.length > 0 ? sortedSets[0].monthlyAmount : 160000;
+      let monthlyRent = 160000;
+      if (sortedSets.length > 0) {
+        monthlyRent = sortedSets[0].monthlyAmount;
+      } else if (rentSettings.length > 0) {
+        const sortedAll = [...rentSettings].sort((a, b) => a.effectiveMonth.localeCompare(b.effectiveMonth));
+        monthlyRent = sortedAll[0].monthlyAmount;
+      }
+
       const monthPayments = rentPayments.filter((p) => p.month === targetM);
       const paidThisMonth = monthPayments.reduce((sum, p) => sum + p.amount, 0);
       const remainingBalance = Math.max(0, monthlyRent - paidThisMonth);
@@ -427,14 +434,23 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
   // HANDLERS
   const handleUpdateRentSetting = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!rentAmountInput || Number(rentAmountInput) <= 0) return;
+    const amt = Number(rentAmountInput);
+    if (rentAmountInput === '' || isNaN(amt) || amt <= 0) {
+      showToast('Please enter a valid monthly rent amount');
+      return;
+    }
+
+    console.log("Saving rent", rentAmountInput);
     setIsSubmitting(true);
     try {
-      await SalaryRentService.updateRentAmount(Number(rentAmountInput), rentEffectiveMonthInput);
+      await SalaryRentService.updateRentAmount(amt, rentEffectiveMonthInput);
+      console.log("Rent saved successfully");
       await loadData();
+      console.log("UI refreshed");
       setIsEditRentModalOpen(false);
       showToast('✓ Monthly rent updated successfully');
     } catch (err: any) {
+      console.error('Failed to update rent:', err);
       alert(err.message || 'Failed to update rent');
     } finally {
       setIsSubmitting(false);

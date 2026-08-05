@@ -3,6 +3,7 @@ import { IrshadWalletService } from '../services/irshadWallet';
 import { IrshadSettlement, IrshadWalletSummary } from '../types';
 import { useHotelData } from '../context/HotelContext';
 import { getISTDateStr } from '../utils/formatters';
+import { getCleanGuestRemarks } from '../utils/timeline';
 import {
   Wallet,
   Receipt,
@@ -86,25 +87,36 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
   }, [loadAllData, refreshTrigger, payments]);
 
   // Derived Calculations
-  const totalExpenses = useMemo(() => {
+  const personalExpenses = useMemo(() => {
     return summary.expense_by_irshad || expenses.reduce((s, e) => s + (e.amount || 0), 0);
   }, [summary, expenses]);
 
-  const totalBookings = useMemo(() => {
+  const bookingDues = useMemo(() => {
     return summary.bookings_with_irshad || bookings.reduce((s, b) => s + (b.transferredToIrshad || b.amount || 0), 0);
   }, [summary, bookings]);
 
   const resortPaid = summary.resort_paid || 0;
   const irshadPaid = summary.irshad_paid || 0;
+  const settlementPaid = resortPaid - irshadPaid;
 
-  // net = booking_due_to_resort - expense_due_to_irshad
-  // booking_due_to_resort = totalBookings - irshadPaid
-  // expense_due_to_irshad = totalExpenses - resortPaid
+  const expenseLedgerTotal = useMemo(() => {
+    return expenses.reduce((s, e) => s + (e.amount || 0), 0);
+  }, [expenses]);
+
+  const totalExpenses = personalExpenses;
+  const totalBookings = bookingDues;
+
   const netWalletBalance = useMemo(() => {
-    const bookingDueToResort = totalBookings - irshadPaid;
-    const expenseDueToIrshad = totalExpenses - resortPaid;
-    return bookingDueToResort - expenseDueToIrshad;
-  }, [totalBookings, totalExpenses, resortPaid, irshadPaid]);
+    const walletBalance = personalExpenses - bookingDues - settlementPaid;
+    console.log({
+      personalExpenses,
+      bookingDues,
+      settlementPaid,
+      expenseLedgerTotal,
+      walletBalance,
+    });
+    return walletBalance;
+  }, [personalExpenses, bookingDues, settlementPaid, expenseLedgerTotal]);
 
   // Handle Record Settlement Submission
   const handleRecordSettlement = async (e: React.FormEvent) => {
@@ -313,8 +325,8 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
             <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
               <Wallet className="w-4 h-4 text-purple-400 shrink-0" /> Net Wallet Balance
             </span>
-            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${netWalletBalance > 0 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : netWalletBalance < 0 ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'}`}>
-              {netWalletBalance > 0 ? 'Irshad Owes Resort' : netWalletBalance < 0 ? 'Resort Owes Irshad' : 'All Settled'}
+            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${netWalletBalance > 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : netWalletBalance < 0 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'}`}>
+              {netWalletBalance > 0 ? 'Resort Owes Irshad' : netWalletBalance < 0 ? 'Irshad Owes Resort' : 'Accounts Settled'}
             </span>
           </div>
           <p className="text-2xl font-black tracking-tight text-white my-1">
@@ -322,10 +334,10 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
           </p>
           <p className="text-[10px] font-medium text-slate-400 truncate">
             {netWalletBalance > 0
-              ? `Irshad should pay Resort: ₹${netWalletBalance.toLocaleString('en-IN')}`
+              ? `Resort should pay Irshad: ₹${netWalletBalance.toLocaleString('en-IN')}`
               : netWalletBalance < 0
-              ? `Resort should pay Irshad: ₹${Math.abs(netWalletBalance).toLocaleString('en-IN')}`
-              : 'All Settled ₹0'}
+              ? `Irshad should pay Resort: ₹${Math.abs(netWalletBalance).toLocaleString('en-IN')}`
+              : 'Accounts Settled ₹0'}
           </p>
         </div>
       </div>
@@ -480,7 +492,7 @@ export default function Irshad({ refreshTrigger }: { refreshTrigger?: number }) 
                     </div>
                     <div className="col-span-4 sm:col-span-4 min-w-0">
                       <span className="text-[11px] text-slate-600 font-medium block truncate">
-                        {b.remarks || 'Check-in balance assigned to Irshad'}
+                        {getCleanGuestRemarks(b.remarks) || 'Check-in balance assigned to Irshad'}
                       </span>
                     </div>
                     <div className="col-span-4 sm:col-span-5 flex items-center justify-end gap-2.5">

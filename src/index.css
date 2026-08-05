@@ -9,3 +9,21 @@ input::-webkit-inner-spin-button {
 input[type=number] {
   -moz-appearance: textfield;
 }
+
+/* Remove default focus outlines, tap highlights, active bar overlays, and selection boxes on Recharts / SVG chart elements */
+.recharts-wrapper,
+.recharts-wrapper *,
+.recharts-surface,
+.recharts-surface *,
+.recharts-rectangle,
+.recharts-bar-rectangle,
+.recharts-bar-rectangles,
+.recharts-layer {
+  outline: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.recharts-wrapper *:focus {
+  outline: none !important;
+}

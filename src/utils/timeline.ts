@@ -4,18 +4,99 @@ export interface RoomTimelineSegment {
   rooms: number[];   // list of room numbers
 }
 
+/**
+ * Returns ONLY the clean user-entered guest remarks.
+ * Strips all internal system tags ([PAYMENT:...], [ROOM_TIMELINE:...]),
+ * ROOM_TIMELINE JSON strings, and internal metadata.
+ * If empty, invalid object/array, or only tags, returns "".
+ */
+export function getCleanGuestRemarks(remarksInput: any): string {
+  if (!remarksInput) return '';
+  if (typeof remarksInput !== 'string') return '';
+
+  let str = remarksInput.trim();
+  if (!str) return '';
+
+  // 1. Strip [PAYMENT:total=...,advance=...]
+  str = str.replace(/\[PAYMENT:total=[\d.]+,advance=[\d.]+\]\s*/gi, '');
+
+  // 2. Strip [ROOM_TIMELINE:[...]]
+  const tag = '[ROOM_TIMELINE:';
+  let tagIdx = str.indexOf(tag);
+  while (tagIdx !== -1) {
+    const jsonStart = tagIdx + tag.length;
+    let depth = 0;
+    let jsonEnd = -1;
+    let inString = false;
+    let escape = false;
+
+    for (let i = jsonStart; i < str.length; i++) {
+      const char = str[i];
+      if (inString) {
+        if (escape) {
+          escape = false;
+        } else if (char === '\\') {
+          escape = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+      } else {
+        if (char === '"') {
+          inString = true;
+        } else if (char === '[') {
+          depth++;
+        } else if (char === ']') {
+          depth--;
+          if (depth === 0) {
+            jsonEnd = i + 1;
+            break;
+          }
+        }
+      }
+    }
+
+    if (jsonEnd !== -1) {
+      let tagEnd = jsonEnd;
+      if (str[tagEnd] === ']') {
+        tagEnd++;
+      }
+      str = (str.slice(0, tagIdx) + str.slice(tagEnd)).trim();
+      tagIdx = str.indexOf(tag);
+    } else {
+      str = str.slice(0, tagIdx).trim();
+      break;
+    }
+  }
+
+  // 3. Strip any unparsed ROOM_TIMELINE or PAYMENT patterns
+  str = str.replace(/\[?ROOM_TIMELINE:[\s\S]*?\]\]?/gi, '');
+  str = str.replace(/ROOM_TIMELINE:\s*(\[[\s\S]*?\]|\{[\s\S]*?\})/gi, '');
+  str = str.replace(/\[PAYMENT:[\s\S]*?\]/gi, '');
+
+  str = str.replace(/\s+/g, ' ').trim();
+
+  // 4. Check if remaining string is pure JSON array or object
+  if (str.startsWith('{') || str.startsWith('[')) {
+    try {
+      JSON.parse(str);
+      return '';
+    } catch (e) {
+      // not JSON
+    }
+  }
+
+  return str;
+}
+
 export function parsePaymentMetadata(remarksStr: string): { totalAmount: number; advancePaid: number; cleanRemarks: string } {
-  if (!remarksStr) return { totalAmount: 0, advancePaid: 0, cleanRemarks: '' };
+  if (!remarksStr || typeof remarksStr !== 'string') return { totalAmount: 0, advancePaid: 0, cleanRemarks: '' };
   
   const match = remarksStr.match(/\[PAYMENT:total=([\d.]+),advance=([\d.]+)\]/);
-  if (match) {
-    const totalAmount = Number(match[1]) || 0;
-    const advancePaid = Number(match[2]) || 0;
-    const cleanRemarks = remarksStr.replace(/\[PAYMENT:total=[\d.]+,advance=[\d.]+\]\s*/, '').trim();
-    return { totalAmount, advancePaid, cleanRemarks };
-  }
+  const totalAmount = match ? Number(match[1]) || 0 : 0;
+  const advancePaid = match ? Number(match[2]) || 0 : 0;
+  const cleanRemarks = getCleanGuestRemarks(remarksStr);
   
-  return { totalAmount: 0, advancePaid: 0, cleanRemarks: remarksStr };
+  return { totalAmount, advancePaid, cleanRemarks };
 }
 
 /**
@@ -25,7 +106,9 @@ export function parseRoomTimeline(remarksStr: string): {
   timeline: RoomTimelineSegment[];
   cleanRemarks: string;
 } {
-  if (!remarksStr) return { timeline: [], cleanRemarks: '' };
+  if (!remarksStr || typeof remarksStr !== 'string') return { timeline: [], cleanRemarks: '' };
+
+  const cleanRemarks = getCleanGuestRemarks(remarksStr);
 
   const tag = '[ROOM_TIMELINE:';
   const tagIdx = remarksStr.indexOf(tag);
@@ -65,11 +148,6 @@ export function parseRoomTimeline(remarksStr: string): {
       try {
         const jsonStr = remarksStr.slice(jsonStart, jsonEnd);
         const parsed = JSON.parse(jsonStr);
-        let tagEnd = jsonEnd;
-        if (remarksStr[tagEnd] === ']') {
-          tagEnd++;
-        }
-        const cleanRemarks = (remarksStr.slice(0, tagIdx) + remarksStr.slice(tagEnd)).replace(/\s+/g, ' ').trim();
         return {
           timeline: Array.isArray(parsed) ? parsed : [],
           cleanRemarks,
@@ -80,7 +158,7 @@ export function parseRoomTimeline(remarksStr: string): {
     }
   }
 
-  return { timeline: [], cleanRemarks: remarksStr };
+  return { timeline: [], cleanRemarks };
 }
 
 /**
@@ -127,8 +205,9 @@ export function buildCombinedRemarks(
     result += encodeRoomTimeline(timeline);
   }
 
-  if (cleanUserRemarks && cleanUserRemarks.trim()) {
-    result += (result ? ' ' : '') + cleanUserRemarks.trim();
+  const userClean = getCleanGuestRemarks(cleanUserRemarks);
+  if (userClean) {
+    result += (result ? ' ' : '') + userClean;
   }
 
   return result;

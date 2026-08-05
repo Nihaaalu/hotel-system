@@ -30,7 +30,7 @@ export interface Booking {
   status: 'booked' | 'checked-in' | 'checked-out' | 'cancelled';
   totalAmount: number;
   advancePaid: number;
-  paymentStatus?: 'paid' | 'pending';
+  paymentStatus?: 'paid' | 'pending' | 'partial';
   remarks: string;
   createdAt: string;
   updatedAt: string;
@@ -58,7 +58,7 @@ export interface Payment {
   transferToIrshad?: boolean;
   balanceDueWallet?: boolean;
   remainingBalance?: number;
-  paymentStatus?: 'paid' | 'pending' | 'balance_due';
+  paymentStatus?: 'paid' | 'pending' | 'partial' | 'balance_due';
   paymentDate: string; // ISO String
   paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking';
   remarks: string;

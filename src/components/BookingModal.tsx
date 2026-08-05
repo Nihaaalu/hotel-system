@@ -14,6 +14,7 @@ import {
   parsePaymentMetadata,
   encodeRoomTimeline,
   buildCombinedRemarks,
+  getCleanGuestRemarks,
   RoomTimelineSegment,
 } from '../utils/timeline';
 import {
@@ -361,7 +362,7 @@ export default function BookingModal({
         setCheckOutDate(b.checkOutDate);
         setTotalAmount(b.totalAmount);
         setAdvancePaid(b.advancePaid);
-        setRemarks(b.remarks || '');
+        setRemarks(getCleanGuestRemarks(b.remarks));
 
         if (b.bookingGroupId) {
           const sameGroup = contextBookings.filter(
@@ -1139,21 +1140,26 @@ export default function BookingModal({
       const newTotal = Number(editTotalInput);
       const resId = loadedBooking.bookingGroupId || loadedBooking.id;
 
-      await updateBookingPayment(resId, newTotal, loadedBooking.advancePaid);
+      await updateBookingPayment(resId, newTotal);
+
+      const collected = loadedBooking.advancePaid || 0;
+      const remaining = Math.max(0, newTotal - collected);
+      const newStatus = remaining === 0 && newTotal > 0 ? 'paid' : collected === 0 ? 'pending' : 'partial';
 
       setLoadedBooking((prev) =>
         prev
           ? {
               ...prev,
               totalAmount: newTotal,
-              paymentStatus: prev.advancePaid >= newTotal && newTotal > 0 ? 'paid' : 'pending',
+              advancePaid: collected,
+              paymentStatus: newStatus as any,
             }
           : null
       );
 
       setIsEditingTotal(false);
       await refreshData();
-      onSuccess();
+      if (onSuccess) onSuccess();
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to save total amount');
     } finally {
@@ -1228,7 +1234,7 @@ export default function BookingModal({
                     type="button"
                     onClick={() => {
                       setEditGuestName(loadedBooking.guestName || '');
-                      setEditRemarks(loadedBooking.remarks || '');
+                      setEditRemarks(getCleanGuestRemarks(loadedBooking.remarks));
                       setIsEditingGuest(true);
                     }}
                     className="p-1 rounded-lg text-indigo-600 hover:bg-indigo-50 transition cursor-pointer flex items-center gap-1 text-[11px] font-bold"
@@ -1245,7 +1251,9 @@ export default function BookingModal({
                 <div className="border-t border-gray-100 pt-1.5">
                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Remarks</span>
                   <p className="font-medium text-gray-700 italic text-xs mt-0.5">
-                    {loadedBooking.remarks ? `"${loadedBooking.remarks}"` : 'No special remarks recorded.'}
+                    {getCleanGuestRemarks(loadedBooking.remarks)
+                      ? `"${getCleanGuestRemarks(loadedBooking.remarks)}"`
+                      : 'No special remarks recorded.'}
                   </p>
                 </div>
               </div>

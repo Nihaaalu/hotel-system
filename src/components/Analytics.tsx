@@ -7,7 +7,8 @@ import { SalaryRentService } from '../services/salaryRent';
 import { IrshadWalletService } from '../services/irshadWallet';
 import { DuesService } from '../services/dues';
 import { getISTDateStr, getISTMonthStr } from '../utils/formatters';
-import { SalaryPayment, RentPayment, IrshadWalletSummary, IrshadWalletNetSummary } from '../types';
+import { getCleanGuestRemarks } from '../utils/timeline';
+import { SalaryPayment, RentPayment, RentSetting, IrshadWalletSummary, IrshadWalletNetSummary } from '../types';
 import {
   DollarSign,
   TrendingUp,
@@ -39,6 +40,7 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -46,6 +48,8 @@ import {
   Legend,
   LineChart,
   Line,
+  AreaChart,
+  Area,
 } from 'recharts';
 
 interface BookingSummaryItem {
@@ -254,34 +258,64 @@ const YearlyChartTooltip = React.memo(({ active, payload }: any) => {
   );
 });
 
-// Custom Tooltip for Daily Charts
-const DailyChartTooltip = React.memo(({ active, payload, metrics, chartType }: any) => {
+// Custom Tooltip for Single Redesigned Analytics Chart
+const UnifiedChartTooltip = React.memo(({ active, payload, dataset }: any) => {
   if (!active || !payload || !payload.length) return null;
-
   const data = payload[0].payload;
-  if (!data || !data.hasValue || data.revenue === null) return null;
+  if (!data) return null;
 
-  const rev = data.revenue || 0;
-  const inv = data.expenses || 0;
-  const daysInMonth = data.totalDaysInMonth || 30;
-  const sal = metrics.monthSalaryExp > 0 ? Math.round(metrics.monthSalaryExp / daysInMonth) : 0;
-  const rnt = metrics.monthRentExp > 0 ? Math.round(metrics.monthRentExp / daysInMonth) : 0;
-  const netProfit = rev - inv;
-
-  const prevVal = chartType === 'revenue' ? data.previousDayRevenue : data.previousDayExpenses;
-  const currentVal = chartType === 'revenue' ? rev : inv;
-  const diff = currentVal - prevVal;
+  const isRevenue = dataset === 'revenue';
+  const val = Number(data.amount || 0);
+  const bookingsCount = Number(data.bookingCount || 0);
 
   if (typeof window !== 'undefined' && navigator.vibrate) {
-    try { navigator.vibrate(8); } catch {}
+    try { navigator.vibrate(6); } catch {}
   }
 
   return (
-    <div className="bg-slate-900/95 backdrop-blur-md text-white p-3.5 rounded-2xl shadow-xl border border-slate-700/80 text-xs min-w-[210px] space-y-2 z-50">
-      <div className="font-black text-slate-100 border-b border-slate-800 pb-1.5 flex items-center justify-between">
-        <span className="text-sm tracking-tight">{data.label}</span>
+    <div className="bg-slate-900/95 backdrop-blur-md text-white px-3.5 py-2.5 rounded-xl shadow-xl border border-slate-700/80 text-xs min-w-[165px] space-y-1.5 z-50">
+      <p className="font-extrabold text-slate-200 border-b border-slate-800 pb-1 text-[11px] tracking-tight">
+        {data.fullDateLabel || data.label}
+      </p>
+      <div className="flex items-center justify-between gap-3 pt-0.5">
+        <span className="text-slate-400 font-medium">
+          {isRevenue ? 'Revenue' : 'Inventory Expense'}
+        </span>
+        <span className={`font-extrabold font-sans ${isRevenue ? 'text-emerald-400' : 'text-rose-400'}`}>
+          ₹{val.toLocaleString('en-IN')}
+        </span>
       </div>
-      <div className="space-y-1.5 font-sans">
+      {isRevenue && (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-slate-400 font-medium">Bookings</span>
+          <span className="font-bold text-indigo-300 font-sans">
+            {bookingsCount} {bookingsCount === 1 ? 'Booking' : 'Bookings'}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+});
+
+// Custom Tooltip for Daily Charts
+const DailyChartTooltip = React.memo(({ active, payload }: any) => {
+  if (!active || !payload || !payload.length) return null;
+
+  const data = payload[0].payload;
+  if (!data) return null;
+
+  const rev = Number(data.revenue || 0);
+  const inv = Number(data.expenses || 0);
+  const sal = Number(data.salary || 0);
+  const rnt = Number(data.rent || 0);
+  const profit = rev - (inv + sal + rnt);
+
+  return (
+    <div className="bg-slate-900/95 backdrop-blur-md text-white px-3.5 py-3 rounded-xl shadow-2xl border border-slate-700/80 text-xs min-w-[190px] space-y-2 z-50">
+      <div className="font-extrabold text-slate-100 border-b border-slate-800 pb-1 flex items-center justify-between text-xs tracking-tight">
+        <span>{data.label}</span>
+      </div>
+      <div className="space-y-1 font-sans">
         <div className="flex items-center justify-between gap-3">
           <span className="text-slate-400 font-medium">Revenue</span>
           <span className="font-extrabold text-emerald-400 font-sans">₹{rev.toLocaleString('en-IN')}</span>
@@ -291,30 +325,18 @@ const DailyChartTooltip = React.memo(({ active, payload, metrics, chartType }: a
           <span className="font-extrabold text-amber-400 font-sans">₹{inv.toLocaleString('en-IN')}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-slate-400 font-medium">Salary (Avg Day)</span>
+          <span className="text-slate-400 font-medium">Salary</span>
           <span className="font-extrabold text-indigo-400 font-sans">₹{sal.toLocaleString('en-IN')}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-slate-400 font-medium">Rent (Avg Day)</span>
+          <span className="text-slate-400 font-medium">Rent</span>
           <span className="font-extrabold text-lime-400 font-sans">₹{rnt.toLocaleString('en-IN')}</span>
         </div>
-        <div className="pt-1.5 border-t border-slate-800 flex items-center justify-between gap-3">
-          <span className="text-slate-200 font-bold">Profit (Rev - Inv)</span>
-          <span className={`font-black font-sans ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-            ₹{netProfit.toLocaleString('en-IN')}
+        <div className="pt-1 border-t border-slate-800 flex items-center justify-between gap-3">
+          <span className="text-slate-200 font-bold">Profit</span>
+          <span className={`font-black font-sans ${profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            ₹{profit.toLocaleString('en-IN')}
           </span>
-        </div>
-        <div className="pt-1.5 border-t border-slate-800 space-y-1 text-[11px]">
-          <div className="flex items-center justify-between gap-3 text-slate-400">
-            <span>Previous Day</span>
-            <span className="font-bold text-slate-300 font-sans">₹{prevVal.toLocaleString('en-IN')}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-slate-400">Difference</span>
-            <span className={`font-black font-sans ${diff >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {diff >= 0 ? '+' : ''}₹{diff.toLocaleString('en-IN')}
-            </span>
-          </div>
         </div>
       </div>
     </div>
@@ -331,8 +353,43 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
   const [selectedMonth, setSelectedMonth] = useState<string>(defaultMonthStr);
   const [selectedYear, setSelectedYear] = useState<number>(currentYearNum);
 
+  // Redesigned Analytics Chart state (Single chart view with segmented controls)
+  const [chartDataset, setChartDataset] = useState<'revenue' | 'inventory'>('revenue');
+  const [chartTimeframe, setChartTimeframe] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('daily');
+  const [chartCustomFrom, setChartCustomFrom] = useState<string>(() => `${defaultMonthStr}-01`);
+  const [chartCustomTo, setChartCustomTo] = useState<string>(currentISTDateStr);
+  const [isChartCustomModalOpen, setIsChartCustomModalOpen] = useState<boolean>(false);
+  const [chartSortOrder, setChartSortOrder] = useState<'chrono' | 'highest'>('chrono');
+  const [selectedChartItemKey, setSelectedChartItemKey] = useState<string | null>(null);
+
+  // Scroll & chart sizing hooks for single chart
+  const chartScrollRef = React.useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const handleChartScroll = () => {
+    if (!chartScrollRef.current) return;
+    const { scrollLeft, scrollWidth, clientWidth } = chartScrollRef.current;
+    setCanScrollLeft(scrollLeft > 6);
+    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 6);
+  };
+
   const [allSalaryPayments, setAllSalaryPayments] = useState<SalaryPayment[]>([]);
   const [allRentPayments, setAllRentPayments] = useState<RentPayment[]>([]);
+  const [allRentSettings, setAllRentSettings] = useState<RentSetting[]>([]);
+
+  const getRentAmountForMonth = (settings: RentSetting[], targetMonth: string): number => {
+    if (!settings || settings.length === 0) return 160000;
+    const applicable = settings
+      .filter((s) => s.effectiveMonth <= targetMonth)
+      .sort((a, b) => b.effectiveMonth.localeCompare(a.effectiveMonth));
+
+    if (applicable.length > 0) {
+      return applicable[0].monthlyAmount;
+    }
+    const sortedAll = [...settings].sort((a, b) => a.effectiveMonth.localeCompare(b.effectiveMonth));
+    return sortedAll[0]?.monthlyAmount || 160000;
+  };
   const [walletNetSummary, setWalletNetSummary] = useState<IrshadWalletNetSummary>({
     bookingTransferred: 0,
     expenseByIrshad: 0,
@@ -341,10 +398,6 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
   });
   const [irshadWalletBalance, setIrshadWalletBalance] = useState<number>(0);
   const [outstandingDuesBalance, setOutstandingDuesBalance] = useState<number>(0);
-
-  // Zoom levels for Daily Charts (1x, 1.5x, 2x)
-  const [revChartZoom, setRevChartZoom] = useState<number>(1);
-  const [invChartZoom, setInvChartZoom] = useState<number>(1);
 
   // Booking Revenue Ledger State
   const [ledgerSelectedDate, setLedgerSelectedDate] = useState<string>(currentISTDateStr);
@@ -382,9 +435,10 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
   useEffect(() => {
     async function loadSalaryRentAnalytics() {
       try {
-        const { salaryPayments, rentPayments } = await SalaryRentService.fetchAllData();
+        const { salaryPayments, rentPayments, rentSettings } = await SalaryRentService.fetchAllData();
         setAllSalaryPayments(salaryPayments || []);
         setAllRentPayments(rentPayments || []);
+        setAllRentSettings(rentSettings || []);
       } catch (err) {
         console.error('Error fetching salary/rent analytics', err);
       }
@@ -480,279 +534,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
     return map;
   }, [bookings]);
 
-  // 2. Calculate Metrics for Selected Month
-  // Revenue = SUM(payments.amount_collected) for selected month
-  // ONLY money actually collected counts as Revenue!
-  const metrics = useMemo(() => {
-    let monthRev = 0;
-    let monthAdv = 0;
-
-    // Sum actual money collected from payments
-    if (payments && payments.length > 0) {
-      payments.forEach((p) => {
-        const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
-        if (pDate.startsWith(selectedMonth)) {
-          const amt = Number(
-            p.amountCollected !== undefined
-              ? p.amountCollected
-              : p.amount !== undefined
-              ? p.amount
-              : p.advancePaid || 0
-          );
-          monthRev += amt;
-        }
-      });
-    } else {
-      // Fallback
-      uniqueBookingsMap.forEach((b) => {
-        if (b.checkInDate && b.checkInDate.startsWith(selectedMonth)) {
-          monthRev += b.advancePaid;
-          monthAdv += b.advancePaid;
-        }
-      });
-    }
-
-    let monthInventoryExpTotal = 0;
-    let monthSalaryInExp = 0;
-    let monthRentInExp = 0;
-
-    expenses.forEach((e) => {
-      const amt = Number(e.amount || 0);
-      if (e.expenseDate && e.expenseDate.startsWith(selectedMonth)) {
-        if (e.category === 'Salary') monthSalaryInExp += amt;
-        else if (e.category === 'Rent') monthRentInExp += amt;
-        else monthInventoryExpTotal += amt;
-      }
-    });
-
-    const salaryPaidThisMonth = allSalaryPayments
-      .filter((p) => p.month === selectedMonth)
-      .reduce((sum, p) => sum + p.amount, 0);
-
-    const rentPaidThisMonth = allRentPayments
-      .filter((p) => p.month === selectedMonth)
-      .reduce((sum, p) => sum + p.amount, 0);
-
-    const effectiveSalaryMonthExp = monthSalaryInExp > 0 ? monthSalaryInExp : salaryPaidThisMonth;
-    const effectiveRentMonthExp = monthRentInExp > 0 ? monthRentInExp : rentPaidThisMonth;
-
-    // Step 1: Calculate Business Profit = Revenue - Inventory - Salary - Rent
-    const totalMonthAllExp = monthInventoryExpTotal + effectiveSalaryMonthExp + effectiveRentMonthExp;
-    const netIncome = monthRev - totalMonthAllExp;
-
-    return {
-      monthRevenue: monthRev,
-      advanceReceived: monthAdv,
-      outstandingBalance: outstandingDuesBalance,
-      monthInventoryExp: monthInventoryExpTotal,
-      monthSalaryExp: effectiveSalaryMonthExp,
-      monthRentExp: effectiveRentMonthExp,
-      totalMonthAllExp,
-      netIncome,
-    };
-  }, [payments, uniqueBookingsMap, expenses, selectedMonth, allSalaryPayments, allRentPayments, outstandingDuesBalance]);
-
-  // 3. Entire Year View Chart Data (12 Months Jan - Dec for selectedYear)
-  const yearly12MonthsData = useMemo(() => {
-    const list = [];
-
-    for (let m = 1; m <= 12; m++) {
-      const mStr = String(m).padStart(2, '0');
-      const mKey = `${selectedYear}-${mStr}`;
-      const monthLabel = SHORT_MONTH_NAMES[m - 1];
-
-      let rev = 0;
-      if (payments && payments.length > 0) {
-        payments.forEach((p) => {
-          const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
-          if (pDate.startsWith(mKey)) {
-            rev += Number(
-              p.amountCollected !== undefined
-                ? p.amountCollected
-                : p.amount !== undefined
-                ? p.amount
-                : p.advancePaid || 0
-            );
-          }
-        });
-      } else {
-        uniqueBookingsMap.forEach((b) => {
-          if (b.checkInDate && b.checkInDate.startsWith(mKey)) {
-            rev += b.advancePaid;
-          }
-        });
-      }
-
-      let invExp = 0;
-      let salExpFromCat = 0;
-      let rentExpFromCat = 0;
-
-      expenses.forEach((e) => {
-        const amt = Number(e.amount || 0);
-        if (e.expenseDate && e.expenseDate.startsWith(mKey)) {
-          if (e.category === 'Salary') salExpFromCat += amt;
-          else if (e.category === 'Rent') rentExpFromCat += amt;
-          else invExp += amt;
-        }
-      });
-
-      const salPaid = allSalaryPayments
-        .filter((p) => p.month === mKey)
-        .reduce((sum, p) => sum + p.amount, 0);
-
-      const rentPaid = allRentPayments
-        .filter((p) => p.month === mKey)
-        .reduce((sum, p) => sum + p.amount, 0);
-
-      const finalSal = salExpFromCat > 0 ? salExpFromCat : salPaid;
-      const finalRent = rentExpFromCat > 0 ? rentExpFromCat : rentPaid;
-
-      list.push({
-        monthKey: mKey,
-        month: monthLabel,
-        revenue: rev,
-        inventory: invExp,
-        salary: finalSal,
-        rent: finalRent,
-      });
-    }
-
-    return list;
-  }, [selectedYear, payments, uniqueBookingsMap, expenses, allSalaryPayments, allRentPayments]);
-
-  // 4. Progressive Daily Data for Full Selected Month (ONLY plots collected payments per day)
-  const dailyDataForMonth = useMemo(() => {
-    if (!selectedMonth || !selectedMonth.includes('-')) {
-      return {
-        daysList: [],
-        isFutureMonth: false,
-        isCurrentMonth: false,
-        completedDays: 0,
-        totalDaysInMonth: 0,
-        todayFormatted: '',
-        totalRevMonth: 0,
-        totalExpMonth: 0,
-      };
-    }
-
-    const [yStr, mStr] = selectedMonth.split('-');
-    const year = parseInt(yStr, 10);
-    const month = parseInt(mStr, 10);
-
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const monthShort = SHORT_MONTH_NAMES[month - 1] || '';
-
-    const isFutureMonth = selectedMonth > defaultMonthStr;
-    const isCurrentMonth = selectedMonth === defaultMonthStr;
-
-    let maxCompletedDay = daysInMonth;
-    if (isFutureMonth) {
-      maxCompletedDay = 0;
-    } else if (isCurrentMonth) {
-      const todayDayNum = parseInt(currentISTDateStr.split('-')[2], 10);
-      maxCompletedDay = Math.min(daysInMonth, todayDayNum);
-    }
-
-    const daysList = [];
-    let prevRevenue = 0;
-    let prevExpenses = 0;
-    let totalRevMonth = 0;
-    let totalExpMonth = 0;
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dayStr = String(day).padStart(2, '0');
-      const dateKey = `${selectedMonth}-${dayStr}`;
-
-      if (day <= maxCompletedDay) {
-        let rev = 0;
-        if (payments && payments.length > 0) {
-          payments.forEach((p) => {
-            const pDate = (p.paymentDate || p.createdAt || '').split('T')[0];
-            if (pDate === dateKey) {
-              rev += Number(
-                p.amountCollected !== undefined
-                  ? p.amountCollected
-                  : p.amount !== undefined
-                  ? p.amount
-                  : p.advancePaid || 0
-              );
-            }
-          });
-        } else {
-          uniqueBookingsMap.forEach((b) => {
-            if (b.checkInDate === dateKey) {
-              rev += Number(b.advancePaid || 0);
-            }
-          });
-        }
-
-        let invExp = 0;
-        expenses.forEach((e) => {
-          if (e.expenseDate === dateKey) {
-            const amt = Number(e.amount || 0);
-            if (e.category !== 'Salary' && e.category !== 'Rent') {
-              invExp += amt;
-            }
-          }
-        });
-
-        totalRevMonth += rev;
-        totalExpMonth += invExp;
-
-        const revDiff = day === 1 ? rev : rev - prevRevenue;
-        const expDiff = day === 1 ? invExp : invExp - prevExpenses;
-
-        daysList.push({
-          dayNum: day,
-          dateKey,
-          label: `${day} ${monthShort} ${year}`,
-          shortLabel: String(day),
-          revenue: rev,
-          expenses: invExp,
-          previousDayRevenue: prevRevenue,
-          previousDayExpenses: prevExpenses,
-          revenueDiff: revDiff,
-          expensesDiff: expDiff,
-          totalDaysInMonth: daysInMonth,
-          hasValue: true,
-        });
-
-        prevRevenue = rev;
-        prevExpenses = invExp;
-      } else {
-        daysList.push({
-          dayNum: day,
-          dateKey,
-          label: `${day} ${monthShort} ${year}`,
-          shortLabel: String(day),
-          revenue: null,
-          expenses: null,
-          previousDayRevenue: 0,
-          previousDayExpenses: 0,
-          revenueDiff: 0,
-          expensesDiff: 0,
-          totalDaysInMonth: daysInMonth,
-          hasValue: false,
-        });
-      }
-    }
-
-    const [tY, tM, tD] = currentISTDateStr.split('-');
-    const todayFormatted = `${tD}/${tM}/${tY}`;
-
-    return {
-      daysList,
-      isFutureMonth,
-      isCurrentMonth,
-      completedDays: maxCompletedDay,
-      totalDaysInMonth: daysInMonth,
-      todayFormatted,
-      totalRevMonth,
-      totalExpMonth,
-    };
-  }, [selectedMonth, defaultMonthStr, currentISTDateStr, payments, uniqueBookingsMap, expenses]);
-
-  // 5. Unified Revenue Collection Transactions (Source of Truth)
+  // 2. Unified Revenue Collection Transactions (Source of Truth for Cash Collected)
   const allRevenueTransactions = useMemo(() => {
     const resMetadataMap = new Map<string, { guestName: string; roomNumbers: string; checkInDate: string; checkOutDate: string }>();
 
@@ -851,28 +633,14 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
       if (lower.includes('due') || lower.includes('balance') || lower.includes('settlement')) {
         return {
           badgeType: 'balance',
-          badgeLabel: 'Balance',
-          badgeClass: 'bg-indigo-100 text-indigo-800 border-indigo-200',
-        };
-      }
-      if (isFirstTx) {
-        return {
-          badgeType: 'advance',
-          badgeLabel: 'Advance',
-          badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
-        };
-      }
-      if (resRemainingBalance === 0) {
-        return {
-          badgeType: 'paid',
-          badgeLabel: 'Paid',
-          badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+          badgeLabel: 'Balance Settlement',
+          badgeClass: 'bg-sky-100 text-sky-800 border-sky-200',
         };
       }
       return {
-        badgeType: 'balance',
-        badgeLabel: 'Balance',
-        badgeClass: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+        badgeType: isFirstTx ? 'advance' : 'balance',
+        badgeLabel: isFirstTx ? 'Advance' : 'Balance Payment',
+        badgeClass: isFirstTx ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-sky-100 text-sky-800 border-sky-200',
       };
     };
 
@@ -974,6 +742,528 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
     return txList;
   }, [bookings, payments, dueTransactions]);
 
+  // 3. Map of Reservation Revenue grouped strictly by PAYMENT TRANSACTION DATE (Cash Received Engine)
+  // Revenue is recognized ONLY when a payment transaction is recorded.
+  // Booking totals are NEVER used to calculate revenue.
+  const revenueByPaymentDateData = useMemo(() => {
+    const revMap = new Map<string, number>();
+    const countMap = new Map<string, number>();
+    const dateToResSet = new Map<string, Set<string>>();
+
+    allRevenueTransactions.forEach((tx) => {
+      const dateKey = tx.collectionDate; // YYYY-MM-DD
+      if (!dateKey) return;
+      const amt = Number(tx.collectedAmount || 0);
+      if (amt > 0) {
+        revMap.set(dateKey, (revMap.get(dateKey) || 0) + amt);
+
+        if (!dateToResSet.has(dateKey)) {
+          dateToResSet.set(dateKey, new Set());
+        }
+        dateToResSet.get(dateKey)!.add(tx.reservationId);
+      }
+    });
+
+    dateToResSet.forEach((resSet, dateKey) => {
+      countMap.set(dateKey, resSet.size);
+    });
+
+    return { revMap, countMap };
+  }, [allRevenueTransactions]);
+
+  // 4. Calculate Business Analytics Metrics for Selected Month (Cash Received Revenue)
+  const metrics = useMemo(() => {
+    let monthRev = 0;
+    revenueByPaymentDateData.revMap.forEach((amt, dateKey) => {
+      if (dateKey.startsWith(selectedMonth)) {
+        monthRev += amt;
+      }
+    });
+
+    let monthInventoryExpTotal = 0;
+    let monthSalaryInExp = 0;
+    let monthRentInExp = 0;
+
+    expenses.forEach((e) => {
+      const amt = Number(e.amount || 0);
+      if (e.expenseDate && e.expenseDate.startsWith(selectedMonth)) {
+        if (e.category === 'Salary') monthSalaryInExp += amt;
+        else if (e.category === 'Rent') monthRentInExp += amt;
+        else monthInventoryExpTotal += amt;
+      }
+    });
+
+    const salaryPaidThisMonth = allSalaryPayments
+      .filter((p) => p.month === selectedMonth)
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    const rentPaidThisMonth = allRentPayments
+      .filter((p) => p.month === selectedMonth)
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    const activeRentForSelectedMonth = getRentAmountForMonth(allRentSettings, selectedMonth);
+    const effectiveSalaryMonthExp = monthSalaryInExp > 0 ? monthSalaryInExp : salaryPaidThisMonth;
+    const effectiveRentMonthExp = monthRentInExp > 0
+      ? monthRentInExp
+      : (rentPaidThisMonth > 0 ? rentPaidThisMonth : activeRentForSelectedMonth);
+
+    const totalMonthAllExp = monthInventoryExpTotal + effectiveSalaryMonthExp + effectiveRentMonthExp;
+    const netIncome = monthRev - totalMonthAllExp;
+
+    return {
+      monthRevenue: monthRev,
+      advanceReceived: 0,
+      outstandingBalance: outstandingDuesBalance,
+      monthInventoryExp: monthInventoryExpTotal,
+      monthSalaryExp: effectiveSalaryMonthExp,
+      monthRentExp: effectiveRentMonthExp,
+      totalMonthAllExp,
+      netIncome,
+    };
+  }, [revenueByPaymentDateData, expenses, selectedMonth, allSalaryPayments, allRentPayments, allRentSettings, outstandingDuesBalance]);
+
+  // 5. Entire Year View Chart Data (12 Months Jan - Dec for selectedYear)
+  const yearly12MonthsData = useMemo(() => {
+    const list = [];
+
+    for (let m = 1; m <= 12; m++) {
+      const mStr = String(m).padStart(2, '0');
+      const mKey = `${selectedYear}-${mStr}`;
+      const monthLabel = SHORT_MONTH_NAMES[m - 1];
+
+      let rev = 0;
+      revenueByPaymentDateData.revMap.forEach((amt, dateKey) => {
+        if (dateKey.startsWith(mKey)) {
+          rev += amt;
+        }
+      });
+
+      let invExp = 0;
+      let salExpFromCat = 0;
+      let rentExpFromCat = 0;
+
+      expenses.forEach((e) => {
+        const amt = Number(e.amount || 0);
+        if (e.expenseDate && e.expenseDate.startsWith(mKey)) {
+          if (e.category === 'Salary') salExpFromCat += amt;
+          else if (e.category === 'Rent') rentExpFromCat += amt;
+          else invExp += amt;
+        }
+      });
+
+      const salPaid = allSalaryPayments
+        .filter((p) => p.month === mKey)
+        .reduce((sum, p) => sum + p.amount, 0);
+
+      const rentPaid = allRentPayments
+        .filter((p) => p.month === mKey)
+        .reduce((sum, p) => sum + p.amount, 0);
+
+      const activeRentForMKey = getRentAmountForMonth(allRentSettings, mKey);
+      const finalSal = salExpFromCat > 0 ? salExpFromCat : salPaid;
+      const finalRent = rentExpFromCat > 0 ? rentExpFromCat : (rentPaid > 0 ? rentPaid : activeRentForMKey);
+
+      list.push({
+        monthKey: mKey,
+        month: monthLabel,
+        revenue: rev,
+        inventory: invExp,
+        salary: finalSal,
+        rent: finalRent,
+      });
+    }
+
+    return list;
+  }, [selectedYear, revenueByPaymentDateData, expenses, allSalaryPayments, allRentPayments, allRentSettings]);
+
+  // 6. Progressive Daily Data for Full Selected Month
+  const dailyDataForMonth = useMemo(() => {
+    if (!selectedMonth || !selectedMonth.includes('-')) {
+      return {
+        daysList: [],
+        isFutureMonth: false,
+        isCurrentMonth: false,
+        completedDays: 0,
+        totalDaysInMonth: 0,
+        todayFormatted: '',
+        totalRevMonth: 0,
+        totalExpMonth: 0,
+      };
+    }
+
+    const [yStr, mStr] = selectedMonth.split('-');
+    const year = parseInt(yStr, 10);
+    const month = parseInt(mStr, 10);
+
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const monthShort = SHORT_MONTH_NAMES[month - 1] || '';
+
+    const isFutureMonth = selectedMonth > defaultMonthStr;
+    const isCurrentMonth = selectedMonth === defaultMonthStr;
+
+    let maxCompletedDay = daysInMonth;
+    if (isFutureMonth) {
+      maxCompletedDay = 0;
+    } else if (isCurrentMonth) {
+      const todayDayNum = parseInt(currentISTDateStr.split('-')[2], 10);
+      maxCompletedDay = Math.min(daysInMonth, todayDayNum);
+    }
+
+    const daysList = [];
+    let totalRevMonth = 0;
+    let totalExpMonth = 0;
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dayStr = String(day).padStart(2, '0');
+      const dateKey = `${selectedMonth}-${dayStr}`;
+
+      const rev = revenueByPaymentDateData.revMap.get(dateKey) || 0;
+
+      let invExp = 0;
+      let salExp = 0;
+      let rentExp = 0;
+
+      expenses.forEach((e) => {
+        if (e.expenseDate === dateKey) {
+          const amt = Number(e.amount || 0);
+          if (e.category === 'Salary') salExp += amt;
+          else if (e.category === 'Rent') rentExp += amt;
+          else invExp += amt;
+        }
+      });
+
+      totalRevMonth += rev;
+      totalExpMonth += invExp;
+
+      daysList.push({
+        dayNum: day,
+        dateKey,
+        label: `${dayStr} ${monthShort} ${year}`,
+        shortLabel: dayStr,
+        revenue: rev,
+        expenses: invExp,
+        salary: salExp,
+        rent: rentExp,
+        profit: rev - (invExp + salExp + rentExp),
+        totalDaysInMonth: daysInMonth,
+        hasValue: true,
+      });
+    }
+
+    const [tY, tM, tD] = currentISTDateStr.split('-');
+    const todayFormatted = `${tD}/${tM}/${tY}`;
+
+    return {
+      daysList,
+      isFutureMonth,
+      isCurrentMonth,
+      completedDays: maxCompletedDay,
+      totalDaysInMonth: daysInMonth,
+      todayFormatted,
+      totalRevMonth,
+      totalExpMonth,
+    };
+  }, [selectedMonth, defaultMonthStr, currentISTDateStr, revenueByPaymentDateData, expenses]);
+
+  // 7. Redesigned Unified Analytics Chart Data
+  const analyticsChartData = useMemo(() => {
+    if (chartTimeframe === 'daily') {
+      const list = dailyDataForMonth.daysList.map((day) => {
+        const bookingCount = revenueByPaymentDateData.countMap.get(day.dateKey) || 0;
+        const amount = chartDataset === 'revenue' ? day.revenue : day.expenses;
+
+        return {
+          label: day.shortLabel,
+          fullDateLabel: day.label,
+          dateKey: day.dateKey,
+          amount,
+          revenue: day.revenue,
+          expenses: day.expenses,
+          bookingCount,
+        };
+      });
+
+      const totalVal = list.reduce((sum, d) => sum + d.amount, 0);
+
+      return {
+        list,
+        totalVal,
+        daysCount: dailyDataForMonth.totalDaysInMonth,
+        labelTitle: formatMonthLabel(selectedMonth),
+      };
+    }
+
+    if (chartTimeframe === 'weekly') {
+      const [yStr, mStr] = selectedMonth.split('-');
+      const year = parseInt(yStr, 10);
+      const month = parseInt(mStr, 10);
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const monthShort = SHORT_MONTH_NAMES[month - 1] || '';
+
+      const weeks = [
+        { start: 1, end: 7, label: 'W1 (1-7)' },
+        { start: 8, end: 14, label: 'W2 (8-14)' },
+        { start: 15, end: 21, label: 'W3 (15-21)' },
+        { start: 22, end: 28, label: 'W4 (22-28)' },
+        { start: 29, end: daysInMonth, label: `W5 (29-${daysInMonth})` },
+      ].filter((w) => w.start <= daysInMonth);
+
+      const list = weeks.map((w) => {
+        let rev = 0;
+        let exp = 0;
+        let bCount = 0;
+
+        for (let day = w.start; day <= w.end; day++) {
+          const dayStr = String(day).padStart(2, '0');
+          const dateKey = `${selectedMonth}-${dayStr}`;
+          rev += revenueByPaymentDateData.revMap.get(dateKey) || 0;
+          bCount += revenueByPaymentDateData.countMap.get(dateKey) || 0;
+
+          expenses.forEach((e) => {
+            if (e.expenseDate === dateKey) {
+              const amt = Number(e.amount || 0);
+              if (e.category !== 'Salary' && e.category !== 'Rent') exp += amt;
+            }
+          });
+        }
+
+        const amount = chartDataset === 'revenue' ? rev : exp;
+
+        return {
+          label: w.label,
+          fullDateLabel: `Week ${w.label.replace('W', '')} ${monthShort} ${year}`,
+          dateKey: `W${w.label}`,
+          amount,
+          revenue: rev,
+          expenses: exp,
+          bookingCount: bCount,
+        };
+      });
+
+      const totalVal = list.reduce((sum, d) => sum + d.amount, 0);
+
+      return {
+        list,
+        totalVal,
+        daysCount: list.length,
+        labelTitle: `Weekly (${formatMonthLabel(selectedMonth)})`,
+      };
+    }
+
+    if (chartTimeframe === 'monthly') {
+      const list = yearly12MonthsData.map((mItem) => {
+        const rev = mItem.revenue;
+        const exp = mItem.inventory;
+
+        let bCount = 0;
+        revenueByPaymentDateData.countMap.forEach((c, dateKey) => {
+          if (dateKey.startsWith(mItem.monthKey)) {
+            bCount += c;
+          }
+        });
+
+        const amount = chartDataset === 'revenue' ? rev : exp;
+
+        return {
+          label: mItem.month,
+          fullDateLabel: formatMonthLabel(mItem.monthKey),
+          dateKey: mItem.monthKey,
+          amount,
+          revenue: rev,
+          expenses: exp,
+          bookingCount: bCount,
+        };
+      });
+
+      const totalVal = list.reduce((sum, d) => sum + d.amount, 0);
+
+      return {
+        list,
+        totalVal,
+        daysCount: 12,
+        labelTitle: `Monthly (${selectedYear})`,
+      };
+    }
+
+    if (chartTimeframe === 'custom') {
+      const fromStr = chartCustomFrom || `${selectedMonth}-01`;
+      const toStr = chartCustomTo || currentISTDateStr;
+
+      const list: Array<any> = [];
+      const curr = new Date(fromStr);
+      const end = new Date(toStr);
+
+      let loopSafety = 0;
+      while (curr <= end && loopSafety < 366) {
+        loopSafety++;
+        const dateKey = curr.toISOString().split('T')[0];
+        const dNum = String(curr.getDate()).padStart(2, '0');
+        const mShort = SHORT_MONTH_NAMES[curr.getMonth()];
+        const yVal = curr.getFullYear();
+
+        const rev = revenueByPaymentDateData.revMap.get(dateKey) || 0;
+        const bCount = revenueByPaymentDateData.countMap.get(dateKey) || 0;
+
+        let exp = 0;
+        expenses.forEach((e) => {
+          if (e.expenseDate === dateKey) {
+            const amt = Number(e.amount || 0);
+            if (e.category !== 'Salary' && e.category !== 'Rent') exp += amt;
+          }
+        });
+
+        const amount = chartDataset === 'revenue' ? rev : exp;
+
+        list.push({
+          label: `${dNum} ${mShort}`,
+          fullDateLabel: `${dNum} ${mShort} ${yVal}`,
+          dateKey,
+          amount,
+          revenue: rev,
+          expenses: exp,
+          bookingCount: bCount,
+        });
+
+        curr.setDate(curr.getDate() + 1);
+      }
+
+      const totalVal = list.reduce((sum, d) => sum + d.amount, 0);
+
+      return {
+        list,
+        totalVal,
+        daysCount: list.length,
+        labelTitle: `${fromStr} to ${toStr}`,
+      };
+    }
+
+    return { list: [], totalVal: 0, daysCount: 0, labelTitle: '' };
+  }, [
+    chartTimeframe,
+    chartDataset,
+    dailyDataForMonth,
+    yearly12MonthsData,
+    selectedMonth,
+    selectedYear,
+    revenueByPaymentDateData,
+    expenses,
+    chartCustomFrom,
+    chartCustomTo,
+    currentISTDateStr,
+  ]);
+
+  // Max value in period for proportional bar fill (0% to 100%)
+  const maxChartItemAmount = useMemo(() => {
+    if (!analyticsChartData.list || analyticsChartData.list.length === 0) return 1;
+    return Math.max(...analyticsChartData.list.map((d: any) => Number(d.amount || 0)), 1);
+  }, [analyticsChartData.list]);
+
+  // Sorted Breakdown List (Chronological or Highest Revenue/Expense)
+  const sortedBreakdownList = useMemo(() => {
+    if (!analyticsChartData.list) return [];
+    const copy = [...analyticsChartData.list];
+    if (chartSortOrder === 'highest') {
+      return copy.sort((a, b) => b.amount - a.amount);
+    }
+    return copy;
+  }, [analyticsChartData.list, chartSortOrder]);
+
+  // Period Navigation Handlers (Prev / Next)
+  const handleChartPrevPeriod = () => {
+    if (chartTimeframe === 'daily' || chartTimeframe === 'weekly') {
+      handlePrevMonth();
+    } else if (chartTimeframe === 'monthly') {
+      const newY = selectedYear - 1;
+      const m = selectedMonth.split('-')[1] || '08';
+      setSelectedYear(newY);
+      setSelectedMonth(`${newY}-${m}`);
+    } else if (chartTimeframe === 'custom') {
+      setIsChartCustomModalOpen(true);
+    }
+  };
+
+  const handleChartNextPeriod = () => {
+    if (chartTimeframe === 'daily' || chartTimeframe === 'weekly') {
+      handleNextMonth();
+    } else if (chartTimeframe === 'monthly') {
+      const newY = selectedYear + 1;
+      const m = selectedMonth.split('-')[1] || '08';
+      setSelectedYear(newY);
+      setSelectedMonth(`${newY}-${m}`);
+    } else if (chartTimeframe === 'custom') {
+      setIsChartCustomModalOpen(true);
+    }
+  };
+
+  // Click on a breakdown row or chart point to sync summary & reservation ledger
+  const handleChartItemClick = (item: any) => {
+    if (!item) return;
+    setSelectedChartItemKey(item.dateKey);
+
+    if (chartTimeframe === 'daily' || chartTimeframe === 'custom') {
+      if (item.dateKey && item.dateKey.length === 10) {
+        setLedgerSelectedDate(item.dateKey);
+        setLedgerViewMode('daily');
+      }
+    } else if (chartTimeframe === 'weekly') {
+      const mStr = selectedMonth;
+      if (item.label.includes('1-7')) setLedgerSelectedDate(`${mStr}-01`);
+      else if (item.label.includes('8-14')) setLedgerSelectedDate(`${mStr}-08`);
+      else if (item.label.includes('15-21')) setLedgerSelectedDate(`${mStr}-15`);
+      else if (item.label.includes('22-28')) setLedgerSelectedDate(`${mStr}-22`);
+      else if (item.label.includes('29-')) setLedgerSelectedDate(`${mStr}-29`);
+      setLedgerViewMode('weekly');
+    } else if (chartTimeframe === 'monthly') {
+      if (item.dateKey) {
+        setSelectedMonth(item.dateKey);
+        setLedgerSelectedDate(`${item.dateKey}-01`);
+        setLedgerViewMode('monthly');
+      }
+    }
+  };
+
+  // Currently selected item for detail summary display below chart
+  const selectedChartItem = useMemo(() => {
+    if (!analyticsChartData.list || analyticsChartData.list.length === 0) return null;
+    if (selectedChartItemKey) {
+      const found = analyticsChartData.list.find(
+        (i: any) => i.dateKey === selectedChartItemKey || i.label === selectedChartItemKey
+      );
+      if (found) return found;
+    }
+    // Default to latest item with amount > 0 or last item in range
+    const nonZero = [...analyticsChartData.list].reverse().find((i: any) => i.amount > 0);
+    return nonZero || analyticsChartData.list[analyticsChartData.list.length - 1];
+  }, [analyticsChartData.list, selectedChartItemKey]);
+
+  // Y-Domain max for synchronized Y-axis alignment
+  const chartYMax = useMemo(() => {
+    if (!analyticsChartData.list || analyticsChartData.list.length === 0) return 100;
+    const maxVal = Math.max(...analyticsChartData.list.map((d: any) => Number(d.amount || 0)));
+    if (maxVal <= 0) return 100;
+    return Math.ceil(maxVal * 1.15);
+  }, [analyticsChartData.list]);
+
+  // Dynamic Canvas step width based on timeframe
+  const chartStepWidth = useMemo(() => {
+    if (chartTimeframe === 'weekly') return 130;
+    if (chartTimeframe === 'monthly') return 95;
+    return 70; // daily or custom (~70px per day as requested)
+  }, [chartTimeframe]);
+
+  const chartCanvasWidth = useMemo(() => {
+    const count = analyticsChartData.list.length;
+    if (count === 0) return '100%';
+    return `max(100%, ${count * chartStepWidth}px)`;
+  }, [analyticsChartData.list.length, chartStepWidth]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      handleChartScroll();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [analyticsChartData.list, chartTimeframe]);
+
   // Helper to format dates to DD MMM YYYY (e.g. 04 Aug 2026)
   const formatDisplayDate = (dStr?: string) => {
     if (!dStr || dStr === '-') return '-';
@@ -1062,6 +1352,9 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
       const matchingBooking = matchingBookingGroup[0];
       const matchingPayment = payments.find((p) => String(p.reservationId || p.bookingId) === resId);
 
+      const isCancelledGroup = matchingBookingGroup.length > 0 && matchingBookingGroup.every((b) => b.status === 'cancelled');
+      if (isCancelledGroup) return;
+
       const checkInDateRaw = matchingBooking?.checkInDate || allResTxs[0]?.checkInDate || '-';
       const checkInDateKey = checkInDateRaw.split('T')[0];
 
@@ -1082,9 +1375,12 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
       const checkOutDate = matchingBooking?.checkOutDate || allResTxs[0]?.checkOutDate || '-';
       const totalCollected = allResTxs.reduce((sum, tx) => sum + tx.collectedAmount, 0);
 
-      const originalBookingTotal = Number(
-        matchingPayment?.totalAmount || matchingBooking?.totalAmount || 0
-      );
+      const paymentTotalAmount = Number(matchingPayment?.totalAmount || 0);
+
+      const originalBookingTotal = paymentTotalAmount > 0
+        ? paymentTotalAmount
+        : Number(matchingBooking?.totalAmount || 0);
+
       const totalBookingAmount = originalBookingTotal > 0
         ? Math.max(originalBookingTotal, totalCollected)
         : totalCollected;
@@ -1189,28 +1485,53 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
 
   // Mode Scoped Reservation Entries
   const reservationsInScope = useMemo(() => {
-    if (ledgerViewMode === 'daily') {
-      return searchedAndFilteredReservations.filter((res) => res.checkInDateKey === ledgerSelectedDate);
-    }
-    if (ledgerViewMode === 'weekly') {
-      return searchedAndFilteredReservations.filter(
-        (res) => res.checkInDateKey >= activeLedgerWeek.startDateStr && res.checkInDateKey <= activeLedgerWeek.endDateStr
-      );
-    }
-    if (ledgerViewMode === 'monthly') {
-      return searchedAndFilteredReservations.filter((res) => res.checkInDateKey.startsWith(selectedMonth));
-    }
-    if (ledgerViewMode === 'custom') {
-      return searchedAndFilteredReservations.filter(
-        (res) => res.checkInDateKey >= ledgerCustomFromDate && res.checkInDateKey <= ledgerCustomToDate
-      );
-    }
-    return searchedAndFilteredReservations;
-  }, [searchedAndFilteredReservations, ledgerViewMode, ledgerSelectedDate, activeLedgerWeek, selectedMonth, ledgerCustomFromDate, ledgerCustomToDate]);
+    const isInScopeDate = (dateKey: string) => {
+      if (!dateKey || dateKey === '-') return false;
+      if (ledgerViewMode === 'daily') {
+        return dateKey === ledgerSelectedDate;
+      }
+      if (ledgerViewMode === 'weekly') {
+        return dateKey >= activeLedgerWeek.startDateStr && dateKey <= activeLedgerWeek.endDateStr;
+      }
+      if (ledgerViewMode === 'monthly') {
+        return dateKey.startsWith(selectedMonth);
+      }
+      if (ledgerViewMode === 'custom') {
+        return dateKey >= ledgerCustomFromDate && dateKey <= ledgerCustomToDate;
+      }
+      return false;
+    };
 
-  // Scope Metrics
+    const matching = searchedAndFilteredReservations.filter((res) => {
+      const checkInInScope = isInScopeDate(res.checkInDateKey);
+      const txInScope = res.allTransactions.some((tx) => isInScopeDate(tx.collectionDate));
+      return checkInInScope || txInScope;
+    });
+
+    return matching.map((res) => {
+      const scopeTxs = res.allTransactions.filter((tx) => isInScopeDate(tx.collectionDate));
+      const scopeCollectedAmount = scopeTxs.reduce((sum, tx) => sum + tx.collectedAmount, 0);
+
+      return {
+        ...res,
+        scopeCollectedAmount,
+        scopeTransactions: scopeTxs,
+        scopeTransactionsCount: scopeTxs.length,
+      };
+    });
+  }, [
+    searchedAndFilteredReservations,
+    ledgerViewMode,
+    ledgerSelectedDate,
+    activeLedgerWeek,
+    selectedMonth,
+    ledgerCustomFromDate,
+    ledgerCustomToDate,
+  ]);
+
+  // Scope Metrics: Revenue = SUM of actual money collected across payment transactions in scope
   const ledgerScopeRevenue = useMemo(() => {
-    return reservationsInScope.reduce((sum, res) => sum + res.totalCollected, 0);
+    return reservationsInScope.reduce((sum, res) => sum + res.scopeCollectedAmount, 0);
   }, [reservationsInScope]);
 
   const ledgerScopeBookingCount = reservationsInScope.length;
@@ -1549,7 +1870,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
               const irshadProfitShare = metrics.netIncome * 0.5;
               const { bookingTransferred, expenseByIrshad, settlementPaid, walletNet } = walletNetSummary;
 
-              const irshadFinal = irshadProfitShare - walletNet;
+              const irshadFinal = irshadProfitShare + walletNet;
 
               return (
                 <div className="p-3.5 bg-purple-950/40 rounded-xl border border-purple-800/60 space-y-2.5">
@@ -1582,8 +1903,8 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
 
                     <div className="flex items-center justify-between text-slate-300">
                       <span>Settlement Paid:</span>
-                      <span className={`font-extrabold ${settlementPaid >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {settlementPaid >= 0 ? `+₹${settlementPaid.toLocaleString('en-IN')}` : `-₹${Math.abs(settlementPaid).toLocaleString('en-IN')}`}
+                      <span className={`font-extrabold ${settlementPaid >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {settlementPaid >= 0 ? `-₹${settlementPaid.toLocaleString('en-IN')}` : `+₹${Math.abs(settlementPaid).toLocaleString('en-IN')}`}
                       </span>
                     </div>
 
@@ -1613,264 +1934,309 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
         </div>
       </div>
 
-      {/* 3. FULL YEAR 12-MONTH CHART (All 12 Months Always Present) */}
-      <div className="bg-white p-3 sm:p-4 border border-slate-200/80 rounded-2xl shadow-2xs space-y-2">
-        <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-2 gap-2">
-          <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
-            <TrendingUp className="w-4 h-4 text-indigo-600 shrink-0" />
-            Monthly Revenue vs Operating Expenses ({selectedYear})
-          </h3>
-          <div className="text-[10px] text-slate-400 font-medium flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">
-            <Info className="w-3 h-3 text-slate-400" />
-            <span>Swipe horizontally to view all months</span>
-          </div>
-        </div>
-
-        <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 pb-1">
-          <div className="min-w-[580px] sm:min-w-full h-64 sm:h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={yearly12MonthsData} margin={{ top: 12, right: 10, left: -15, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fontWeight: 700 }} stroke="#475569" interval={0} />
-                <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
-                <Tooltip content={<YearlyChartTooltip />} wrapperStyle={{ zIndex: 50 }} />
-                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                <Bar dataKey="revenue" name="Room Revenue" fill="#10B981" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={900} />
-                <Bar dataKey="inventory" name="Inventory" fill="#F59E0B" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={900} />
-                <Bar dataKey="salary" name="Salary" fill="#6366F1" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={900} />
-                <Bar dataKey="rent" name="Rent" fill="#84CC16" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={900} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      {/* 4. PROGRESSIVE DAILY CHARTS SECTION */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-        {/* CHART 1: DAILY ROOM REVENUE */}
-        <div className="bg-white p-3 sm:p-4 border border-slate-200/80 rounded-2xl shadow-2xs space-y-2.5">
-          <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-2 gap-2">
-            <div>
-              <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
-                <ArrowUpRight className="w-4 h-4 text-emerald-600 shrink-0" />
-                Daily Room Revenue ({formatMonthLabel(selectedMonth)})
+      {/* 3. MOBILE-FIRST COMPACT ANALYTICS & RANKED BREAKDOWN CARD */}
+      <div className="bg-white p-3.5 sm:p-5 border border-slate-200/80 rounded-2xl shadow-2xs space-y-4">
+        {/* Top Header: Total & Dataset Toggle */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              {chartDataset === 'revenue' ? (
+                <ArrowUpRight className="w-5 h-5 text-emerald-600 shrink-0" />
+              ) : (
+                <ArrowDownRight className="w-5 h-5 text-rose-600 shrink-0" />
+              )}
+              <h3 className="font-extrabold text-slate-900 text-sm sm:text-base tracking-tight">
+                {chartDataset === 'revenue' ? 'Collected Revenue' : 'Inventory Expenses'}
               </h3>
-              <div className="text-[11px] font-medium text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
-                <span>Today: {dailyDataForMonth.todayFormatted}</span>
-                <span className="text-slate-300">•</span>
-                <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[10px]">
-                  {dailyDataForMonth.isFutureMonth
-                    ? 'Future Month'
-                    : `Completed: ${dailyDataForMonth.completedDays} of ${dailyDataForMonth.totalDaysInMonth} days`}
+            </div>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight font-sans">
+                ₹{analyticsChartData.totalVal.toLocaleString('en-IN')}
+              </span>
+              <span className="text-xs font-semibold text-slate-500 font-sans">
+                ({analyticsChartData.labelTitle})
+              </span>
+            </div>
+          </div>
+
+          {/* Dataset Selector [ Revenue | Inventory ] */}
+          <div className="bg-slate-100/90 p-1 rounded-xl flex items-center gap-0.5 border border-slate-200/80 shadow-2xs self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setChartDataset('revenue')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                chartDataset === 'revenue'
+                  ? 'bg-emerald-600 text-white shadow-2xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Revenue
+            </button>
+            <button
+              type="button"
+              onClick={() => setChartDataset('inventory')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                chartDataset === 'inventory'
+                  ? 'bg-rose-600 text-white shadow-2xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Inventory
+            </button>
+          </div>
+        </div>
+
+        {/* Timeframe & Period Navigation */}
+        <div className="space-y-2.5">
+          {/* Timeframe Selector [ Daily | Weekly | Monthly | Custom ] */}
+          <div className="bg-slate-100/90 p-1 rounded-xl flex items-center justify-between gap-1 border border-slate-200/80">
+            {[
+              { id: 'daily', label: 'Daily' },
+              { id: 'weekly', label: 'Weekly' },
+              { id: 'monthly', label: 'Monthly' },
+              { id: 'custom', label: 'Custom' },
+            ].map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  setChartTimeframe(t.id as any);
+                  if (t.id === 'custom') setIsChartCustomModalOpen(true);
+                }}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
+                  chartTimeframe === t.id
+                    ? 'bg-white text-slate-900 shadow-2xs font-extrabold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Period Navigator Bar [ Prev | Label | Next ] */}
+          <div className="flex items-center justify-between gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100">
+            <button
+              type="button"
+              onClick={handleChartPrevPeriod}
+              className="p-1.5 bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-700 rounded-lg border border-slate-200 cursor-pointer shadow-2xs transition flex items-center gap-1 text-xs font-bold"
+              title="Previous Period"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Previous</span>
+            </button>
+
+            <div
+              onClick={() => {
+                if (chartTimeframe === 'custom') setIsChartCustomModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 font-extrabold text-xs text-slate-800 cursor-pointer hover:text-indigo-600 transition"
+            >
+              <CalendarIcon className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span>{analyticsChartData.labelTitle}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleChartNextPeriod}
+              className="p-1.5 bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-700 rounded-lg border border-slate-200 cursor-pointer shadow-2xs transition flex items-center gap-1 text-xs font-bold"
+              title="Next Period"
+            >
+              <span className="hidden sm:inline">Next</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Vertical Bar Chart (220-260px Height) */}
+        {analyticsChartData.list.length > 0 && (
+          <div className="space-y-3">
+            {/* Chart Canvas Card */}
+            <div className="w-full bg-slate-50/70 border border-slate-200/80 rounded-2xl p-2.5 sm:p-3.5 space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+                  <BarChart3 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                  {chartDataset === 'revenue' ? 'Revenue Bar Chart' : 'Inventory Expense Chart'}
                 </span>
+                <span className="text-[10px] text-slate-400 font-bold">
+                  Tap bar to select
+                </span>
+              </div>
+
+              {/* Scrollable Container with Snap-to-bar behavior on Mobile */}
+              <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 touch-pan-x snap-x snap-mandatory py-1">
+                <div
+                  className="h-[235px]"
+                  style={{
+                    minWidth:
+                      analyticsChartData.list.length > 6
+                        ? `max(100%, ${analyticsChartData.list.length * 52}px)`
+                        : '100%',
+                  }}
+                >
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={analyticsChartData.list}
+                      margin={{ top: 16, right: 12, left: -16, bottom: 20 }}
+                      barCategoryGap="20%"
+                      style={{ outline: 'none' }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fontSize: 10, fontWeight: 700, fill: '#475569' }}
+                        stroke="#cbd5e1"
+                        interval={0}
+                        tickLine={false}
+                        axisLine={{ stroke: '#e2e8f0' }}
+                        dy={4}
+                      />
+                      <YAxis
+                        domain={[0, chartYMax]}
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 10, fill: '#64748b', fontWeight: 700 }}
+                        tickFormatter={(v) => (v >= 1000 ? `₹${(v / 1000).toFixed(0)}k` : `₹${v}`)}
+                      />
+                      <Bar
+                        dataKey="amount"
+                        barSize={28}
+                        radius={[6, 6, 0, 0]}
+                        isAnimationActive={true}
+                        animationDuration={800}
+                        activeBar={false}
+                        onClick={(entry: any) => {
+                          if (entry && entry.payload) {
+                            handleChartItemClick(entry.payload);
+                          }
+                        }}
+                      >
+                        {analyticsChartData.list.map((entry: any, index: number) => {
+                          const isSelected = selectedChartItem
+                            ? selectedChartItem.dateKey === entry.dateKey || selectedChartItem.label === entry.label
+                            : false;
+                          const baseColor = chartDataset === 'revenue' ? '#10b981' : '#f97316';
+                          const activeColor = chartDataset === 'revenue' ? '#047857' : '#c2410c';
+
+                          return (
+                            <Cell
+                              key={`bar-cell-${index}`}
+                              fill={isSelected ? activeColor : baseColor}
+                              opacity={selectedChartItem ? (isSelected ? 1 : 0.35) : 1}
+                              stroke="none"
+                              style={{ outline: 'none', cursor: 'pointer' }}
+                              className="snap-center transition-all duration-300"
+                            />
+                          );
+                        })}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </div>
 
-            {/* Zoom Controls */}
-            {!dailyDataForMonth.isFutureMonth && (
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
-                <button
-                  onClick={() => setRevChartZoom((z) => Math.min(2.5, z + 0.5))}
-                  className="p-1 hover:bg-white rounded text-slate-600 cursor-pointer"
-                  title="Zoom In"
-                >
-                  <ZoomIn className="w-3.5 h-3.5" />
-                </button>
-                <span className="text-[10px] font-sans font-extrabold text-slate-700 px-1">
-                  {revChartZoom}x
-                </span>
-                <button
-                  onClick={() => setRevChartZoom((z) => Math.max(1, z - 0.5))}
-                  className="p-1 hover:bg-white rounded text-slate-600 cursor-pointer"
-                  title="Zoom Out"
-                >
-                  <ZoomOut className="w-3.5 h-3.5" />
-                </button>
-                {revChartZoom > 1 && (
+            {/* Selected Day / Period Summary Card BELOW the Chart */}
+            {selectedChartItem && (
+              <div className="bg-slate-900 text-white p-3.5 sm:p-4 rounded-2xl shadow-sm border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                    <span className="font-extrabold text-sm text-white tracking-tight font-sans">
+                      {selectedChartItem.fullDateLabel || selectedChartItem.label}
+                    </span>
+                  </div>
                   <button
-                    onClick={() => setRevChartZoom(1)}
-                    className="p-1 hover:bg-white rounded text-indigo-600 font-bold text-[10px] cursor-pointer"
-                    title="Reset Zoom"
+                    type="button"
+                    onClick={() => handleChartItemClick(selectedChartItem)}
+                    className="text-xs font-bold text-indigo-300 hover:text-white underline cursor-pointer"
                   >
-                    Reset
+                    View in Ledger →
                   </button>
-                )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-slate-800/70 p-3 rounded-xl border border-slate-700/60">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {chartDataset === 'revenue' ? 'Revenue' : 'Inventory Expense'}
+                    </p>
+                    <p className="text-xl sm:text-2xl font-black font-sans text-emerald-400 mt-1">
+                      ₹{selectedChartItem.amount.toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                  <div className="bg-slate-800/70 p-3 rounded-xl border border-slate-700/60">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {chartDataset === 'revenue' ? 'Bookings' : 'Entries'}
+                    </p>
+                    <p className="text-xl sm:text-2xl font-black font-sans text-amber-300 mt-1">
+                      {chartDataset === 'revenue' ? selectedChartItem.bookingCount || 0 : '1 entry'}
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
           </div>
-
-          {/* Chart Body or Clean Empty States */}
-          {dailyDataForMonth.isFutureMonth ? (
-            <div className="h-56 sm:h-64 w-full flex flex-col items-center justify-center p-6 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
-              <CalendarIcon className="w-8 h-8 text-slate-300" />
-              <p className="font-bold text-slate-700 text-xs sm:text-sm">No bookings recorded yet</p>
-              <p className="text-[11px] text-slate-400">Start creating bookings to generate analytics.</p>
-            </div>
-          ) : dailyDataForMonth.totalRevMonth === 0 ? (
-            <div className="h-56 sm:h-64 w-full flex flex-col items-center justify-center p-6 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
-              <Package className="w-8 h-8 text-slate-300" />
-              <p className="font-bold text-slate-700 text-xs sm:text-sm">No bookings recorded yet</p>
-              <p className="text-[11px] text-slate-400">Start creating bookings to generate analytics.</p>
-            </div>
-          ) : (
-            <div
-              className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 pb-1"
-              onDoubleClick={() => setRevChartZoom(1)}
-            >
-              <div
-                className="h-56 sm:h-64 transition-all duration-300"
-                style={{ width: `${revChartZoom * 100}%`, minWidth: '100%' }}
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={dailyDataForMonth.daysList}
-                    margin={{ top: 12, right: 12, left: -20, bottom: 0 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis
-                      dataKey="shortLabel"
-                      tick={{ fontSize: 10, fontWeight: 700 }}
-                      stroke="#64748b"
-                      interval={0}
-                    />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
-                    <Tooltip
-                      content={<DailyChartTooltip metrics={metrics} chartType="revenue" />}
-                      wrapperStyle={{ zIndex: 50 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="revenue"
-                      name="Revenue"
-                      stroke="#10B981"
-                      strokeWidth={3}
-                      dot={{ r: 4, fill: '#10B981', strokeWidth: 2, stroke: '#ffffff' }}
-                      activeDot={{ r: 7, fill: '#059669', stroke: '#ffffff', strokeWidth: 2.5 }}
-                      connectNulls={false}
-                      isAnimationActive={true}
-                      animationDuration={1200}
-                      animationEasing="ease-in-out"
-                      key={`rev-line-${selectedMonth}-${revChartZoom}`}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* CHART 2: DAILY INVENTORY EXPENSES */}
-        <div className="bg-white p-3 sm:p-4 border border-slate-200/80 rounded-2xl shadow-2xs space-y-2.5">
-          <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-2 gap-2">
-            <div>
-              <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
-                <ArrowDownRight className="w-4 h-4 text-rose-600 shrink-0" />
-                Daily Inventory Expenses ({formatMonthLabel(selectedMonth)})
-              </h3>
-              <div className="text-[11px] font-medium text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
-                <span>Today: {dailyDataForMonth.todayFormatted}</span>
-                <span className="text-slate-300">•</span>
-                <span className="font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded text-[10px]">
-                  {dailyDataForMonth.isFutureMonth
-                    ? 'Future Month'
-                    : `Completed: ${dailyDataForMonth.completedDays} of ${dailyDataForMonth.totalDaysInMonth} days`}
-                </span>
-              </div>
-            </div>
-
-            {/* Zoom Controls */}
-            {!dailyDataForMonth.isFutureMonth && (
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
-                <button
-                  onClick={() => setInvChartZoom((z) => Math.min(2.5, z + 0.5))}
-                  className="p-1 hover:bg-white rounded text-slate-600 cursor-pointer"
-                  title="Zoom In"
-                >
-                  <ZoomIn className="w-3.5 h-3.5" />
-                </button>
-                <span className="text-[10px] font-sans font-extrabold text-slate-700 px-1">
-                  {invChartZoom}x
-                </span>
-                <button
-                  onClick={() => setInvChartZoom((z) => Math.max(1, z - 0.5))}
-                  className="p-1 hover:bg-white rounded text-slate-600 cursor-pointer"
-                  title="Zoom Out"
-                >
-                  <ZoomOut className="w-3.5 h-3.5" />
-                </button>
-                {invChartZoom > 1 && (
-                  <button
-                    onClick={() => setInvChartZoom(1)}
-                    className="p-1 hover:bg-white rounded text-indigo-600 font-bold text-[10px] cursor-pointer"
-                    title="Reset Zoom"
-                  >
-                    Reset
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Chart Body or Clean Empty States */}
-          {dailyDataForMonth.isFutureMonth ? (
-            <div className="h-56 sm:h-64 w-full flex flex-col items-center justify-center p-6 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
-              <CalendarIcon className="w-8 h-8 text-slate-300" />
-              <p className="font-bold text-slate-700 text-xs sm:text-sm">No inventory expenses recorded yet.</p>
-              <p className="text-[11px] text-slate-400">Future dates have not occurred yet.</p>
-            </div>
-          ) : dailyDataForMonth.totalExpMonth === 0 ? (
-            <div className="h-56 sm:h-64 w-full flex flex-col items-center justify-center p-6 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
-              <Receipt className="w-8 h-8 text-slate-300" />
-              <p className="font-bold text-slate-700 text-xs sm:text-sm">No inventory expenses recorded yet.</p>
-              <p className="text-[11px] text-slate-400">Log expenses in Inventory to track daily usage.</p>
-            </div>
-          ) : (
-            <div
-              className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 pb-1"
-              onDoubleClick={() => setInvChartZoom(1)}
-            >
-              <div
-                className="h-56 sm:h-64 transition-all duration-300"
-                style={{ width: `${invChartZoom * 100}%`, minWidth: '100%' }}
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={dailyDataForMonth.daysList}
-                    margin={{ top: 12, right: 12, left: -20, bottom: 0 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis
-                      dataKey="shortLabel"
-                      tick={{ fontSize: 10, fontWeight: 700 }}
-                      stroke="#64748b"
-                      interval={0}
-                    />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
-                    <Tooltip
-                      content={<DailyChartTooltip metrics={metrics} chartType="expenses" />}
-                      wrapperStyle={{ zIndex: 50 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="expenses"
-                      name="Inventory Expenses"
-                      stroke="#f43f5e"
-                      strokeWidth={3}
-                      dot={{ r: 4, fill: '#f43f5e', strokeWidth: 2, stroke: '#ffffff' }}
-                      activeDot={{ r: 7, fill: '#e11d48', stroke: '#ffffff', strokeWidth: 2.5 }}
-                      connectNulls={false}
-                      isAnimationActive={true}
-                      animationDuration={1200}
-                      animationEasing="ease-in-out"
-                      key={`exp-line-${selectedMonth}-${invChartZoom}`}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
+
+      {/* Modal for Custom Chart Range Selection */}
+      {isChartCustomModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xl max-w-sm w-full space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                <CalendarIcon className="w-4 h-4 text-indigo-600" />
+                Select Custom Chart Range
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsChartCustomModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">From Date</label>
+                <input
+                  type="date"
+                  value={chartCustomFrom}
+                  onChange={(e) => setChartCustomFrom(e.target.value)}
+                  className="w-full text-xs font-bold px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">To Date</label>
+                <input
+                  type="date"
+                  value={chartCustomTo}
+                  onChange={(e) => setChartCustomTo(e.target.value)}
+                  className="w-full text-xs font-bold px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsChartCustomModalOpen(false)}
+                className="px-3.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsChartCustomModalOpen(false)}
+                className="px-4 py-1.5 text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-2xs cursor-pointer"
+              >
+                Apply Range
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 5. BOOKING REVENUE LEDGER SECTION (Redesigned Expense Ledger Navigation & Layout) */}
       <div id="booking-revenue-ledger" className="bg-white p-3.5 sm:p-5 border border-slate-200/80 rounded-2xl shadow-2xs space-y-4">
@@ -1882,7 +2248,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
               Reservation Revenue Ledger
             </h3>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Reservation revenue ledger grouped cleanly by Check-in Date.
+              Reservation revenue ledger based strictly on payment collection transactions.
             </p>
           </div>
         </div>
@@ -2117,39 +2483,57 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                 .filter(Boolean)
                 .join(' • ') || item.roomNumbers;
 
+              const statusColor =
+                item.status === 'paid'
+                  ? 'text-emerald-600'
+                  : item.status === 'partial'
+                  ? 'text-amber-600'
+                  : 'text-rose-600';
+
+              const displayCollected = item.scopeCollectedAmount !== undefined
+                ? item.scopeCollectedAmount
+                : item.totalCollected;
+
               return (
                 <div
                   key={item.reservationId}
-                  className="px-3.5 py-2.5 hover:bg-slate-50 active:bg-slate-100 transition duration-150 flex items-center justify-between gap-3"
+                  className="px-3.5 py-2 sm:px-4 sm:py-2.5 hover:bg-slate-50/80 transition duration-150 space-y-1 bg-white border-b border-slate-100 last:border-b-0"
                 >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <h4 className="font-bold text-slate-900 text-xs sm:text-sm tracking-tight truncate">
-                        {item.guestName}
-                      </h4>
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-700 font-mono font-bold text-[10px] rounded-md border border-slate-200/80 shrink-0">
-                        Room {formattedRooms}
+                  {/* Top Row: Guest Name & Amount */}
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <h4 className="font-extrabold text-slate-900 text-sm sm:text-base tracking-tight truncate">
+                      {item.guestName}
+                    </h4>
+                    <div className="text-right shrink-0">
+                      <span className="text-sm sm:text-base font-black text-emerald-600 font-sans tracking-tight block">
+                        ₹{displayCollected.toLocaleString()}
                       </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase border ${item.statusClass}`}>
-                        {item.statusLabel}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${item.paymentBadgeClass}`}>
-                        {item.paymentBadgeLabel}
+                      <span className="text-[10px] text-slate-400 font-semibold block">
+                        Total: ₹{item.totalBookingAmount.toLocaleString()}
                       </span>
                     </div>
                   </div>
 
-                  <div className="text-right shrink-0 flex items-center gap-2.5 sm:gap-3">
-                    <span className="text-sm sm:text-base font-extrabold text-emerald-600 font-sans tracking-tight">
-                      ₹{item.totalCollected.toLocaleString()}
-                    </span>
+                  {/* Middle Row: Room Numbers (Clean Secondary Text) */}
+                  <div className="text-xs font-semibold text-slate-500 tracking-normal">
+                    Room {formattedRooms}
+                  </div>
+
+                  {/* Bottom Row: Inline Status & Payment Type + View Details Button */}
+                  <div className="flex items-center justify-between gap-2 pt-0.5">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold min-w-0 truncate">
+                      <span className={`font-extrabold ${statusColor} shrink-0`}>
+                        ● {item.statusLabel}
+                      </span>
+                      <span className="text-slate-300 font-normal shrink-0">•</span>
+                      <span className="font-medium text-slate-600 truncate">
+                        {item.paymentBadgeLabel}
+                      </span>
+                    </div>
 
                     <button
                       onClick={() => handleOpenRevenueDetailModal(item)}
-                      className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5 hover:bg-indigo-50/80 px-2 py-1 rounded-lg transition cursor-pointer"
+                      className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:bg-indigo-50/80 px-2.5 py-1 rounded-lg border border-indigo-200/80 transition cursor-pointer shrink-0"
                     >
                       <span>View Details</span>
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -2167,7 +2551,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                     <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
                     <p className="font-extrabold text-slate-700 text-sm">No reservations found</p>
                     <p className="text-xs text-slate-400 max-w-xs mx-auto font-medium">
-                      There are no check-ins for the selected date.
+                      There are no check-ins or revenue collections for the selected date.
                     </p>
                   </div>
                 );
@@ -2187,7 +2571,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                     <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
                     <p className="font-extrabold text-slate-700 text-sm">No reservations found</p>
                     <p className="text-xs text-slate-400 max-w-xs mx-auto font-medium">
-                      There are no check-ins for the selected week.
+                      There are no check-ins or revenue collections for the selected week.
                     </p>
                   </div>
                 );
@@ -2200,27 +2584,33 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                 cur = addDaysToDate(cur, 1);
               }
 
-              const activeDays = days.filter((dayStr) => reservationsInScope.some((r) => r.checkInDateKey === dayStr));
+              const activeDays = days.filter((dayStr) =>
+                reservationsInScope.some(
+                  (r) => r.checkInDateKey === dayStr || r.scopeTransactions.some((tx) => tx.collectionDate === dayStr)
+                )
+              );
 
               return (
                 <div className="divide-y divide-slate-200/80">
                   {activeDays.map((dayStr) => {
-                    const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
-                    const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
+                    const dayItems = reservationsInScope.filter(
+                      (r) => r.checkInDateKey === dayStr || r.scopeTransactions.some((tx) => tx.collectionDate === dayStr)
+                    );
+                    const dayRev = revenueByPaymentDateData.revMap.get(dayStr) || 0;
                     const headerInfo = formatLedgerDateHeader(dayStr);
 
                     return (
                       <div key={dayStr} className="bg-white">
-                        {/* Compact Date Divider (Matching Expense Ledger) */}
-                        <div className="bg-slate-50 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/80 text-slate-800">
+                        {/* Clear Contrast Date Divider */}
+                        <div className="bg-slate-100/95 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/90 text-slate-800">
                           <div className="flex items-center gap-1.5 text-xs font-bold">
                             <span className="text-slate-900 font-extrabold">{headerInfo.dateFormatted}</span>
                             <span className="text-slate-400 font-normal">•</span>
-                            <span className="text-slate-500 font-medium text-[11px] capitalize">{headerInfo.weekday}</span>
+                            <span className="text-slate-600 font-semibold text-[11px] capitalize">{headerInfo.weekday}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-extrabold text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
-                            <span className="text-[10px] font-bold text-slate-500">
+                            <span className="text-xs font-black text-emerald-700">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[10px] font-bold text-slate-600 bg-white/80 px-1.5 py-0.5 rounded border border-slate-200/80">
                               {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
                             </span>
                           </div>
@@ -2244,7 +2634,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                     <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
                     <p className="font-extrabold text-slate-700 text-sm">No reservations found</p>
                     <p className="text-xs text-slate-400 max-w-xs mx-auto font-medium">
-                      There are no check-ins for the selected month.
+                      There are no check-ins or revenue collections for the selected month.
                     </p>
                   </div>
                 );
@@ -2261,27 +2651,33 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                 days.push(`${year}-${mm}-${String(d).padStart(2, '0')}`);
               }
 
-              const activeDays = days.filter((dayStr) => reservationsInScope.some((r) => r.checkInDateKey === dayStr));
+              const activeDays = days.filter((dayStr) =>
+                reservationsInScope.some(
+                  (r) => r.checkInDateKey === dayStr || r.scopeTransactions.some((tx) => tx.collectionDate === dayStr)
+                )
+              );
 
               return (
                 <div className="divide-y divide-slate-200/80 max-h-[700px] overflow-y-auto">
                   {activeDays.map((dayStr) => {
-                    const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
-                    const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
+                    const dayItems = reservationsInScope.filter(
+                      (r) => r.checkInDateKey === dayStr || r.scopeTransactions.some((tx) => tx.collectionDate === dayStr)
+                    );
+                    const dayRev = revenueByPaymentDateData.revMap.get(dayStr) || 0;
                     const headerInfo = formatLedgerDateHeader(dayStr);
 
                     return (
                       <div key={dayStr} className="bg-white">
-                        {/* Compact Date Divider */}
-                        <div className="bg-slate-50 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/80 text-slate-800 sticky top-0 z-10">
+                        {/* Clear Contrast Date Divider */}
+                        <div className="bg-slate-100/95 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/90 text-slate-800 sticky top-0 z-10">
                           <div className="flex items-center gap-1.5 text-xs font-bold">
                             <span className="text-slate-900 font-extrabold">{headerInfo.dateFormatted}</span>
                             <span className="text-slate-400 font-normal">•</span>
-                            <span className="text-slate-500 font-medium text-[11px] capitalize">{headerInfo.weekday}</span>
+                            <span className="text-slate-600 font-semibold text-[11px] capitalize">{headerInfo.weekday}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-extrabold text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
-                            <span className="text-[10px] font-bold text-slate-500">
+                            <span className="text-xs font-black text-emerald-700">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[10px] font-bold text-slate-600 bg-white/80 px-1.5 py-0.5 rounded border border-slate-200/80">
                               {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
                             </span>
                           </div>
@@ -2299,7 +2695,14 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
 
             // CUSTOM MODE DISPLAY
             if (ledgerViewMode === 'custom') {
-              const uniqueDates = (Array.from(new Set(reservationsInScope.map((r) => r.checkInDateKey))) as string[]).sort();
+              const allScopeDates = new Set<string>();
+              reservationsInScope.forEach((r) => {
+                if (r.checkInDateKey) allScopeDates.add(r.checkInDateKey);
+                r.scopeTransactions.forEach((tx) => {
+                  if (tx.collectionDate) allScopeDates.add(tx.collectionDate);
+                });
+              });
+              const uniqueDates = Array.from(allScopeDates).sort();
 
               if (uniqueDates.length === 0) {
                 return (
@@ -2307,7 +2710,7 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                     <Receipt className="w-8 h-8 text-slate-300 mx-auto stroke-1" />
                     <p className="font-extrabold text-slate-700 text-sm">No reservations found</p>
                     <p className="text-xs text-slate-400 max-w-xs mx-auto font-medium">
-                      There are no check-ins for the selected range.
+                      There are no check-ins or revenue collections for the selected range.
                     </p>
                   </div>
                 );
@@ -2316,22 +2719,24 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
               return (
                 <div className="divide-y divide-slate-200/80">
                   {uniqueDates.map((dayStr) => {
-                    const dayItems = reservationsInScope.filter((r) => r.checkInDateKey === dayStr);
-                    const dayRev = dayItems.reduce((s, r) => s + r.totalCollected, 0);
+                    const dayItems = reservationsInScope.filter(
+                      (r) => r.checkInDateKey === dayStr || r.scopeTransactions.some((tx) => tx.collectionDate === dayStr)
+                    );
+                    const dayRev = revenueByPaymentDateData.revMap.get(dayStr) || 0;
                     const headerInfo = formatLedgerDateHeader(dayStr);
 
                     return (
                       <div key={dayStr} className="bg-white">
-                        {/* Compact Date Divider */}
-                        <div className="bg-slate-50 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/80 text-slate-800">
+                        {/* Clear Contrast Date Divider */}
+                        <div className="bg-slate-100/95 px-3.5 py-1.5 flex items-center justify-between border-y border-slate-200/90 text-slate-800">
                           <div className="flex items-center gap-1.5 text-xs font-bold">
                             <span className="text-slate-900 font-extrabold">{headerInfo.dateFormatted}</span>
                             <span className="text-slate-400 font-normal">•</span>
-                            <span className="text-slate-500 font-medium text-[11px] capitalize">{headerInfo.weekday}</span>
+                            <span className="text-slate-600 font-semibold text-[11px] capitalize">{headerInfo.weekday}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-extrabold text-emerald-600">Revenue ₹{dayRev.toLocaleString()}</span>
-                            <span className="text-[10px] font-bold text-slate-500">
+                            <span className="text-xs font-black text-emerald-700">Revenue ₹{dayRev.toLocaleString()}</span>
+                            <span className="text-[10px] font-bold text-slate-600 bg-white/80 px-1.5 py-0.5 rounded border border-slate-200/80">
                               {dayItems.length} {dayItems.length === 1 ? 'Booking' : 'Bookings'}
                             </span>
                           </div>
@@ -2471,10 +2876,10 @@ export default function Analytics({ refreshTrigger }: { refreshTrigger?: number 
                           </div>
                         </div>
 
-                        {tx.remarks && (
+                        {getCleanGuestRemarks(tx.remarks) && (
                           <div className="pt-1 border-t border-slate-200/40">
                             <span className="text-slate-400 font-medium block text-[9px] uppercase tracking-wider">Remarks</span>
-                            <span className="text-slate-700 italic text-[11px]">"{tx.remarks}"</span>
+                            <span className="text-slate-700 italic text-[11px]">"{getCleanGuestRemarks(tx.remarks)}"</span>
                           </div>
                         )}
                       </div>

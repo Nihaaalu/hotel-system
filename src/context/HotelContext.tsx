@@ -113,20 +113,21 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       let parsedPayments: Payment[] = [];
       const paymentByResId = new Map<
         string,
-        { totalAmount: number; advancePaid: number; paymentStatus: 'paid' | 'pending' }
+        { totalAmount: number; advancePaid: number; paymentStatus: 'paid' | 'pending' | 'partial' }
       >();
 
       if (payRes.data) {
         parsedPayments = payRes.data.map((p: any) => {
           const resId = String(p.reservation_id || p.booking_id || '');
           const totAmt = Number(p.total_amount || 0);
-          const collAmt = Number(p.amount_collected ?? p.advance_paid ?? p.amount ?? 0);
-          const pStatus: 'paid' | 'pending' =
-            p.payment_status === 'paid' || p.status === 'paid'
+          const collAmt = Number(p.amount_collected ?? p.collected_amount ?? p.advance_paid ?? p.amount ?? 0);
+          const remBal = Number(p.remaining_balance ?? Math.max(0, totAmt - collAmt));
+          const pStatus: 'paid' | 'pending' | 'partial' =
+            remBal === 0 && totAmt > 0
               ? 'paid'
-              : collAmt >= totAmt && totAmt > 0
-              ? 'paid'
-              : 'pending';
+              : collAmt === 0
+              ? 'pending'
+              : 'partial';
 
           if (resId) {
             paymentByResId.set(resId, {
@@ -222,11 +223,13 @@ export const HotelDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (payInfo.totalAmount === 0 && parsedTotal > 0) payInfo.totalAmount = parsedTotal;
         if (payInfo.advancePaid === 0 && parsedAdvance > 0) payInfo.advancePaid = parsedAdvance;
 
-        const effectivePaymentStatus: 'paid' | 'pending' =
-          payInfo.paymentStatus === 'paid' ||
-          (payInfo.advancePaid >= payInfo.totalAmount && payInfo.totalAmount > 0)
+        const remBal = Math.max(0, payInfo.totalAmount - payInfo.advancePaid);
+        const effectivePaymentStatus: 'paid' | 'pending' | 'partial' =
+          remBal === 0 && payInfo.totalAmount > 0
             ? 'paid'
-            : 'pending';
+            : payInfo.advancePaid === 0
+            ? 'pending'
+            : 'partial';
 
         for (const interval of intervals) {
           const rr = rrByRoomNum.get(interval.roomNumber);

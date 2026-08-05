@@ -176,6 +176,22 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
 
   const existing = existingPayments && existingPayments.length > 0 ? existingPayments[0] : null;
 
+  // 2. Fetch all payment transactions for targetResId from due_payment_transactions
+  const { data: dueTxRows } = await supabase
+    .from('due_payment_transactions')
+    .select('amount')
+    .eq('reservation_id', targetResId);
+
+  const txSum = (dueTxRows || []).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+
+  // Base collected amount: prioritize payment ledger sum from due_payment_transactions
+  let baseCollected = 0;
+  if (dueTxRows && dueTxRows.length > 0) {
+    baseCollected = txSum;
+  } else if (existing) {
+    baseCollected = Number(existing.amount_collected ?? existing.collected_amount ?? existing.advance_paid ?? 0);
+  }
+
   // Determine current total amount
   let currentTotalAmount = options?.totalAmount !== undefined && options?.totalAmount > 0
     ? Number(options.totalAmount)
@@ -200,40 +216,27 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
     }
   }
 
-  const currentAdvancePaid = Number(existing?.advance_paid || 0);
-  const currentAmountCollected = Number(existing?.amount_collected || existing?.collected_amount || 0);
-
-  // remaining = total_amount - amount_collected
-  const currentRemaining = currentTotalAmount > 0 ? Math.max(0, currentTotalAmount - currentAmountCollected) : 0;
-
-  // 4. Already Paid Protection:
-  // If remaining_balance == 0 (and currentTotalAmount > 0)
-  // Skip payment processing completely. Do not update payments. Do not insert due_payment_transactions.
-  if (existing && currentTotalAmount > 0 && currentRemaining === 0) {
-    console.log('[PAYMENT LOG] remaining_balance is 0. Skipping payment processing completely.');
-    return existing;
+  // 3. Payment Calculation:
+  // paymentToApply applies ONLY to new money collected in this action
+  const paymentEntered = Number(paymentAmount || 0);
+  let paymentToApply = 0;
+  if (paymentEntered > 0) {
+    const currentRemaining = currentTotalAmount > 0 ? Math.max(0, currentTotalAmount - baseCollected) : paymentEntered;
+    paymentToApply = Math.min(paymentEntered, currentRemaining);
   }
 
-  // 3. Check-In / Payment Calculation:
-  // paymentToApply = Math.min(paymentEntered, remaining)
-  const paymentEntered = Number(paymentAmount || 0);
-  const remainingForCalc = currentTotalAmount > 0 ? (existing ? currentRemaining : currentTotalAmount) : paymentEntered;
-  const paymentToApply = Math.min(paymentEntered, remainingForCalc);
-
-  // amount_collected = amount_collected + paymentToApply
-  const newAmountCollected = currentAmountCollected + paymentToApply;
-  // Never allow amount_collected > total_amount
+  // Collected amount = baseCollected + paymentToApply
+  const newAmountCollected = baseCollected + paymentToApply;
   const finalAmountCollected = currentTotalAmount > 0 ? Math.min(newAmountCollected, currentTotalAmount) : newAmountCollected;
 
-  // remaining_balance = total_amount - amount_collected
+  // remaining_balance = max(0, total_amount - collected_amount)
   const newRemainingBalance = currentTotalAmount > 0 ? Math.max(0, currentTotalAmount - finalAmountCollected) : 0;
+  const newAdvancePaid = finalAmountCollected;
 
-  const newAdvancePaid = currentAdvancePaid + (isAdvance ? paymentToApply : 0);
-
-  // payment_status =
-  // remaining_balance == 0 ? "paid"
-  // : amount_collected == 0 ? "pending"
-  // : "partial"
+  // payment_status:
+  // Balance == 0 -> Fully Paid ('paid')
+  // Collected == 0 -> Unpaid ('pending')
+  // Otherwise -> Partial Payment ('partial')
   let newPaymentStatus: 'pending' | 'partial' | 'paid' = 'pending';
   if (newRemainingBalance === 0 && currentTotalAmount > 0) {
     newPaymentStatus = 'paid';
@@ -333,16 +336,37 @@ export async function updatePaymentSummary(params: PaymentUpdateParams): Promise
     paymentRecord = insertedPay[0];
   }
 
+  // Synchronize payment metadata tag on reservations table
+  try {
+    const { data: resRow } = await supabase
+      .from('reservations')
+      .select('remarks')
+      .eq('id', targetResId)
+      .maybeSingle();
+
+    if (resRow) {
+      const { cleanRemarks } = parsePaymentMetadata(resRow.remarks || '');
+      const newMeta = `[PAYMENT:total=${currentTotalAmount},advance=${finalAmountCollected}]`;
+      const updatedRemarks = `${newMeta} ${cleanRemarks}`.trim();
+      await supabase
+        .from('reservations')
+        .update({ remarks: updatedRemarks })
+        .eq('id', targetResId);
+    }
+  } catch (metaErr) {
+    console.warn('Warning: Failed to update reservation payment metadata tag:', metaErr);
+  }
+
   // LOG 3: Returned payment row
   if (DEBUG) console.log('[PAYMENT LOG] 3. Returned payment row:', paymentRecord);
   // LOG 4: Any Supabase error
   if (DEBUG) console.log('[PAYMENT LOG] 4. Any Supabase error:', payErrOut || 'None');
   // LOG 5: amount_collected before and after
-  if (DEBUG) console.log(`[PAYMENT LOG] 5. amount_collected before: ${currentAmountCollected}, after: ${finalAmountCollected}`);
+  if (DEBUG) console.log(`[PAYMENT LOG] 5. amount_collected before: ${baseCollected}, after: ${finalAmountCollected}`);
   // LOG 6: advance_paid before and after
-  if (DEBUG) console.log(`[PAYMENT LOG] 6. advance_paid before: ${currentAdvancePaid}, after: ${newAdvancePaid}`);
+  if (DEBUG) console.log(`[PAYMENT LOG] 6. advance_paid before: ${baseCollected}, after: ${newAdvancePaid}`);
   // LOG 7: remaining_balance before and after
-  if (DEBUG) console.log(`[PAYMENT LOG] 7. remaining_balance before: ${existing?.remaining_balance ?? (currentTotalAmount - currentAmountCollected)}, after: ${newRemainingBalance}`);
+  if (DEBUG) console.log(`[PAYMENT LOG] 7. remaining_balance before: ${existing?.remaining_balance ?? Math.max(0, currentTotalAmount - baseCollected)}, after: ${newRemainingBalance}`);
   // LOG 8: payment_status before and after
   if (DEBUG) console.log(`[PAYMENT LOG] 8. payment_status before: ${existing?.payment_status ?? 'N/A'}, after: ${newPaymentStatus}`);
 

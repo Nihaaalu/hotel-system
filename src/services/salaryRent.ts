@@ -17,6 +17,30 @@ let localEmployees: SalaryEmployee[] = [];
 
 const DEBUG = false;
 
+// Storage helper for rent settings
+const RENT_SETTINGS_STORAGE_KEY = 'pms_rent_settings';
+
+function getStoredRentSettings(): RentSetting[] {
+  try {
+    const raw = localStorage.getItem(RENT_SETTINGS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    console.warn('Could not load rent settings from localStorage:', e);
+  }
+  return [];
+}
+
+function saveStoredRentSettings(settings: RentSetting[]) {
+  try {
+    localStorage.setItem(RENT_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch (e) {
+    console.warn('Could not save rent settings to localStorage:', e);
+  }
+}
+
 export const SalaryRentService = {
   // --- WALLET METHODS ---
   async getWalletBalances(): Promise<EmployeeWalletBalance[]> {
@@ -410,12 +434,50 @@ export const SalaryRentService = {
   // --- RENT SETTINGS ---
   async updateRentAmount(monthlyAmount: number, effectiveMonth: string): Promise<RentSetting> {
     const monthStr = effectiveMonth || getISTMonthStr();
-    return {
+    const amountVal = Number(monthlyAmount || 0);
+
+    const newSetting: RentSetting = {
       id: `rent_${Date.now()}`,
-      monthlyAmount: Number(monthlyAmount || 0),
+      monthlyAmount: amountVal,
       effectiveMonth: monthStr,
       createdAt: new Date().toISOString(),
     };
+
+    // Save to local storage
+    const current = getStoredRentSettings();
+    const existingIdx = current.findIndex((s) => s.effectiveMonth === monthStr);
+    if (existingIdx >= 0) {
+      current[existingIdx] = newSetting;
+    } else {
+      current.push(newSetting);
+    }
+    current.sort((a, b) => b.effectiveMonth.localeCompare(a.effectiveMonth));
+    saveStoredRentSettings(current);
+
+    // Sync to Supabase if configured
+    if (isSupabaseConfigured) {
+      try {
+        const payload = {
+          monthly_amount: amountVal,
+          effective_month: monthStr,
+          created_at: newSetting.createdAt,
+        };
+        const { error } = await supabase
+          .from('rent_settings')
+          .upsert(payload as any, { onConflict: 'effective_month' });
+
+        if (error) {
+          const { error: insErr } = await supabase.from('rent_settings').insert(payload as any);
+          if (insErr) {
+            console.warn('rent_settings insert note:', insErr.message);
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase rent_settings update note:', err);
+      }
+    }
+
+    return newSetting;
   },
 
   // --- RENT PAYMENTS ---
@@ -604,8 +666,38 @@ export const SalaryRentService = {
         });
       }
 
-      const rentSettings: RentSetting[] = [];
+      let rentSettings: RentSetting[] = getStoredRentSettings();
       const rentPayments: RentPayment[] = [];
+
+      if (isSupabaseConfigured) {
+        try {
+          const { data: rsData } = await supabase
+            .from('rent_settings')
+            .select('*')
+            .order('effective_month', { ascending: false });
+
+          if (rsData && rsData.length > 0) {
+            const dbSettings: RentSetting[] = rsData.map((r: any) => ({
+              id: String(r.id || `rent_${r.effective_month}`),
+              monthlyAmount: Number(r.monthly_amount || r.monthlyAmount || r.amount || 0),
+              effectiveMonth: String(r.effective_month || r.effectiveMonth || '2026-07'),
+              createdAt: String(r.created_at || new Date().toISOString()),
+            }));
+
+            const map = new Map<string, RentSetting>();
+            rentSettings.forEach((s) => map.set(s.effectiveMonth, s));
+            dbSettings.forEach((s) => map.set(s.effectiveMonth, s));
+
+            rentSettings = Array.from(map.values()).sort((a, b) =>
+              b.effectiveMonth.localeCompare(a.effectiveMonth)
+            );
+            saveStoredRentSettings(rentSettings);
+          }
+        } catch (err) {
+          console.warn('Could not fetch rent_settings from Supabase:', err);
+        }
+      }
+
       if (rtRes.data) {
         rtRes.data.forEach((rt: any) => {
           const paidAmt = Number(rt.amount || rt.paid_amount || 0);
