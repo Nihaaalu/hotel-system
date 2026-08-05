@@ -3,12 +3,17 @@ import { Booking, Room } from '../types';
 import {
   ChevronLeft,
   ChevronRight,
-  ZoomIn,
-  ZoomOut,
+  Minus,
+  Plus as PlusIcon,
+  MoreVertical,
   X,
   Info,
+  User,
+  CheckCircle2,
+  Download,
 } from 'lucide-react';
 import ExportOccupancyButton from './ExportOccupancyButton';
+import { formatDateHuman } from '../utils/formatters';
 
 interface MobileCalendarProps {
   rooms: Room[];
@@ -29,14 +34,23 @@ export default function MobileCalendar({
   onSelectBooking,
   todayYMD,
 }: MobileCalendarProps) {
-  // Zoom level state (0.80 to 2.50). Default 1.0 is "100% Fit to Screen"
+  // Zoom level state (0.75 to 2.0). Default 1.0 is "100% Fit to Screen"
   const [zoom, setZoom] = useState<number>(1.0);
   const zoomRef = useRef<number>(zoom);
   useEffect(() => {
     zoomRef.current = zoom;
   }, [zoom]);
 
-  const [showLegendModal, setShowLegendModal] = useState<boolean>(false);
+  // Overflow Menu & Legend Sheet States
+  const [showOverflowMenu, setShowOverflowMenu] = useState<boolean>(false);
+  const [showLegendSheet, setShowLegendSheet] = useState<boolean>(false);
+
+  // Selected cell & column highlight state
+  const [selectedCell, setSelectedCell] = useState<{
+    roomNumber: number;
+    dateYMD: string;
+  } | null>(null);
+  const [selectedColumnRoom, setSelectedColumnRoom] = useState<number | null>(null);
 
   // Container & Table DOM refs
   const gridContainerRef = useRef<HTMLDivElement>(null);
@@ -83,7 +97,7 @@ export default function MobileCalendar({
     return `${y}-${mm}-${dd}`;
   };
 
-  // Days array: ALWAYS 31 rows allocated (1 to 31) regardless of month
+  // Days array: ALWAYS 31 rows allocated (1 to 31)
   const monthDays31 = useMemo(() => {
     const list = [];
     for (let d = 1; d <= 31; d++) {
@@ -91,7 +105,6 @@ export default function MobileCalendar({
       if (isActive) {
         const dateObj = new Date(year, month, d);
         const ymd = formatYMD(year, month, d);
-        const shortDayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
         const dayOfWeek = dateObj.getDay(); // 0 = Sun, 5 = Fri, 6 = Sat
         const isFriSatSun = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
         const isToday = ymd === todayYMD;
@@ -100,19 +113,17 @@ export default function MobileCalendar({
           dayNum: d,
           formattedDayNum: String(d).padStart(2, '0'),
           ymd,
-          shortDayName,
           isFriSatSun,
           isToday,
           isPast,
           isActive: true,
         });
       } else {
-        // Disabled row for months with <31 days (e.g. Feb 29-31, Apr 31)
+        // Disabled row for months with <31 days
         list.push({
           dayNum: d,
           formattedDayNum: String(d).padStart(2, '0'),
           ymd: `disabled_${d}`,
-          shortDayName: '-',
           isFriSatSun: false,
           isToday: false,
           isPast: false,
@@ -126,9 +137,9 @@ export default function MobileCalendar({
   // Month navigation helpers
   const prevMonthObj = new Date(year, month - 1, 1);
   const nextMonthObj = new Date(year, month + 1, 1);
-  const currentMonthTitle = currentMonth.toLocaleDateString('en-US', {
+  const currentMonthFullTitle = currentMonth.toLocaleDateString('en-US', {
     month: 'short',
-    year: '2-digit',
+    year: 'numeric',
   });
 
   const goToPrevMonth = () => onChangeMonth(prevMonthObj);
@@ -137,6 +148,11 @@ export default function MobileCalendar({
     const now = new Date();
     onChangeMonth(new Date(now.getFullYear(), now.getMonth(), 1));
   };
+
+  // Zoom control helpers
+  const zoomIn = () => setZoom((prev) => Math.min(2.0, Math.round((prev + 0.15) * 100) / 100));
+  const zoomOut = () => setZoom((prev) => Math.max(0.75, Math.round((prev - 0.15) * 100) / 100));
+  const resetZoom = () => setZoom(1.0);
 
   // Helper to find booking for a room and date
   const getBookingForRoomAndDate = (roomNumber: number, dateYMD: string): Booking | null => {
@@ -149,24 +165,42 @@ export default function MobileCalendar({
     );
   };
 
+  // Guest initials generator
+  const getGuestInitials = (name?: string) => {
+    if (!name) return '';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return name.trim().slice(0, 2).toUpperCase();
+  };
+
+  // Guest short name generator
+  const getShortGuestName = (name?: string) => {
+    if (!name) return '';
+    const first = name.trim().split(/\s+/)[0];
+    return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+  };
+
   // Dynamic cell sizing:
   // 1. HEIGHT: ALWAYS fit 31 rows + header in available height at zoom = 1.0!
-  const ROOM_ROW_HEIGHT = 18; // sticky room header row height
-  const availableHeightForCells = Math.max(150, gridHeight - ROOM_ROW_HEIGHT - 32);
-  const fitCellHeight = Math.max(10, Math.floor(availableHeightForCells / 31));
+  const ROOM_ROW_HEIGHT = 28; // sticky room header row height (compact tabs)
+  const bottomCardHeight = selectedCell ? 64 : 0;
+  const availableHeightForCells = Math.max(220, gridHeight - ROOM_ROW_HEIGHT - bottomCardHeight - 36);
+  const fitCellHeight = Math.max(16, Math.floor(availableHeightForCells / 31));
 
-  // 2. WIDTH: ALWAYS fit date column + all 13 rooms in available width at zoom = 1.0!
+  // 2. WIDTH: ALWAYS fit date column + all rooms in available width at zoom = 1.0!
   const numRooms = rooms.length || 13;
-  const dateColWidthBase = 26; // compact date column width
-  const availableWidthForRooms = Math.max(150, gridWidth - dateColWidthBase - (numRooms + 1));
-  const fitCellWidth = Math.max(18, Math.floor(availableWidthForRooms / numRooms));
+  const dateColWidthBase = 32; // date column width (NO WEEKDAY TEXT)
+  const availableWidthForRooms = Math.max(200, gridWidth - dateColWidthBase - 8);
+  const fitCellWidth = Math.max(26, Math.floor(availableWidthForRooms / numRooms));
 
   // Actual cell dimensions scaled by zoom
-  const cellHeight = Math.max(10, Math.round(fitCellHeight * zoom));
-  const cellWidth = Math.max(18, Math.round(fitCellWidth * zoom));
-  const dateColWidth = Math.max(24, Math.round(dateColWidthBase * Math.min(1.15, zoom)));
+  const cellHeight = Math.max(14, Math.round(fitCellHeight * zoom));
+  const cellWidth = Math.max(22, Math.round(fitCellWidth * zoom));
+  const dateColWidth = Math.max(28, Math.round(dateColWidthBase * Math.min(1.2, zoom)));
 
-  // Touch gesture & focal point pinch zoom engine (GPU 60 FPS, No React State updates during pinch)
+  // Touch gesture & focal point pinch zoom engine
   const lastTapTimeRef = useRef<number>(0);
   const pinchAnimationRef = useRef<number | null>(null);
 
@@ -188,7 +222,7 @@ export default function MobileCalendar({
 
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
-        e.preventDefault(); // Stop browser native page zoom
+        e.preventDefault();
         isPinching = true;
 
         const t1 = e.touches[0];
@@ -209,7 +243,7 @@ export default function MobileCalendar({
 
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length === 2 && isPinching && startDist > 0) {
-        e.preventDefault(); // Stop browser screen zoom
+        e.preventDefault();
 
         const t1 = e.touches[0];
         const t2 = e.touches[1];
@@ -219,8 +253,7 @@ export default function MobileCalendar({
 
         const ratio = dist / startDist;
         const rawZoom = startZoom * ratio;
-        // Strictly enforce 80% min zoom, 250% max zoom
-        currentTargetZoom = Math.min(2.5, Math.max(0.8, rawZoom));
+        currentTargetZoom = Math.min(2.0, Math.max(0.75, rawZoom));
 
         const visualScale = currentTargetZoom / startZoom;
 
@@ -234,11 +267,10 @@ export default function MobileCalendar({
         pinchAnimationRef.current = requestAnimationFrame(() => {
           if (!isPinching) return;
 
-          const cHeight = Math.max(10, Math.round(fitCellHeight * currentTargetZoom));
-          const cWidth = Math.max(18, Math.round(fitCellWidth * currentTargetZoom));
-          const dWidth = Math.max(24, Math.round(dateColWidthBase * Math.min(1.15, currentTargetZoom)));
+          const cHeight = Math.max(14, Math.round(fitCellHeight * currentTargetZoom));
+          const cWidth = Math.max(22, Math.round(fitCellWidth * currentTargetZoom));
+          const dWidth = Math.max(28, Math.round(dateColWidthBase * Math.min(1.2, currentTargetZoom)));
 
-          // Direct CSS custom property updates for 60 FPS zero-lag scaling without DOM reflow
           if (tableRef.current) {
             tableRef.current.style.setProperty('--cell-w', `${cWidth}px`);
             tableRef.current.style.setProperty('--cell-h', `${cHeight}px`);
@@ -287,7 +319,7 @@ export default function MobileCalendar({
     };
   }, [fitCellHeight, fitCellWidth, dateColWidthBase]);
 
-  // Double tap to reset zoom to 1.0 (100% Fit)
+  // Double tap to reset zoom
   const handleCellTouchStart = () => {
     const now = Date.now();
     if (now - lastTapTimeRef.current < 280) {
@@ -300,147 +332,176 @@ export default function MobileCalendar({
 
   // Cell Click / Tap
   const handleCellClick = (roomNumber: number, dateYMD: string, booking: Booking | null) => {
-    if (booking) {
-      onSelectBooking(booking.id);
+    const isSameSelected = selectedCell?.roomNumber === roomNumber && selectedCell?.dateYMD === dateYMD;
+
+    if (isSameSelected) {
+      if (booking) {
+        onSelectBooking(booking.id);
+      } else {
+        onSelectCell(roomNumber, dateYMD);
+      }
     } else {
-      onSelectCell(roomNumber, dateYMD);
+      setSelectedCell({ roomNumber, dateYMD });
     }
   };
 
-  // Zoom preset handlers
-  const handleResetZoom = () => setZoom(1.0);
-  const handleZoomIn = () => setZoom((z) => Math.min(2.5, Number((z + 0.25).toFixed(2))));
-  const handleZoomOut = () => setZoom((z) => Math.max(0.8, Number((z - 0.25).toFixed(2))));
+  // Currently selected booking object
+  const selectedCellBooking = useMemo(() => {
+    if (!selectedCell) return null;
+    return getBookingForRoomAndDate(selectedCell.roomNumber, selectedCell.dateYMD);
+  }, [selectedCell, bookingList]);
 
   return (
     <div
-      className="flex flex-col h-[calc(100dvh-50px)] w-full bg-slate-950 text-slate-100 select-none overflow-hidden font-sans border-0 shadow-none relative"
-      id="mobile_fullscreen_calendar"
+      className="flex flex-col h-[calc(100dvh-54px)] sm:h-[calc(100vh-120px)] w-full bg-slate-950 text-slate-100 select-none overflow-hidden font-sans relative border-0 shadow-none"
+      id="mobile_pms_board"
     >
-      {/* 1. COMPACT TOOLBAR (Height 30px, ultra compact) */}
-      <div className="shrink-0 bg-slate-900 px-1 py-0.5 border-b border-slate-800 flex items-center justify-between gap-1 z-40 h-7.5">
-        {/* Month Switcher */}
-        <div className="flex items-center gap-0.5">
-          <button
-            onClick={goToPrevMonth}
-            className="p-0.5 rounded bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
-            aria-label="Previous Month"
-          >
-            <ChevronLeft className="w-3 h-3" />
-          </button>
-          <span className="text-[10px] font-black tracking-tight text-white px-0.5 font-mono uppercase">
-            {currentMonthTitle}
-          </span>
-          <button
-            onClick={goToNextMonth}
-            className="p-0.5 rounded bg-slate-800 active:bg-slate-700 text-slate-200 cursor-pointer"
-            aria-label="Next Month"
-          >
-            <ChevronRight className="w-3 h-3" />
-          </button>
-        </div>
-
-        {/* Action Controls */}
+      {/* 1. COMPACT TOOLBAR (Height <= 42px) */}
+      <div className="shrink-0 bg-slate-900 border-b border-slate-800/80 px-2 py-0.5 flex items-center justify-between gap-1 z-40 h-[40px]">
+        {/* Month Navigation & Today */}
         <div className="flex items-center gap-1">
           <button
+            onClick={goToPrevMonth}
+            className="p-1 rounded bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 cursor-pointer transition"
+            aria-label="Previous Month"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+
+          <span className="text-[11px] font-black tracking-tight text-white px-0.5 font-mono uppercase whitespace-nowrap">
+            {currentMonthFullTitle}
+          </span>
+
+          <button
+            onClick={goToNextMonth}
+            className="p-1 rounded bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 cursor-pointer transition"
+            aria-label="Next Month"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+
+          <button
             onClick={goToToday}
-            className="px-1.5 py-0.5 bg-indigo-600 active:bg-indigo-700 text-white text-[9px] font-black rounded shadow-2xs transition cursor-pointer"
+            className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-[10px] font-black rounded transition cursor-pointer ml-0.5 shadow-2xs"
           >
             Today
           </button>
+        </div>
 
-          <ExportOccupancyButton
-            rooms={rooms}
-            bookings={bookingList}
-            currentMonth={currentMonth}
-            variant="mobile"
-          />
-
-          {/* Compact Zoom Control */}
-          <div className="flex items-center bg-slate-800 rounded p-0.5 border border-slate-700">
+        {/* Compact Stepper Zoom & Overflow Menu */}
+        <div className="flex items-center gap-1">
+          {/* Stepper Zoom [-] 100% [+] */}
+          <div className="flex items-center bg-slate-800/90 rounded border border-slate-700/80 text-[10px] font-bold overflow-hidden shadow-2xs">
             <button
-              onClick={handleZoomOut}
-              disabled={zoom <= 0.8}
-              className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white cursor-pointer"
-              title="Zoom Out (Min 80%)"
+              onClick={zoomOut}
+              className="px-1.5 py-0.5 text-slate-300 hover:text-white hover:bg-slate-700 active:bg-slate-600 transition cursor-pointer"
+              title="Zoom Out"
             >
-              <ZoomOut className="w-2.5 h-2.5" />
+              <Minus className="w-3 h-3" />
             </button>
             <button
-              onClick={handleResetZoom}
-              className="text-[9px] font-mono font-bold px-1 text-indigo-300 hover:text-white cursor-pointer"
-              title="Double tap or click to reset to 100% Fit"
+              onClick={resetZoom}
+              className="px-1.5 py-0.5 font-mono text-indigo-300 hover:text-white hover:bg-slate-700 transition cursor-pointer border-x border-slate-700/80 min-w-[34px] text-center"
+              title="Reset Zoom to 100%"
             >
               {Math.round(zoom * 100)}%
             </button>
             <button
-              onClick={handleZoomIn}
-              disabled={zoom >= 2.5}
-              className="p-0.5 text-slate-300 disabled:opacity-30 active:text-white cursor-pointer"
-              title="Zoom In (Max 250%)"
+              onClick={zoomIn}
+              className="px-1.5 py-0.5 text-slate-300 hover:text-white hover:bg-slate-700 active:bg-slate-600 transition cursor-pointer"
+              title="Zoom In"
             >
-              <ZoomIn className="w-2.5 h-2.5" />
+              <PlusIcon className="w-3 h-3" />
             </button>
           </div>
 
-          {/* Legend Trigger Button */}
-          <button
-            onClick={() => setShowLegendModal(!showLegendModal)}
-            className="p-0.5 bg-slate-800 active:bg-slate-700 text-amber-400 rounded border border-slate-700 flex items-center justify-center cursor-pointer"
-            title="Calendar Legend"
-          >
-            <Info className="w-3 h-3" />
-          </button>
+          {/* Overflow Menu Toggle (⋮) */}
+          <div className="relative">
+            <button
+              onClick={() => setShowOverflowMenu(!showOverflowMenu)}
+              className={`p-1 rounded transition cursor-pointer ${
+                showOverflowMenu ? 'bg-indigo-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+              }`}
+              title="More Actions"
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+
+            {/* Overflow Dropdown Popup */}
+            {showOverflowMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowOverflowMenu(false)}
+                />
+                <div className="absolute right-0 top-8 z-50 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 min-w-[170px] text-xs animate-in fade-in slide-in-from-top-1 duration-100">
+                  <button
+                    onClick={() => {
+                      setShowLegendSheet(true);
+                      setShowOverflowMenu(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 text-left cursor-pointer transition font-medium"
+                  >
+                    <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Occupancy Legend</span>
+                  </button>
+
+                  <div className="my-1 border-t border-slate-800" />
+
+                  <div className="px-1 py-0.5">
+                    <ExportOccupancyButton
+                      rooms={rooms}
+                      bookings={bookingList}
+                      currentMonth={currentMonth}
+                      variant="mobile"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* 2. FLOATING LEGEND POPUP */}
-      {showLegendModal && (
-        <div className="absolute top-8 right-1 z-50 bg-slate-900 border border-slate-700 rounded-xl p-2 shadow-2xl text-[9.5px] text-slate-200 animate-fadeIn space-y-1 w-44 backdrop-blur-md">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-1 font-bold text-white">
-            <span>Color Legend</span>
-            <button onClick={() => setShowLegendModal(false)} className="text-slate-400 hover:text-white cursor-pointer">
-              <X className="w-3 h-3" />
+      {/* 2. COLLAPSIBLE LEGEND BOTTOM SHEET */}
+      {showLegendSheet && (
+        <div className="absolute top-[42px] right-2 z-50 bg-slate-900/95 border border-slate-700 rounded-xl p-3 shadow-2xl text-[11px] text-slate-200 animate-in fade-in slide-in-from-top-2 duration-150 w-64 backdrop-blur-md">
+          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 font-extrabold text-white">
+            <span className="text-[10px] uppercase tracking-wider text-slate-400">Occupancy Legend</span>
+            <button onClick={() => setShowLegendSheet(false)} className="text-slate-400 hover:text-white p-0.5 cursor-pointer">
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-xs border border-[#D6D6D6] bg-white"></span>
-              <span>Available (White)</span>
+          <div className="grid grid-cols-2 gap-2 mt-2 text-[10px]">
+            <div className="flex items-center gap-1.5 bg-slate-800/80 p-1.5 rounded-lg border border-slate-700/60">
+              <span className="w-2.5 h-2.5 rounded-xs bg-emerald-100 border border-emerald-400"></span>
+              <span className="font-bold text-emerald-300">Checked In</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-xs border border-[#C79A00] bg-[#FFD54F]"></span>
-              <span className="text-amber-300">Reserved (Yellow)</span>
+            <div className="flex items-center gap-1.5 bg-slate-800/80 p-1.5 rounded-lg border border-slate-700/60">
+              <span className="w-2.5 h-2.5 rounded-xs bg-blue-100 border border-blue-400"></span>
+              <span className="font-bold text-blue-300">Reserved</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-xs border border-[#1565C0] bg-[#1E88E5]"></span>
-              <span className="text-blue-400">Checked In (Blue)</span>
+            <div className="flex items-center gap-1.5 bg-slate-800/80 p-1.5 rounded-lg border border-slate-700/60">
+              <span className="w-2.5 h-2.5 rounded-xs bg-rose-100 border border-rose-400"></span>
+              <span className="font-bold text-rose-300">Checked Out</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-xs border border-[#B71C1C] bg-[#E53935]"></span>
-              <span className="text-red-400">Checked Out (Red)</span>
+            <div className="flex items-center gap-1.5 bg-slate-800/80 p-1.5 rounded-lg border border-slate-700/60">
+              <span className="w-2.5 h-2.5 rounded-xs bg-blue-600 border border-blue-400"></span>
+              <span className="font-bold text-white">Today Highlight</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-xs border border-[#3A3A3A] bg-[#FFF4D6]"></span>
-              <span className="text-amber-200">First Fl Cream</span>
+            <div className="flex items-center gap-1.5 bg-slate-800/80 p-1.5 rounded-lg border border-slate-700/60">
+              <span className="w-2.5 h-2.5 rounded-xs bg-rose-50 border border-rose-200"></span>
+              <span className="font-bold text-rose-300">Weekend (Red)</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-xs border border-[#3A3A3A] bg-[#EDE0D4]"></span>
-              <span className="text-amber-100">Second Fl Coffee</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-xs border border-[#B71C1C] bg-[#D32F2F]"></span>
-              <span className="text-red-300">Fri - Sun Date (Red)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-xs border border-slate-700 bg-slate-900/60"></span>
-              <span className="text-slate-400">Disabled (31-day pad)</span>
+            <div className="flex items-center gap-1.5 bg-slate-800/80 p-1.5 rounded-lg border border-slate-700/60">
+              <span className="w-2.5 h-2.5 rounded-xs bg-indigo-500 border border-indigo-300"></span>
+              <span className="font-bold text-indigo-300">Selected Cell</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* 3. FULLSCREEN MATRIX GRID (Always 31 Rows & All 13 Rooms Fit on Screen at 100% Zoom) */}
+      {/* 3. MATRIX GRID AREA (~85% of Viewport) */}
       <div
         ref={gridContainerRef}
         className="flex-1 overflow-auto relative touch-pan-x touch-pan-y bg-slate-950 scrollbar-none"
@@ -458,36 +519,28 @@ export default function MobileCalendar({
         >
           <thead>
             <tr>
-              {/* Top-Left Freeze Corner */}
+              {/* Top-Left Freeze Corner (RM) */}
               <th
                 style={{
                   width: 'var(--date-w)',
                   minWidth: 'var(--date-w)',
                   maxWidth: 'var(--date-w)',
                   height: `${ROOM_ROW_HEIGHT}px`,
-                  backgroundColor: '#0F172A',
+                  backgroundColor: '#111827',
                   color: '#FFFFFF',
-                  borderColor: '#3A3A3A',
-                  fontSize: `${Math.min(10, Math.max(7, 8 * Math.sqrt(zoom)))}px`,
+                  borderColor: '#374151',
                 }}
-                className="sticky top-0 left-0 z-30 border-r-2 border-b-2 p-0 font-black text-center font-mono uppercase shadow-xs"
+                className="sticky top-0 left-0 z-30 border-r border-b p-0 font-extrabold text-center font-mono text-[8px] uppercase tracking-wider shadow-2xs"
               >
                 RM
               </th>
 
-              {/* Room Numbers Header Row */}
-              {rooms.map((room) => {
+              {/* Room Numbers Header Row - All Dark #111827 */}
+              {rooms.map((room, idx) => {
                 const rNum = Number(room.number);
-                let headerBg = '#1E293B';
-                let headerColor = '#FFFFFF';
-
-                if ([101, 102, 103].includes(rNum)) {
-                  headerBg = '#FFF4D6'; // First Floor Cream
-                  headerColor = '#000000';
-                } else if ([201, 202, 203, 204, 205].includes(rNum)) {
-                  headerBg = '#EDE0D4'; // Second Floor Coffee
-                  headerColor = '#000000';
-                }
+                const isColumnSelected = selectedColumnRoom === rNum;
+                const isFloorDivider =
+                  rNum === 108 || (rNum < 200 && rooms[idx + 1] && Number(rooms[idx + 1].number) >= 200);
 
                 return (
                   <th
@@ -497,15 +550,27 @@ export default function MobileCalendar({
                       minWidth: 'var(--cell-w)',
                       maxWidth: 'var(--cell-w)',
                       height: `${ROOM_ROW_HEIGHT}px`,
-                      backgroundColor: headerBg,
-                      color: headerColor,
-                      borderColor: '#3A3A3A',
-                      fontSize: `${Math.min(11, Math.max(7.5, 9 * Math.sqrt(zoom)))}px`,
+                      backgroundColor: '#111827',
+                      borderColor: '#374151',
+                      borderRightColor: isFloorDivider ? '#CBD5E1' : '#374151',
+                      borderRightWidth: '1px',
                     }}
-                    className="sticky top-0 z-20 border-r border-b-2 p-0 text-center align-middle font-black font-mono leading-none"
+                    className="sticky top-0 z-20 border-b p-0 text-center align-middle font-bold leading-none"
                   >
-                    <div className="w-full h-full flex items-center justify-center font-bold">
-                      {room.number}
+                    <div className="w-full h-full flex items-center justify-center p-0.5">
+                      <button
+                        onClick={() => setSelectedColumnRoom(selectedColumnRoom === rNum ? null : rNum)}
+                        style={{
+                          backgroundColor: isColumnSelected ? '#4F46E5' : '#111827',
+                          color: '#FFFFFF',
+                        }}
+                        className={`w-full h-full rounded-t text-[10px] font-black transition cursor-pointer flex items-center justify-center ${
+                          isColumnSelected ? 'shadow-2xs ring-1 ring-indigo-300' : 'hover:bg-slate-800 active:bg-slate-700'
+                        }`}
+                        title={`Select Room ${room.number}`}
+                      >
+                        {room.number}
+                      </button>
                     </div>
                   </th>
                 );
@@ -516,10 +581,9 @@ export default function MobileCalendar({
           <tbody>
             {monthDays31.map((day) => {
               if (!day.isActive) {
-                // Disabled row beyond daysInMonth (e.g. Days 29..31 in Feb, Day 31 in Apr)
+                // Disabled row beyond daysInMonth
                 return (
-                  <tr key={day.ymd} className="opacity-40 select-none">
-                    {/* Date Left Column (Disabled) */}
+                  <tr key={day.ymd} className="opacity-20 select-none">
                     <td
                       style={{
                         width: 'var(--date-w)',
@@ -527,51 +591,72 @@ export default function MobileCalendar({
                         maxWidth: 'var(--date-w)',
                         height: 'var(--cell-h)',
                         backgroundColor: '#090E1A',
-                        color: '#475569',
-                        borderColor: '#1E293B',
-                        fontSize: `${Math.min(10, Math.max(6.5, 8 * Math.sqrt(zoom)))}px`,
+                        color: '#334155',
+                        borderColor: '#0F172A',
                       }}
-                      className="sticky left-0 z-20 border-r-2 border-b p-0 text-center align-middle font-bold font-mono"
+                      className="sticky left-0 z-20 border-r border-b p-0 text-center align-middle font-bold font-mono text-[9px]"
                     >
-                      <div className="w-full h-full flex items-center justify-center leading-none text-center">
+                      <div className="w-full h-full flex items-center justify-center">
                         <span>{day.formattedDayNum}</span>
                       </div>
                     </td>
 
-                    {/* Room Status Cells (Disabled) */}
-                    {rooms.map((room) => (
-                      <td
-                        key={`${room.number}_${day.ymd}`}
-                        style={{
-                          width: 'var(--cell-w)',
-                          minWidth: 'var(--cell-w)',
-                          maxWidth: 'var(--cell-w)',
-                          height: 'var(--cell-h)',
-                          borderColor: '#1E293B',
-                          backgroundColor: '#070B14',
-                        }}
-                        className="p-0 border-r border-b align-middle text-center overflow-hidden pointer-events-none"
-                      >
-                        <div className="w-full h-full flex items-center justify-center text-[7px] text-slate-700">
-                          -
-                        </div>
-                      </td>
-                    ))}
+                    {rooms.map((room, idx) => {
+                      const rNum = Number(room.number);
+                      const isFloorDivider =
+                        rNum === 108 || (rNum < 200 && rooms[idx + 1] && Number(rooms[idx + 1].number) >= 200);
+
+                      return (
+                        <td
+                          key={`${room.number}_${day.ymd}`}
+                          style={{
+                            width: 'var(--cell-w)',
+                            minWidth: 'var(--cell-w)',
+                            maxWidth: 'var(--cell-w)',
+                            height: 'var(--cell-h)',
+                            borderColor: '#0F172A',
+                            borderRightColor: isFloorDivider ? '#334155' : '#0F172A',
+                            borderRightWidth: '1px',
+                            backgroundColor: '#070B14',
+                          }}
+                          className="p-0 border-b align-middle text-center overflow-hidden pointer-events-none"
+                        >
+                          <div className="w-full h-full flex items-center justify-center text-[7px] text-slate-800">
+                            -
+                          </div>
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               }
 
-              // Active Day Row (Days 1 to daysInMonth)
+              // Active Day Row
               const isToday = day.isToday;
-              const dateBgColor = day.isFriSatSun ? '#D32F2F' : '#FFFFFF';
-              const dateTextColor = day.isFriSatSun ? '#FFFFFF' : '#000000';
+              const isSelectedDate = selectedCell?.dateYMD === day.ymd;
+
+              // Clean Date Column background & styling (NO WEEKDAY TEXT)
+              let dateBgColor = '#FFFFFF';
+              let dateTextColor = '#0F172A'; // Normal days: Dark text
+              let dateBorderColor = '#E2E8F0';
+
+              if (isToday) {
+                dateBgColor = '#EFF6FF'; // Soft blue background
+                dateTextColor = '#1D4ED8';
+                dateBorderColor = '#93C5FD';
+              } else if (day.isFriSatSun) {
+                dateBgColor = '#FFF1F2'; // Soft rose
+                dateTextColor = '#E11D48'; // Red text for weekend
+                dateBorderColor = '#FECDD3';
+              } else if (isSelectedDate) {
+                dateBgColor = '#EEF2FF'; // Soft indigo
+                dateTextColor = '#4338CA';
+                dateBorderColor = '#A5B4FC';
+              }
 
               return (
-                <tr
-                  key={day.ymd}
-                  className={isToday ? 'relative z-10' : ''}
-                >
-                  {/* Date Left Column (Frozen Sticky) */}
+                <tr key={day.ymd} className={isToday ? 'relative z-10' : ''}>
+                  {/* Clean Date Column: ONLY 01, 02, 03... (NO WEEKDAY TEXT) */}
                   <td
                     style={{
                       width: 'var(--date-w)',
@@ -580,62 +665,96 @@ export default function MobileCalendar({
                       height: 'var(--cell-h)',
                       backgroundColor: dateBgColor,
                       color: dateTextColor,
-                      borderColor: isToday ? '#EF4444' : '#3A3A3A',
-                      outline: isToday ? '1.5px solid #EF4444' : 'none',
+                      borderColor: dateBorderColor,
                     }}
-                    className="sticky left-0 z-20 border-r-2 border-b p-0 text-center align-middle font-bold"
+                    className="sticky left-0 z-20 border-r border-b p-0 text-center align-middle font-bold"
                   >
                     <div className="w-full h-full flex items-center justify-center leading-none text-center">
-                      <span
-                        style={{ fontSize: `${Math.min(11, Math.max(7, 8.5 * Math.sqrt(zoom)))}px` }}
-                        className="font-black font-mono"
-                      >
-                        {day.formattedDayNum}
-                      </span>
-                      {zoom >= 1.4 && (
+                      {isToday ? (
+                        <span className="bg-blue-600 text-white rounded-full px-1 py-0.5 font-black text-[9px] shadow-2xs font-mono">
+                          {day.formattedDayNum}
+                        </span>
+                      ) : (
                         <span
-                          style={{
-                            color: day.isFriSatSun ? '#FFCDD2' : '#555555',
-                            fontSize: `${Math.min(9, Math.max(6, 7 * Math.sqrt(zoom)))}px`,
-                          }}
-                          className="uppercase font-mono ml-0.5 font-bold"
+                          className={`font-black font-mono text-[10px] ${
+                            day.isFriSatSun ? 'text-rose-600 font-extrabold' : 'text-slate-800'
+                          }`}
                         >
-                          {day.shortDayName}
+                          {day.formattedDayNum}
                         </span>
                       )}
                     </div>
                   </td>
 
-                  {/* Room Status Cells */}
-                  {rooms.map((room) => {
-                    const booking = getBookingForRoomAndDate(room.number, day.ymd);
+                  {/* Room Cells */}
+                  {rooms.map((room, idx) => {
+                    const rNum = Number(room.number);
+                    const isFloor2 = rNum >= 200;
+                    const isFloorDivider =
+                      rNum === 108 || (rNum < 200 && rooms[idx + 1] && Number(rooms[idx + 1].number) >= 200);
 
+                    const booking = getBookingForRoomAndDate(rNum, day.ymd);
+                    const isCellSelected = selectedCell?.roomNumber === rNum && selectedCell?.dateYMD === day.ymd;
+                    const isColumnSelected = selectedColumnRoom === rNum;
+
+                    // Base empty cell column background tint:
+                    // Group 1 (101-103): Warm Light Cream (#F7E8C6)
+                    // Group 2 (104-108): Pure White (#FFFFFF)
+                    // Group 3 (201-205): Warm Dark Cream (#EFD9A7)
                     let bg = '#FFFFFF';
-                    let textColor = '#444444';
-                    let cellBorderColor = '#3A3A3A';
+                    let todayBg = '#F8FAFC';
+                    let colSelectBg = '#F1F5F9';
+
+                    if (rNum <= 103) {
+                      bg = '#F7E8C6';
+                      todayBg = '#EFE0BD';
+                      colSelectBg = '#EAD7AC';
+                    } else if (rNum >= 200) {
+                      bg = '#EFD9A7';
+                      todayBg = '#E7CF9B';
+                      colSelectBg = '#DFC58E';
+                    }
+
+                    let textColor = '#334155';
+                    let cellBorderColor = '#E5E7EB';
                     let statusTitle = 'Available';
 
                     if (booking) {
+                      // Booking colors override column tint
                       if (booking.status === 'checked-in') {
-                        bg = '#1E88E5'; // Blue
-                        textColor = '#FFFFFF';
-                        cellBorderColor = '#1565C0';
+                        bg = '#D1FAE5'; // Soft Emerald
+                        textColor = '#065F46';
+                        cellBorderColor = '#A7F3D0';
                         statusTitle = 'Checked In';
                       } else if (booking.status === 'checked-out') {
-                        bg = '#E53935'; // Red
-                        textColor = '#FFFFFF';
-                        cellBorderColor = '#B71C1C';
+                        bg = '#FFE4E6'; // Soft Rose
+                        textColor = '#9F1239';
+                        cellBorderColor = '#FECDD3';
                         statusTitle = 'Checked Out';
                       } else {
-                        // Reserved (booked)
-                        bg = '#FFD54F'; // Yellow
-                        textColor = '#000000';
-                        cellBorderColor = '#C79A00';
+                        // Reserved
+                        bg = '#DBEAFE'; // Soft Blue
+                        textColor = '#1E40AF';
+                        cellBorderColor = '#BFDBFE';
                         statusTitle = 'Reserved';
                       }
+                    } else if (isToday) {
+                      bg = todayBg; // Soft tint for today row
+                    } else if (isColumnSelected) {
+                      bg = colSelectBg; // Highlight tint for selected room column
                     }
 
-                    const guestText = booking?.guestName ? booking.guestName.trim().toUpperCase() : '';
+                    // Content inside cell based on Zoom level
+                    let cellLabel = '';
+                    if (booking) {
+                      if (zoom > 1.1) {
+                        cellLabel = getShortGuestName(booking.guestName);
+                      } else if (zoom >= 0.9) {
+                        cellLabel = getGuestInitials(booking.guestName);
+                      } else {
+                        cellLabel = ''; // Colored block chip only
+                      }
+                    }
 
                     return (
                       <td
@@ -645,35 +764,39 @@ export default function MobileCalendar({
                           minWidth: 'var(--cell-w)',
                           maxWidth: 'var(--cell-w)',
                           height: 'var(--cell-h)',
-                          borderColor: cellBorderColor,
-                          backgroundColor: bg,
+                          borderColor: isCellSelected ? '#3B82F6' : cellBorderColor,
+                          borderRightColor: isCellSelected
+                            ? '#3B82F6'
+                            : isFloorDivider
+                            ? '#CBD5E1'
+                            : cellBorderColor,
+                          borderRightWidth: '1px',
+                          backgroundColor: isCellSelected ? '#DBEAFE' : bg,
                         }}
-                        className="p-0 border-r border-b align-middle text-center overflow-hidden"
+                        className={`p-0 border-b align-middle text-center overflow-hidden transition-colors ${
+                          isCellSelected ? 'ring-2 ring-blue-600 ring-offset-0 z-10' : 'border-r'
+                        }`}
                       >
                         <div
                           onTouchStart={handleCellTouchStart}
-                          onClick={() => handleCellClick(room.number, day.ymd, booking)}
-                          title={`Rm ${room.number} (${day.ymd}): ${statusTitle}${booking ? ' - ' + booking.guestName : ''}`}
+                          onClick={() => handleCellClick(rNum, day.ymd, booking)}
+                          title={`Room ${rNum} (${day.ymd}): ${statusTitle}${booking ? ' - ' + booking.guestName : ''}`}
                           style={{
                             width: 'var(--cell-w)',
                             height: 'var(--cell-h)',
-                            backgroundColor: bg,
                             color: textColor,
                           }}
-                          className="w-full h-full cursor-pointer flex items-center justify-center text-center transition-all active:opacity-80 p-0"
+                          className="w-full h-full cursor-pointer flex items-center justify-center text-center p-0.5 active:opacity-80"
                         >
-                          {booking && (
-                            <span
-                              style={{
-                                fontSize: `${Math.min(10, Math.max(6, 7.5 * Math.sqrt(zoom)))}px`,
-                              }}
-                              className="font-black uppercase truncate px-0.2 text-center leading-none w-full block select-none"
-                            >
-                              {zoom < 1.2 && cellWidth < 26
-                                ? guestText.charAt(0)
-                                : guestText}
-                            </span>
-                          )}
+                          {booking ? (
+                            <div className="w-full h-full rounded-xs flex items-center justify-center px-0.5">
+                              <span className="font-extrabold uppercase truncate text-center leading-none text-[9px] tracking-tight">
+                                {cellLabel}
+                              </span>
+                            </div>
+                          ) : isCellSelected ? (
+                            <div className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping"></div>
+                          ) : null}
                         </div>
                       </td>
                     );
@@ -684,6 +807,57 @@ export default function MobileCalendar({
           </tbody>
         </table>
       </div>
+
+      {/* 4. COMPACT STICKY BOTTOM CARD (Shown ONLY when cell is selected) */}
+      {selectedCell && (
+        <div className="shrink-0 bg-slate-900 border-t border-slate-800 p-2 z-50 flex items-center justify-between gap-2 shadow-2xl animate-in slide-in-from-bottom-2 duration-150 h-[56px]">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="bg-indigo-600 text-white px-2 py-1 rounded-md text-xs font-black shrink-0">
+              {selectedCell.roomNumber}
+            </span>
+            <div className="flex flex-col min-w-0">
+              <div className="text-xs font-black text-white truncate leading-tight">
+                {selectedCellBooking ? selectedCellBooking.guestName || 'Guest' : 'Available Room'}
+              </div>
+              <div className="text-[10px] font-semibold text-slate-400 truncate">
+                {formatDateHuman(selectedCell.dateYMD)}
+                {selectedCellBooking ? ` • ${selectedCellBooking.status.toUpperCase()}` : ''}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {selectedCellBooking ? (
+              <button
+                type="button"
+                onClick={() => onSelectBooking(selectedCellBooking.id)}
+                className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1 cursor-pointer"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>View Booking</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onSelectCell(selectedCell.roomNumber, selectedCell.dateYMD)}
+                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1 cursor-pointer"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
+                <span>New Booking</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setSelectedCell(null)}
+              className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              aria-label="Close Selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

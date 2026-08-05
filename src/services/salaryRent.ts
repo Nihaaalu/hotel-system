@@ -642,6 +642,7 @@ export const SalaryRentService = {
               createdAt,
             });
           } else {
+            const pBy = (st.paid_by || st.paidBy || (remarks.toLowerCase().includes('irshad') ? 'irshad' : 'resort')) as 'resort' | 'irshad';
             salaryPayments.push({
               id: String(st.id),
               employeeId: empId,
@@ -650,6 +651,7 @@ export const SalaryRentService = {
               paymentMethod: 'cash',
               remarks,
               paymentDate: pDate,
+              paidBy: pBy,
               createdAt,
             });
           }
@@ -705,6 +707,7 @@ export const SalaryRentService = {
             const pDate = String(rt.payment_date || rt.created_at || '').substring(0, 10);
             const mStr = pDate.substring(0, 7) || '2026-07';
             const createdAt = String(rt.created_at || new Date().toISOString());
+            const pBy = (rt.paid_by || rt.paidBy || (String(rt.remarks || '').toLowerCase().includes('irshad') ? 'irshad' : 'resort')) as 'resort' | 'irshad';
             rentPayments.push({
               id: String(rt.id),
               month: mStr,
@@ -712,6 +715,7 @@ export const SalaryRentService = {
               paymentMethod: 'cash',
               remarks: String(rt.remarks || ''),
               paymentDate: pDate,
+              paidBy: pBy,
               createdAt,
             });
           }

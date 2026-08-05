@@ -195,6 +195,7 @@ export interface SalaryPayment {
   paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking';
   remarks: string;
   paymentDate: string; // YYYY-MM-DD
+  paidBy?: 'resort' | 'irshad';
   createdAt: string;
 }
 
@@ -212,6 +213,7 @@ export interface RentPayment {
   paymentMethod: 'cash' | 'card' | 'upi' | 'net_banking';
   remarks: string;
   paymentDate: string; // YYYY-MM-DD
+  paidBy?: 'resort' | 'irshad';
   createdAt: string;
 }
 

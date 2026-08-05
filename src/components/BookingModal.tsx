@@ -120,6 +120,7 @@ export default function BookingModal({
   // Quick Additional Advance State
   const [quickAdvanceInput, setQuickAdvanceInput] = useState<number | ''>('');
   const [quickAdvanceMethod, setQuickAdvanceMethod] = useState<'cash' | 'card' | 'upi' | 'net_banking'>('cash');
+  const [isAddAdvanceOpen, setIsAddAdvanceOpen] = useState(false);
 
   // Advanced Room Replacement States
   const [activeReplaceStep, setActiveReplaceStep] = useState<ReplaceStep | null>(null);
@@ -1196,197 +1197,83 @@ export default function BookingModal({
           )}
 
           {isEditing && loadedBooking ? (
-            /* VIEW / EDIT SINGLE COMPACT SCREEN */
-            <div className="space-y-3">
-              {/* 1. HEADER (Rooms, Dates, Status) */}
-              <div className="bg-indigo-950 text-white p-3 rounded-xl flex items-center justify-between shadow-xs">
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
-                    Rooms: <span className="text-white font-extrabold">{allocatedRoomsList.map((r) => r.roomNumber).join(', ')}</span>
-                  </div>
-                  <div className="text-xs font-black flex items-center gap-1.5 mt-0.5 text-indigo-100">
-                    <span>{formatDateHuman(loadedBooking.checkInDate)}</span>
-                    <span className="text-indigo-400 font-mono">→</span>
-                    <span>{formatDateHuman(loadedBooking.checkOutDate)}</span>
-                  </div>
-                </div>
-                <span className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg shadow-xs ${
-                  loadedBooking.status === 'booked'
-                    ? 'bg-blue-500 text-white'
-                    : loadedBooking.status === 'checked-in'
-                    ? 'bg-emerald-500 text-white'
-                    : loadedBooking.status === 'checked-out'
-                    ? 'bg-gray-600 text-white'
-                    : 'bg-rose-600 text-white'
-                }`}>
-                  {loadedBooking.status === 'booked' ? 'CONFIRMED' : loadedBooking.status.toUpperCase()}
-                </span>
-              </div>
-
-              {/* 2. GUEST INFORMATION */}
-              <div className="p-3 bg-gray-50/80 border border-gray-150 rounded-xl space-y-2">
+            /* PMS COMPACT BOOKING DETAILS VIEW */
+            <div className="space-y-2.5">
+              {/* 1 & 2. HEADER & BOOKING STATUS CARD */}
+              <div className="bg-slate-900 text-white p-3 rounded-xl space-y-2 shadow-xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <User className="w-3.5 h-3.5 text-gray-400" />
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Guest Information</span>
+                  <div>
+                    <h2 className="text-[18px] font-extrabold text-white tracking-tight leading-tight">
+                      {loadedBooking.guestName || 'GUEST'}
+                    </h2>
+                    <p className="text-[11px] font-semibold text-slate-300 mt-0.5">
+                      Room {allocatedRoomsList.map((r) => r.roomNumber).join(' • ')}
+                    </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditGuestName(loadedBooking.guestName || '');
-                      setEditRemarks(getCleanGuestRemarks(loadedBooking.remarks));
-                      setIsEditingGuest(true);
-                    }}
-                    className="p-1 rounded-lg text-indigo-600 hover:bg-indigo-50 transition cursor-pointer flex items-center gap-1 text-[11px] font-bold"
-                    title="Edit Guest Info"
+                  <span
+                    className={`px-2.5 py-1 text-[11px] font-extrabold uppercase rounded-lg tracking-wide ${
+                      loadedBooking.status === 'booked'
+                        ? 'bg-blue-600 text-white'
+                        : loadedBooking.status === 'checked-in'
+                        ? 'bg-emerald-600 text-white'
+                        : loadedBooking.status === 'checked-out'
+                        ? 'bg-slate-700 text-white'
+                        : 'bg-rose-600 text-white'
+                    }`}
                   >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    <span>Edit</span>
-                  </button>
+                    {loadedBooking.status === 'booked' ? 'CONFIRMED' : loadedBooking.status.toUpperCase()}
+                  </span>
                 </div>
-                <div className="flex items-center justify-between pt-1 border-t border-gray-100">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Guest Name</span>
-                  <span className="font-extrabold text-sm text-gray-900">{loadedBooking.guestName || 'GUEST'}</span>
-                </div>
-                <div className="border-t border-gray-100 pt-1.5">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Remarks</span>
-                  <p className="font-medium text-gray-700 italic text-xs mt-0.5">
-                    {getCleanGuestRemarks(loadedBooking.remarks)
-                      ? `"${getCleanGuestRemarks(loadedBooking.remarks)}"`
-                      : 'No special remarks recorded.'}
-                  </p>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-300 pt-1.5 border-t border-slate-800">
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-400 font-medium">In:</span>
+                    <span className="font-bold text-white">{formatDateHuman(loadedBooking.checkInDate)}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-400 font-medium">Out:</span>
+                    <span className="font-bold text-white">{formatDateHuman(loadedBooking.checkOutDate)}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* 3. PAYMENT SUMMARY */}
-              <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2.5">
-                <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <CreditCard className="w-3.5 h-3.5 text-gray-400" />
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Payment Summary</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {balanceRemaining > 0 && (
+              {/* 3. QUICK ACTIONS (2-COLUMN GRID AT TOP) */}
+              <div className="space-y-1">
+                <span className="text-[13px] font-bold text-slate-700 uppercase tracking-wider block">Quick Actions</span>
+                <div className="grid grid-cols-2 gap-2">
+                  {loadedBooking.status === 'booked' && (
+                    <button
+                      type="button"
+                      onClick={handleOpenCheckInModal}
+                      disabled={isSubmitting}
+                      className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[38px]"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Check In</span>
+                    </button>
+                  )}
+                  {loadedBooking.status === 'checked-in' && (
+                    <>
                       <button
                         type="button"
-                        onClick={handlePaidFull}
+                        onClick={handleCheckoutGuest}
                         disabled={isSubmitting}
-                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1"
+                        className="px-3 py-2 bg-slate-900 hover:bg-black text-white font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[38px]"
                       >
-                        <Check className="w-3 h-3" />
-                        <span>Paid Full</span>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Checkout</span>
                       </button>
-                    )}
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${balanceRemaining > 0 ? 'bg-red-50 text-red-700 font-extrabold' : 'bg-emerald-50 text-emerald-700 font-extrabold'}`}>
-                      {balanceRemaining > 0 ? `Balance: ₹${balanceRemaining.toLocaleString()}` : 'Fully Paid'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 relative">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-bold uppercase text-gray-400">Total</span>
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditTotalInput(loadedBooking.totalAmount);
-                          setIsEditingTotal(true);
-                        }}
-                        className="p-0.5 text-indigo-600 hover:bg-indigo-100 rounded transition cursor-pointer"
-                        title="Edit Total Amount"
+                        onClick={handleOpenContinueStay}
+                        disabled={isSubmitting}
+                        className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[38px]"
                       >
-                        <Edit2 className="w-3 h-3" />
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>Continue Stay</span>
                       </button>
-                    </div>
-                    <div className="text-xs font-black text-gray-900 mt-0.5">₹{loadedBooking.totalAmount.toLocaleString()}</div>
-                  </div>
-
-                  <div className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-100">
-                    <div className="text-[9px] font-bold uppercase text-emerald-600">Advance Paid</div>
-                    <div className="text-xs font-black text-emerald-700 mt-0.5">₹{loadedBooking.advancePaid.toLocaleString()}</div>
-                  </div>
-
-                  <div className={`p-2 rounded-lg border ${balanceRemaining > 0 ? 'bg-rose-50/60 border-rose-100' : 'bg-gray-50 border-gray-100'}`}>
-                    <div className="text-[9px] font-bold uppercase text-rose-500">Balance</div>
-                    <div className="text-xs font-black text-rose-700 mt-0.5">₹{balanceRemaining.toLocaleString()}</div>
-                  </div>
-                </div>
-
-                {/* Quick Additional Advance Box */}
-                {loadedBooking.status !== 'checked-out' && (
-                  <div className="bg-indigo-50/60 border border-indigo-100 p-2 rounded-lg space-y-1.5">
-                    <div className="text-[10px] font-extrabold uppercase text-indigo-800 flex items-center justify-between">
-                      <span>Add Additional Advance</span>
-                      <span className="text-[9px] text-gray-400 font-normal lowercase">(increases advance paid)</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        placeholder="Amount (₹)"
-                        value={quickAdvanceInput}
-                        onChange={(e) => {
-                          const raw = e.target.value.replace(/[^0-9]/g, '');
-                          if (raw === '') {
-                            setQuickAdvanceInput('');
-                          } else {
-                            const clean = raw.replace(/^0+(?=\d)/, '');
-                            setQuickAdvanceInput(clean === '' ? '' : Number(clean));
-                          }
-                        }}
-                        className="w-24 bg-white border border-gray-200 rounded-lg p-1.5 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[36px]"
-                      />
-                      <select
-                        value={quickAdvanceMethod}
-                        onChange={(e) => setQuickAdvanceMethod(e.target.value as any)}
-                        className="bg-white border border-gray-200 rounded-lg p-1.5 text-xs font-semibold text-gray-700 focus:ring-1 focus:ring-indigo-500 min-h-[36px] cursor-pointer"
-                      >
-                        <option value="cash">Cash</option>
-                        <option value="card">Card</option>
-                        <option value="upi">UPI</option>
-                        <option value="net_banking">Net Banking</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={handleQuickAddAdvance}
-                        disabled={!quickAdvanceInput || Number(quickAdvanceInput) <= 0 || isSubmitting}
-                        className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-2xs transition disabled:opacity-40 min-h-[36px] cursor-pointer"
-                      >
-                        Add Advance
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Payment History List */}
-                {bookingTransactions.length > 0 && (
-                  <div className="pt-2 border-t border-gray-150 space-y-1.5">
-                    <span className="text-[10px] font-extrabold uppercase text-gray-500 block">
-                      Payment Transactions ({bookingTransactions.length})
-                    </span>
-                    <div className="space-y-1 max-h-32 overflow-y-auto pr-0.5">
-                      {bookingTransactions.map((tx) => (
-                        <div key={tx.id} className="p-1.5 bg-gray-50 border border-gray-150 rounded-lg flex items-center justify-between text-xs">
-                          <div>
-                            <span className="font-extrabold text-gray-800">{formatDateHuman(tx.created_at)}</span>
-                            <span className="text-gray-500 block text-[10px] font-medium">
-                              {tx.remarks || 'Payment'} ({tx.payment_method?.toUpperCase() || 'CASH'})
-                            </span>
-                          </div>
-                          <span className="font-black text-emerald-700">₹{Number(tx.amount || 0).toLocaleString()}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 4. ROOMS SECTION (Allocated Rooms) */}
-              <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2">
-                <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Allocated Rooms ({allocatedRoomsList.length})</span>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -1395,20 +1282,277 @@ export default function BookingModal({
                       setAddRoomErrorMsg(null);
                       setAddRoomCustomTotal('');
                     }}
-                    className="px-2 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold text-[11px] rounded-lg transition cursor-pointer flex items-center gap-1"
+                    disabled={isSubmitting}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-250 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[38px]"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Add Room</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (allocatedRoomsList.length > 0) {
+                        const firstRoom = allocatedRoomsList[0];
+                        setActiveReplaceStep({
+                          roomBookingId: firstRoom.id,
+                          guestName: loadedBooking?.guestName || 'Guest',
+                          fromRoomNumber: firstRoom.roomNumber,
+                          checkInDate: firstRoom.checkInDate || loadedBooking?.checkInDate || '',
+                          checkOutDate: firstRoom.checkOutDate || loadedBooking?.checkOutDate || '',
+                          bookingGroupId: loadedBooking?.bookingGroupId || loadedBooking?.id || firstRoom.id,
+                        });
+                        setPendingChain([]);
+                        setConflictPrompt(null);
+                        setIsChainReplaceMode(false);
+                      }
+                    }}
+                    disabled={isSubmitting}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-250 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[38px]"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Replace Room</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setReleaseConfirmTarget({ type: 'single', roomBooking: loadedBooking })}
+                    disabled={isSubmitting}
+                    className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[38px]"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Release Room</span>
+                  </button>
+
+                  {allocatedRoomsList.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setReleaseConfirmTarget({ type: 'entire' })}
+                      disabled={isSubmitting}
+                      className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer min-h-[38px]"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Release Booking</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* 4. GUEST INFO & REMARKS MERGED */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[13px] font-bold text-slate-700 uppercase tracking-wider">Guest & Remarks</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditGuestName(loadedBooking.guestName || '');
+                      setEditRemarks(getCleanGuestRemarks(loadedBooking.remarks));
+                      setIsEditingGuest(true);
+                    }}
+                    className="text-indigo-600 hover:text-indigo-800 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                    <span>Edit</span>
+                  </button>
+                </div>
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col gap-0.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-500">Guest:</span>
+                    <span className="font-bold text-slate-900 text-xs">{loadedBooking.guestName || 'GUEST'}</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 mt-0.5">
+                    <span className="text-[11px] font-semibold text-slate-500">Remarks:</span>
+                    <span className="text-[12px] text-slate-700 italic font-medium">
+                      {getCleanGuestRemarks(loadedBooking.remarks) || 'No remarks'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 5. PAYMENT SUMMARY */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[13px] font-bold text-slate-700 uppercase tracking-wider">Payment Summary</span>
+                  <div className="flex items-center gap-1.5">
+                    {balanceRemaining > 0 && (
+                      <button
+                        type="button"
+                        onClick={handlePaidFull}
+                        disabled={isSubmitting}
+                        className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase rounded shadow-2xs transition cursor-pointer flex items-center gap-1"
+                      >
+                        <Check className="w-3 h-3" />
+                        <span>Paid Full</span>
+                      </button>
+                    )}
+                    <span
+                      className={`text-[11px] font-bold px-2 py-0.5 rounded ${
+                        balanceRemaining > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                      }`}
+                    >
+                      {balanceRemaining > 0 ? `Balance: ₹${balanceRemaining.toLocaleString()}` : 'Fully Paid'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 grid grid-cols-3 gap-2 text-center items-center">
+                  <div>
+                    <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-slate-500">
+                      <span>Total</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditTotalInput(loadedBooking.totalAmount);
+                          setIsEditingTotal(true);
+                        }}
+                        className="text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                        title="Edit Total"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <span className="text-[16px] font-extrabold text-slate-900 block mt-0.5">
+                      ₹{loadedBooking.totalAmount.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[11px] font-semibold text-emerald-600 block">Advance</span>
+                    <span className="text-[16px] font-extrabold text-emerald-700 block mt-0.5">
+                      ₹{loadedBooking.advancePaid.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className={`text-[11px] font-semibold block ${balanceRemaining > 0 ? 'text-amber-600' : 'text-slate-500'}`}>
+                      Balance
+                    </span>
+                    <span className={`text-[16px] font-extrabold block mt-0.5 ${balanceRemaining > 0 ? 'text-amber-700' : 'text-slate-900'}`}>
+                      ₹{balanceRemaining.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Collapsible + Add Advance */}
+                {loadedBooking.status !== 'checked-out' && (
+                  <div>
+                    {!isAddAdvanceOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => setIsAddAdvanceOpen(true)}
+                        className="w-full py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ Add Advance</span>
+                      </button>
+                    ) : (
+                      <div className="bg-indigo-50/70 border border-indigo-200 p-2.5 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold text-indigo-900">
+                          <span>Add Additional Advance</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsAddAdvanceOpen(false)}
+                            className="text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            placeholder="Amount (₹)"
+                            value={quickAdvanceInput}
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(/[^0-9]/g, '');
+                              if (raw === '') setQuickAdvanceInput('');
+                              else {
+                                const clean = raw.replace(/^0+(?=\d)/, '');
+                                setQuickAdvanceInput(clean === '' ? '' : Number(clean));
+                              }
+                            }}
+                            className="w-24 bg-white border border-gray-200 rounded-lg p-1.5 text-xs font-bold text-gray-900 focus:ring-1 focus:ring-indigo-500 min-h-[36px]"
+                          />
+                          <select
+                            value={quickAdvanceMethod}
+                            onChange={(e) => setQuickAdvanceMethod(e.target.value as any)}
+                            className="bg-white border border-gray-200 rounded-lg p-1.5 text-xs font-semibold text-gray-700 focus:ring-1 focus:ring-indigo-500 min-h-[36px] cursor-pointer"
+                          >
+                            <option value="cash">Cash</option>
+                            <option value="card">Card</option>
+                            <option value="upi">UPI</option>
+                            <option value="net_banking">Net Banking</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await handleQuickAddAdvance();
+                              setIsAddAdvanceOpen(false);
+                            }}
+                            disabled={!quickAdvanceInput || Number(quickAdvanceInput) <= 0 || isSubmitting}
+                            className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-2xs transition disabled:opacity-40 min-h-[36px] cursor-pointer"
+                          >
+                            Add Advance
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 6. PAYMENT TIMELINE */}
+              {bookingTransactions.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[13px] font-bold text-slate-700 uppercase tracking-wider block">
+                    Payment History
+                  </span>
+                  <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 space-y-1 max-h-28 overflow-y-auto">
+                    {bookingTransactions.map((tx) => (
+                      <div key={tx.id} className="flex items-center justify-between text-xs py-1 px-1 border-b border-slate-200/60 last:border-b-0">
+                        <div className="flex items-center gap-1.5 text-[11px]">
+                          <span className="font-bold text-slate-800">{formatDateHuman(tx.created_at)}</span>
+                          <span className="text-slate-300">•</span>
+                          <span className="font-medium text-slate-600">{tx.remarks || 'Payment'}</span>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-slate-500 uppercase">{tx.payment_method || 'Cash'}</span>
+                        </div>
+                        <span className="font-extrabold font-mono text-emerald-700 text-xs">₹{Number(tx.amount || 0).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 7. ROOMS */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[13px] font-bold text-slate-700 uppercase tracking-wider">
+                    Allocated Rooms ({allocatedRoomsList.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddRoomModalOpen(true);
+                      setAddRoomSelectedNumbers([]);
+                      setAddRoomErrorMsg(null);
+                      setAddRoomCustomTotal('');
+                    }}
+                    className="text-indigo-600 hover:text-indigo-800 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
                     <span>Add Room</span>
                   </button>
                 </div>
-                <div className="space-y-1.5">
+                <div className="bg-slate-50 rounded-xl border border-slate-200 divide-y divide-slate-200/70">
                   {allocatedRoomsList.map((roomBooking) => (
-                    <div key={roomBooking.id} className="p-2 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between gap-2">
-                      <div>
-                        <span className="font-extrabold text-xs text-indigo-950">Room {roomBooking.roomNumber}</span>
-                        <span className="text-[10px] text-gray-500 block font-medium">{getRoomConfig(roomBooking.roomNumber)}</span>
+                    <div key={roomBooking.id} className="px-3 py-2 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-slate-900 text-xs">Room {roomBooking.roomNumber}</span>
+                        <span className="text-[11px] text-slate-500 font-medium">• {getRoomConfig(roomBooking.roomNumber)}</span>
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2 text-[11px]">
                         <button
                           type="button"
                           onClick={() => {
@@ -1424,17 +1568,17 @@ export default function BookingModal({
                             setConflictPrompt(null);
                             setIsChainReplaceMode(false);
                           }}
-                          className="px-2 py-1 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold text-[11px] rounded-lg transition cursor-pointer flex items-center gap-1"
+                          className="text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
                         >
-                          <RefreshCw className="w-3 h-3" />
-                          <span>Replace Room</span>
+                          Replace
                         </button>
+                        <span className="text-slate-300">|</span>
                         <button
                           type="button"
                           onClick={() => setReleaseConfirmTarget({ type: 'single', roomBooking })}
-                          className="px-2 py-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-[11px] rounded-lg transition cursor-pointer"
+                          className="text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
                         >
-                          Remove Room
+                          Remove
                         </button>
                       </div>
                     </div>
@@ -1442,30 +1586,20 @@ export default function BookingModal({
                 </div>
               </div>
 
-              {/* ROOM TIMELINE (HISTORY) */}
-              <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2">
-                <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5 text-indigo-600" />
-                    Room Timeline
-                  </span>
-                </div>
-                <div className="space-y-2">
+              {/* 8. ROOM TIMELINE */}
+              <div className="space-y-1">
+                <span className="text-[13px] font-bold text-slate-700 uppercase tracking-wider block">Timeline</span>
+                <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 space-y-1">
                   {computedTimeline.map((seg, idx) => (
-                    <div key={idx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                      <div className="text-xs font-extrabold text-slate-800 flex items-center justify-between">
-                        <span>
-                          {formatDateHuman(seg.startDate)} → {formatDateHuman(seg.endDate)}
-                        </span>
-                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-150">
-                          {seg.rooms.length} {seg.rooms.length === 1 ? 'Room' : 'Rooms'}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    <div key={idx} className="flex items-center justify-between text-xs py-0.5 px-1">
+                      <span className="font-bold text-slate-800 text-[11px]">
+                        {formatDateHuman(seg.startDate)} → {formatDateHuman(seg.endDate)}
+                      </span>
+                      <div className="flex flex-wrap gap-1">
                         {seg.rooms.map((rn) => (
                           <span
                             key={rn}
-                            className="px-2 py-0.5 bg-white border border-slate-250 text-slate-900 font-extrabold text-xs rounded-md shadow-2xs"
+                            className="px-2 py-0.5 bg-white border border-slate-300 text-slate-900 font-bold text-[10px] rounded shadow-2xs"
                           >
                             Room {rn}
                           </span>
@@ -1473,62 +1607,6 @@ export default function BookingModal({
                       </div>
                     </div>
                   ))}
-                </div>
-              </div>
-
-              {/* 5. ACTIONS */}
-              <div className="p-3 border border-gray-150 rounded-xl bg-white space-y-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">Actions</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {loadedBooking.status === 'booked' && (
-                    <button
-                      type="button"
-                      onClick={handleOpenCheckInModal}
-                      disabled={isSubmitting}
-                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer"
-                    >
-                      Check In
-                    </button>
-                  )}
-                  {loadedBooking.status === 'checked-in' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleCheckoutGuest}
-                        disabled={isSubmitting}
-                        className="px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer"
-                      >
-                        Checkout & Close Room
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleOpenContinueStay}
-                        disabled={isSubmitting}
-                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1"
-                      >
-                        <Calendar className="w-3.5 h-3.5" />
-                        <span>Continue Stay</span>
-                      </button>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setReleaseConfirmTarget({ type: 'single', roomBooking: loadedBooking })}
-                    disabled={isSubmitting}
-                    className="px-3 py-1.5 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-xs rounded-lg transition cursor-pointer"
-                  >
-                    Release This Room
-                  </button>
-                  {allocatedRoomsList.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => setReleaseConfirmTarget({ type: 'entire' })}
-                      disabled={isSubmitting}
-                      className="px-3 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-bold text-xs rounded-lg transition cursor-pointer"
-                    >
-                      Release Entire Booking
-                    </button>
-                  )}
                 </div>
               </div>
             </div>

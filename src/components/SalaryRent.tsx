@@ -104,6 +104,7 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
 
   // Navigation & Tabs
   const [activeTab, setActiveTab] = useState<'salary' | 'rent'>('salary');
+  const [filterPill, setFilterPill] = useState<'all' | 'paid' | 'pending' | 'irshad' | 'resort' | 'cash' | 'upi' | 'bank'>('all');
   const [currentEmpIndex, setCurrentEmpIndex] = useState<number>(0);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
 
@@ -430,6 +431,111 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
       })
       .sort((a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || ''));
   }, [salaryPayments, selectedMonth, employees, adjustments]);
+
+  // Paid & Pending Employee Counts for Top Summary Card
+  const employeesPaidCount = useMemo(() => {
+    return employees.filter((e) => e.isActive).filter((emp) => {
+      const calc = getEmployeeSalaryCalc(emp, selectedMonth);
+      return calc.remainingBalance === 0 && calc.paidThisMonth > 0;
+    }).length;
+  }, [employees, getEmployeeSalaryCalc, selectedMonth]);
+
+  const employeesPendingCount = useMemo(() => {
+    return employees.filter((e) => e.isActive).filter((emp) => {
+      const calc = getEmployeeSalaryCalc(emp, selectedMonth);
+      return calc.remainingBalance > 0;
+    }).length;
+  }, [employees, getEmployeeSalaryCalc, selectedMonth]);
+
+  // Unified Timeline Items for active tab & selected month
+  const timelineItems = useMemo(() => {
+    if (activeTab === 'salary') {
+      return selectedMonthSalaryPayments.map((p) => ({
+        id: p.id,
+        type: 'salary' as const,
+        title: p.employeeName,
+        subtitle: p.employeeRole ? `Role: ${p.employeeRole}` : 'Staff Member',
+        category: 'Salary' as const,
+        amount: p.amount,
+        date: p.paymentDate,
+        paymentMethod: p.paymentMethod,
+        paidBy: p.paidBy || 'resort',
+        remarks: p.remarks,
+        status: 'paid' as const,
+      }));
+    } else {
+      return currentRentCalc.monthPayments.map((p) => ({
+        id: p.id,
+        type: 'rent' as const,
+        title: 'Monthly Rent',
+        subtitle: 'Property: Resort Premises',
+        category: 'Rent' as const,
+        amount: p.amount,
+        date: p.paymentDate,
+        paymentMethod: p.paymentMethod,
+        paidBy: p.paidBy || 'resort',
+        remarks: p.remarks,
+        status: 'paid' as const,
+      }));
+    }
+  }, [activeTab, selectedMonthSalaryPayments, currentRentCalc]);
+
+  // Quick Stats Breakdown (Above Timeline)
+  const quickStats = useMemo(() => {
+    let irshadPaid = 0;
+    let resortPaid = 0;
+    let cashTotal = 0;
+    let upiTotal = 0;
+
+    timelineItems.forEach((item) => {
+      if (item.paidBy === 'irshad') irshadPaid += item.amount;
+      else resortPaid += item.amount;
+
+      if (item.paymentMethod === 'cash') cashTotal += item.amount;
+      else upiTotal += item.amount;
+    });
+
+    return { irshadPaid, resortPaid, cashTotal, upiTotal };
+  }, [timelineItems]);
+
+  // Filtered Timeline Items
+  const filteredTimelineItems = useMemo(() => {
+    return timelineItems.filter((item) => {
+      if (filterPill === 'all') return true;
+      if (filterPill === 'paid') return item.status === 'paid';
+      if (filterPill === 'pending') return item.status === 'pending';
+      if (filterPill === 'irshad') return item.paidBy === 'irshad';
+      if (filterPill === 'resort') return item.paidBy === 'resort';
+      if (filterPill === 'cash') return item.paymentMethod === 'cash';
+      if (filterPill === 'upi') return item.paymentMethod === 'upi';
+      if (filterPill === 'bank') return item.paymentMethod === 'net_banking' || item.paymentMethod === 'card';
+      return true;
+    });
+  }, [timelineItems, filterPill]);
+
+  // Grouped Timeline by Date
+  const groupedTimeline = useMemo(() => {
+    const groups: { [date: string]: typeof filteredTimelineItems } = {};
+    filteredTimelineItems.forEach((item) => {
+      const d = item.date || getISTDateStr();
+      if (!groups[d]) groups[d] = [];
+      groups[d].push(item);
+    });
+
+    const sortedDates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+    return sortedDates.map((date) => {
+      const items = groups[date];
+      const totalIrshad = items
+        .filter((i) => i.paidBy === 'irshad')
+        .reduce((sum, i) => sum + i.amount, 0);
+
+      return {
+        date,
+        items,
+        totalIrshad,
+      };
+    });
+  }, [filteredTimelineItems]);
 
   // HANDLERS
   const handleUpdateRentSetting = async (e: React.FormEvent) => {
@@ -804,68 +910,120 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
         )}
       </div>
 
-      {/* 2. SUMMARY CARDS - 2 CARDS PER ROW, EXPENSE LEDGER STYLE */}
-      <div className="grid grid-cols-2 gap-2 sm:gap-3">
-        {/* Card 1: Monthly Rent */}
-        <div className="p-3 bg-amber-50/90 border border-amber-200/90 rounded-2xl shadow-2xs space-y-0.5">
-          <span className="text-[10px] text-amber-900 font-bold uppercase tracking-wider block">
-            Monthly Rent
-          </span>
-          <div className="text-xl sm:text-2xl font-black text-amber-950 tracking-tight">
-            ₹{currentRentCalc.monthlyRent.toLocaleString()}
+      {/* 2. TOP SUMMARY CARDS - MINIMAL ENTERPRISE STYLE */}
+      {activeTab === 'salary' ? (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+          {/* Card 1: Budget */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-0.5">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Salary Budget
+            </span>
+            <div className="text-lg sm:text-xl font-bold font-mono text-slate-900 tracking-tight">
+              ₹{salaryAggregates.totalDue.toLocaleString()}
+            </div>
+            <span className="text-[10px] font-medium text-slate-500 block">
+              Base + Adjustments
+            </span>
           </div>
-          <span className={`text-[10px] font-bold block ${
-            currentRentCalc.remainingBalance > 0 ? 'text-amber-800' : 'text-emerald-700'
-          }`}>
-            {currentRentCalc.remainingBalance > 0
-              ? `Pending ₹${currentRentCalc.remainingBalance.toLocaleString()}`
-              : `Paid ₹${currentRentCalc.paidThisMonth.toLocaleString()}`}
-          </span>
-        </div>
 
-        {/* Card 2: Salary Balance */}
-        <div className="p-3 bg-purple-50/90 border border-purple-200/90 rounded-2xl shadow-2xs space-y-0.5">
-          <span className="text-[10px] text-purple-900 font-bold uppercase tracking-wider block">
-            Salary Balance
-          </span>
-          <div className="text-xl sm:text-2xl font-black text-purple-950 tracking-tight">
-            ₹{salaryAggregates.totalDue.toLocaleString()}
+          {/* Card 2: Paid This Month */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-0.5">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Paid This Month
+            </span>
+            <div className="text-lg sm:text-xl font-bold font-mono text-emerald-700 tracking-tight">
+              ₹{salaryAggregates.totalPaid.toLocaleString()}
+            </div>
+            <span className="text-[10px] font-medium text-slate-500 block">
+              Recorded Payouts
+            </span>
           </div>
-          <span className={`text-[10px] font-bold block ${
-            salaryAggregates.totalOutstanding > 0 ? 'text-rose-700' : 'text-emerald-700'
-          }`}>
-            {salaryAggregates.totalOutstanding > 0
-              ? `Remaining ₹${salaryAggregates.totalOutstanding.toLocaleString()}`
-              : `Fully Paid`}
-          </span>
-        </div>
 
-        {/* Card 3: Rent Paid Status */}
-        <div className="p-3 bg-emerald-50/90 border border-emerald-200/90 rounded-2xl shadow-2xs space-y-0.5">
-          <span className="text-[10px] text-emerald-900 font-bold uppercase tracking-wider block">
-            Rent Paid
-          </span>
-          <div className="text-xl sm:text-2xl font-black text-emerald-950 tracking-tight">
-            ₹{currentRentCalc.paidThisMonth.toLocaleString()}
+          {/* Card 3: Remaining */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-0.5">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Remaining
+            </span>
+            <div className="text-lg sm:text-xl font-bold font-mono text-slate-900 tracking-tight">
+              ₹{salaryAggregates.totalOutstanding.toLocaleString()}
+            </div>
+            <span className={`text-[10px] font-medium block ${
+              salaryAggregates.totalOutstanding > 0 ? 'text-amber-600 font-semibold' : 'text-emerald-600'
+            }`}>
+              {salaryAggregates.totalOutstanding > 0 ? 'Pending Payouts' : 'Fully Cleared'}
+            </span>
           </div>
-          <span className="text-[10px] text-emerald-800 font-bold block">
-            {currentRentCalc.remainingBalance > 0 ? 'Partial Payment' : '100% Paid'}
-          </span>
-        </div>
 
-        {/* Card 4: Salary Paid Status */}
-        <div className="p-3 bg-indigo-50/90 border border-indigo-200/90 rounded-2xl shadow-2xs space-y-0.5">
-          <span className="text-[10px] text-indigo-900 font-bold uppercase tracking-wider block">
-            Salary Paid
-          </span>
-          <div className="text-xl sm:text-2xl font-black text-indigo-950 tracking-tight">
-            ₹{salaryAggregates.totalPaid.toLocaleString()}
+          {/* Card 4: Employees Status */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-0.5">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Employees Status
+            </span>
+            <div className="text-sm sm:text-base font-bold text-slate-900 tracking-tight pt-0.5">
+              {employeesPaidCount} Paid • {employeesPendingCount} Pending
+            </div>
+            <span className="text-[10px] font-medium text-slate-500 block">
+              {activeEmployees.length} Total Active Staff
+            </span>
           </div>
-          <span className="text-[10px] text-indigo-800 font-bold block">
-            {salaryAggregates.empCount} Staff Profiles
-          </span>
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+          {/* Card 1: Monthly Rent */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-0.5">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Monthly Rent
+            </span>
+            <div className="text-lg sm:text-xl font-bold font-mono text-slate-900 tracking-tight">
+              ₹{currentRentCalc.monthlyRent.toLocaleString()}
+            </div>
+            <span className="text-[10px] font-medium text-slate-500 block">
+              Expected Rent
+            </span>
+          </div>
+
+          {/* Card 2: Paid This Month */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-0.5">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Paid This Month
+            </span>
+            <div className="text-lg sm:text-xl font-bold font-mono text-emerald-700 tracking-tight">
+              ₹{currentRentCalc.paidThisMonth.toLocaleString()}
+            </div>
+            <span className="text-[10px] font-medium text-slate-500 block">
+              {currentRentCalc.remainingBalance === 0 ? '100% Cleared' : 'Partial Payment'}
+            </span>
+          </div>
+
+          {/* Card 3: Remaining Balance */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-0.5">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Remaining
+            </span>
+            <div className="text-lg sm:text-xl font-bold font-mono text-slate-900 tracking-tight">
+              ₹{currentRentCalc.remainingBalance.toLocaleString()}
+            </div>
+            <span className={`text-[10px] font-medium block ${
+              currentRentCalc.remainingBalance > 0 ? 'text-amber-600 font-semibold' : 'text-emerald-600'
+            }`}>
+              {currentRentCalc.remainingBalance > 0 ? 'Balance Due' : 'Paid in Full'}
+            </span>
+          </div>
+
+          {/* Card 4: Properties */}
+          <div className="p-3 sm:p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-0.5">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Properties
+            </span>
+            <div className="text-sm sm:text-base font-bold text-slate-900 tracking-tight pt-0.5">
+              1 Property
+            </div>
+            <span className="text-[10px] font-medium text-slate-500 block">
+              Resort Premises
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* 3. SEGMENTED CONTROL (SALARY vs RENT TABS) */}
       <div className="bg-slate-200/80 p-1 rounded-2xl flex items-center max-w-sm mx-auto shadow-2xs border border-slate-300/80">
@@ -896,11 +1054,11 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
       </div>
 
       {/* ========================================================= */}
-      {/* PAGE 1: SALARY TAB */}
+      {/* SECTION: ACTIVE CAROUSEL / RENT ACTIONS */}
       {/* ========================================================= */}
-      {activeTab === 'salary' && (
+      {activeTab === 'salary' ? (
+        /* Salary Employee Overview Carousel */
         <div className="space-y-4 animate-fade-in">
-          {/* Employee Navigation Header */}
           {activeEmployees.length > 0 && (
             <div className="bg-white border border-slate-200 rounded-2xl p-2.5 shadow-2xs flex items-center justify-between gap-2 max-w-lg mx-auto">
               <button
@@ -934,7 +1092,6 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
             </div>
           )}
 
-          {/* Employee Card Container with Touch Swipe Support */}
           {activeEmployees.length === 0 ? (
             <div className="py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-white max-w-lg mx-auto p-6 space-y-2">
               <Users className="w-8 h-8 text-slate-300 mx-auto" />
@@ -947,7 +1104,6 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
                 const emp = activeEmployees[safeEmpIndex];
                 if (!emp) return null;
                 const calc = getEmployeeSalaryCalc(emp, selectedMonth);
-                const walletBal = getEmployeeWalletBalance(emp.id);
 
                 return (
                   <div
@@ -955,7 +1111,6 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
                     onTouchEnd={handleTouchEnd}
                     className="bg-white border border-slate-200 rounded-2xl p-3.5 sm:p-4 shadow-2xs space-y-3 select-none transition-all duration-200"
                   >
-                    {/* Header: Name, Active Badge */}
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
                       <div>
                         <h3 className="font-extrabold text-base text-slate-900 tracking-tight">
@@ -972,7 +1127,6 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
                       </span>
                     </div>
 
-                    {/* Section 1: Current Month Salary */}
                     {(() => {
                       const currentPayable = calc.baseSalary + calc.totalBonus - calc.totalCut;
                       const currentRemaining = Math.max(0, currentPayable - calc.paidThisMonth);
@@ -985,7 +1139,7 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
 
                           <div className="divide-y divide-slate-200/70">
                             <div className="flex items-center justify-between pb-2">
-                              <span className="font-bold text-slate-600">Salary</span>
+                              <span className="font-bold text-slate-600">Base Salary</span>
                               <span className="font-extrabold text-slate-900 text-sm">
                                 ₹{calc.baseSalary.toLocaleString()}
                               </span>
@@ -1020,7 +1174,7 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
                             </div>
 
                             <div className="flex items-center justify-between pt-2">
-                              <span className="font-extrabold text-slate-800">Remaining</span>
+                              <span className="font-extrabold text-slate-800">Remaining Balance</span>
                               <span className={`font-black text-base ${
                                 currentRemaining === 0 ? 'text-emerald-600' : 'text-rose-600'
                               }`}>
@@ -1029,7 +1183,6 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
                             </div>
                           </div>
 
-                          {/* Section 1 Buttons: Pay & More Options */}
                           <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/70">
                             <button
                               type="button"
@@ -1043,7 +1196,7 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
                               className="h-10 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
                             >
                               <CreditCard className="w-4 h-4" />
-                              <span>Pay</span>
+                              <span>Pay Salary</span>
                             </button>
 
                             <button
@@ -1062,7 +1215,7 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
                       );
                     })()}
 
-                    {/* Section 2: Wallet (Carry Forward) */}
+                    {/* Section 2: Wallet Carry Forward */}
                     <div className="bg-slate-50/90 border border-slate-200/80 rounded-xl p-3 text-xs space-y-2.5">
                       <div className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider border-b border-slate-200/70 pb-1.5 flex items-center justify-between">
                         <span>Section 2 • Wallet (Carry Forward)</span>
@@ -1118,211 +1271,270 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
               </div>
             </div>
           )}
-
-          {/* Salary Ledger Statement (Bank Statement Style) */}
-          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs mt-4">
-            <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-              <div>
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-indigo-600" />
-                  {formatMonthName(selectedMonth)} Salary Ledger
-                </h3>
-                <p className="text-[11px] text-slate-500 font-medium mt-0.5">Payment statement entries for this period</p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const activeEmps = employees.filter((e) => e.isActive);
-                  if (activeEmps.length === 0) {
-                    alert('Please add an employee first.');
-                    return;
-                  }
-                  const firstEmp = activeEmps[0];
-                  const calc = getEmployeeSalaryCalc(firstEmp, selectedMonth);
-                  setPayTargetEmp(firstEmp);
-                  setSelectedPayEmpId(firstEmp.id);
-                  setSalaryPayAmountInput(calc.remainingBalance > 0 ? calc.remainingBalance : '');
-                  setSalaryPayRemarksInput('');
-                  setIsSalaryPayModalOpen(true);
-                }}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1 shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Pay Salary</span>
-              </button>
+        </div>
+      ) : (
+        /* Rent Property Header & Actions */
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-3 max-w-lg mx-auto">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <div>
+              <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-indigo-600" />
+                {formatMonthName(selectedMonth)} Rent Overview
+              </h2>
+              <p className="text-xs text-slate-500 font-medium">Resort Premises Rental</p>
             </div>
 
-            {selectedMonthSalaryPayments.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-xs font-medium">
-                No salary payments recorded for {formatMonthName(selectedMonth)}.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-200/80">
-                {selectedMonthSalaryPayments.map((p) => (
-                  <div key={p.id} className="p-3.5 hover:bg-slate-50 transition flex items-center justify-between gap-3">
-                    <div className="space-y-0.5 min-w-0 flex-1">
-                      <div className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
-                        {p.employeeName}
-                      </div>
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
-                        <span className="text-indigo-600 font-bold uppercase text-[10px]">{p.paymentMethod}</span>
-                        <span>•</span>
-                        <span>{formatDateDDMMYYYY(p.paymentDate)}</span>
-                      </div>
-                      {p.remarks && (
-                        <p className="text-[11px] text-slate-500 italic line-clamp-1">{p.remarks}</p>
-                      )}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="text-sm sm:text-base font-black text-emerald-700 block">
-                        ₹{p.amount.toLocaleString()}
-                      </span>
-                      <span className="text-[10px] text-emerald-600 font-bold">Paid</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <span className={`px-2.5 py-1 rounded-lg text-xs font-black uppercase ${
+              currentRentCalc.remainingBalance > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+            }`}>
+              {currentRentCalc.remainingBalance > 0 ? 'Pending' : 'Paid'}
+            </span>
           </div>
-        </div>
-      )}
 
-      {/* ========================================================= */}
-      {/* PAGE 2: RENT TAB */}
-      {/* ========================================================= */}
-      {activeTab === 'rent' && (
-        <div className="space-y-4 animate-fade-in max-w-2xl mx-auto">
-          {/* Rent Ledger Header */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <div>
-                <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
-                  <Building2 className="w-5 h-5 text-indigo-600" />
-                  {formatMonthName(selectedMonth)} Rent Ledger
-                </h2>
-                <p className="text-xs text-slate-500 font-medium">Property rental status & payments</p>
-              </div>
-
-              <span className={`px-2.5 py-1 rounded-lg text-xs font-black uppercase ${
-                currentRentCalc.remainingBalance > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              }`}>
-                {currentRentCalc.remainingBalance > 0 ? 'Pending' : 'Paid'}
+          <div className="bg-slate-50/90 border border-slate-200/80 rounded-xl p-3.5 space-y-2 text-xs">
+            <div className="flex justify-between font-bold text-slate-600 border-b border-slate-200/60 pb-1.5">
+              <span>Expected Monthly Rent</span>
+              <span className="text-slate-900 font-extrabold text-sm">₹{currentRentCalc.monthlyRent.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between font-bold text-slate-600 border-b border-slate-200/60 pb-1.5">
+              <span>Paid This Month</span>
+              <span className="text-emerald-700 font-extrabold text-sm">₹{currentRentCalc.paidThisMonth.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between font-black text-slate-900 pt-0.5">
+              <span>Balance Due</span>
+              <span className={`text-base ${currentRentCalc.remainingBalance > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                ₹{currentRentCalc.remainingBalance.toLocaleString()}
               </span>
             </div>
-
-            {/* Property Ledger Entry */}
-            <div className="bg-slate-50/90 border border-slate-200/80 rounded-xl p-3.5 space-y-2 text-xs">
-              <div className="flex justify-between font-bold text-slate-600 border-b border-slate-200/60 pb-1.5">
-                <span>Expected Monthly Rent</span>
-                <span className="text-slate-900 font-extrabold text-sm">₹{currentRentCalc.monthlyRent.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between font-bold text-slate-600 border-b border-slate-200/60 pb-1.5">
-                <span>Total Received</span>
-                <span className="text-emerald-700 font-extrabold text-sm">₹{currentRentCalc.paidThisMonth.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between font-black text-slate-900 pt-0.5">
-                <span>Balance Due</span>
-                <span className={`text-base ${currentRentCalc.remainingBalance > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                  ₹{currentRentCalc.remainingBalance.toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            {/* Rent Actions */}
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setRentPayAmountInput(currentRentCalc.remainingBalance > 0 ? currentRentCalc.remainingBalance : '');
-                  setRentPayRemarksInput('');
-                  setIsRentPaymentModalOpen(true);
-                }}
-                className="h-10 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
-              >
-                <Receipt className="w-4 h-4" />
-                <span>Pay Rent</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setRentAmountInput(currentRentCalc.monthlyRent);
-                  setRentEffectiveMonthInput(selectedMonth);
-                  setIsEditRentModalOpen(true);
-                }}
-                className="h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs rounded-xl border border-slate-200 transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
-              >
-                <Edit2 className="w-4 h-4 text-slate-600" />
-                <span>Update Rent</span>
-              </button>
-            </div>
           </div>
 
-          {/* Rent Payment History Ledger */}
-          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
-            <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-              <div>
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Receipt className="w-4 h-4 text-indigo-600" />
-                  Rent Payment Statements
-                </h3>
-                <p className="text-[11px] text-slate-500 font-medium mt-0.5">History for {formatMonthName(selectedMonth)}</p>
-              </div>
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setRentPayAmountInput(currentRentCalc.remainingBalance > 0 ? currentRentCalc.remainingBalance : '');
+                setRentPayRemarksInput('');
+                setIsRentPaymentModalOpen(true);
+              }}
+              className="h-10 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+            >
+              <Receipt className="w-4 h-4" />
+              <span>Pay Rent</span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setRentPayAmountInput(currentRentCalc.remainingBalance > 0 ? currentRentCalc.remainingBalance : '');
-                  setRentPayRemarksInput('');
-                  setIsRentPaymentModalOpen(true);
-                }}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1 shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Pay Rent</span>
-              </button>
-            </div>
-
-            {currentRentCalc.monthPayments.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-xs font-medium">
-                No rent payments recorded for {formatMonthName(selectedMonth)}.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-200/80">
-                {currentRentCalc.monthPayments.map((p) => (
-                  <div key={p.id} className="p-3.5 hover:bg-slate-50 transition flex items-center justify-between gap-3">
-                    <div className="space-y-0.5 min-w-0 flex-1">
-                      <div className="text-xs sm:text-sm font-extrabold text-slate-900">
-                        Property Rent
-                      </div>
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
-                        <span className="text-indigo-600 font-bold uppercase text-[10px]">{p.paymentMethod}</span>
-                        <span>•</span>
-                        <span>{formatDateDDMMYYYY(p.paymentDate)}</span>
-                      </div>
-                      {p.remarks && (
-                        <p className="text-[11px] text-slate-500 italic line-clamp-1">{p.remarks}</p>
-                      )}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="text-sm sm:text-base font-black text-emerald-700 block">
-                        ₹{p.amount.toLocaleString()}
-                      </span>
-                      <span className="text-[10px] text-emerald-600 font-bold">Received</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                setRentAmountInput(currentRentCalc.monthlyRent);
+                setRentEffectiveMonthInput(selectedMonth);
+                setIsEditRentModalOpen(true);
+              }}
+              className="h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs rounded-xl border border-slate-200 transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+            >
+              <Edit2 className="w-4 h-4 text-slate-600" />
+              <span>Update Rent</span>
+            </button>
           </div>
         </div>
       )}
 
       {/* ========================================================= */}
-      {/* SINGLE FLOATING ACTION BUTTON (FAB) */}
+      {/* SECTION: QUICK STATS BREAKDOWN & FILTERS */}
       {/* ========================================================= */}
-      <div className="fixed bottom-6 right-6 z-40">
+      <div className="space-y-3 pt-2">
+        {/* Quick Stats Grid - Minimal White Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="bg-white border border-slate-200/90 rounded-xl p-2.5 flex items-center gap-2.5 shadow-2xs">
+            <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+              <Wallet className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Irshad Paid</span>
+              <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">₹{quickStats.irshadPaid.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200/90 rounded-xl p-2.5 flex items-center gap-2.5 shadow-2xs">
+            <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+              <Building2 className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Resort Paid</span>
+              <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">₹{quickStats.resortPaid.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200/90 rounded-xl p-2.5 flex items-center gap-2.5 shadow-2xs">
+            <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+              <Receipt className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Cash</span>
+              <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">₹{quickStats.cashTotal.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200/90 rounded-xl p-2.5 flex items-center gap-2.5 shadow-2xs">
+            <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+              <CreditCard className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">UPI / Bank</span>
+              <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">₹{quickStats.upiTotal.toLocaleString()}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Filter Chips Bar - Compact & Clean */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+          {[
+            { id: 'all', label: 'All' },
+            { id: 'paid', label: 'Paid' },
+            { id: 'pending', label: 'Pending' },
+            { id: 'irshad', label: 'Irshad Paid' },
+            { id: 'resort', label: 'Resort Paid' },
+            { id: 'cash', label: 'Cash' },
+            { id: 'upi', label: 'UPI' },
+            { id: 'bank', label: 'Bank' },
+          ].map((chip) => {
+            const isActive = filterPill === chip.id;
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                onClick={() => setFilterPill(chip.id as any)}
+                className={`px-2.5 py-1 rounded-md font-semibold text-[11px] whitespace-nowrap transition cursor-pointer border ${
+                  isActive
+                    ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                    : 'bg-white text-slate-600 border-slate-200/90 hover:bg-slate-50'
+                }`}
+              >
+                {chip.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ========================================================= */}
+      {/* SECTION: TRANSACTION TIMELINE */}
+      {/* ========================================================= */}
+      <div className="space-y-4 pb-24">
+        <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+            <FileText className="w-3.5 h-3.5 text-slate-500" />
+            {formatMonthName(selectedMonth)} {activeTab === 'salary' ? 'Salary' : 'Rent'} Finance Timeline
+          </h3>
+
+          <span className="text-[11px] font-semibold text-slate-500">
+            {filteredTimelineItems.length} {filteredTimelineItems.length === 1 ? 'Transaction' : 'Transactions'}
+          </span>
+        </div>
+
+        {groupedTimeline.length === 0 ? (
+          <div className="p-8 text-center bg-white border border-slate-200 rounded-2xl text-slate-400 text-xs font-medium space-y-1">
+            <p className="font-bold text-slate-600">No transactions match your current filter.</p>
+            <p className="text-[11px] text-slate-400">Try changing filters or selecting a different month.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {groupedTimeline.map((group) => (
+              <div key={group.date} className="space-y-2">
+                {/* Date Header - Single Row */}
+                <div className="flex items-center justify-between px-0.5 text-xs">
+                  <div className="flex items-center gap-2 font-bold text-slate-800">
+                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                    <span>{formatDateDDMMYYYY(group.date)}</span>
+                    <span className="text-slate-300">•</span>
+                    <span className="text-slate-500 font-normal text-[11px]">
+                      {group.items.length} {group.items.length === 1 ? 'Transaction' : 'Transactions'}
+                    </span>
+                  </div>
+
+                  {group.totalIrshad > 0 && (
+                    <div className="flex items-center gap-1 text-[11px] font-mono font-semibold text-emerald-700 bg-emerald-50/80 px-2 py-0.5 rounded border border-emerald-200/60">
+                      <Wallet className="w-3 h-3 text-emerald-600" />
+                      <span>Wallet Change +₹{group.totalIrshad.toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Date's Transaction Cards - Compact Minimal Layout */}
+                <div className="space-y-2">
+                  {group.items.map((item) => {
+                    const isIrshad = item.paidBy === 'irshad';
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="bg-white border border-slate-200/90 rounded-xl p-3 shadow-2xs hover:border-slate-300 transition space-y-1.5"
+                      >
+                        {/* Row 1: Title + Amount + Status */}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {item.type === 'rent' ? (
+                              <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
+                            ) : (
+                              <Users className="w-4 h-4 text-slate-500 shrink-0" />
+                            )}
+                            <h4 className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                              {item.title}
+                            </h4>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0 text-right">
+                            <span className="text-sm sm:text-base font-bold font-mono text-slate-900">
+                              ₹{item.amount.toLocaleString()}
+                            </span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                              Paid
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Row 2: Subtitle + Payer Badge + Wallet Pill */}
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="font-medium">{item.subtitle}</span>
+                            <span className="text-slate-300">•</span>
+                            <span className="text-slate-400">{formatDateDDMMYYYY(item.date)}</span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Secondary Payer Badge */}
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border border-emerald-300/80 text-emerald-800 bg-emerald-50/50">
+                              {isIrshad ? 'Irshad' : 'Resort'}
+                            </span>
+
+                            {/* Compact Wallet Badge */}
+                            {isIrshad && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-100/80 text-emerald-800">
+                                Wallet +₹{item.amount.toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Optional Remarks */}
+                        {item.remarks && (
+                          <div className="text-[11px] text-slate-400 italic pt-1 border-t border-slate-100 truncate">
+                            {item.remarks}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ========================================================= */}
+      {/* DOCKED FLOATING ACTION BUTTON (FAB) */}
+      {/* ========================================================= */}
+      <div className="fixed bottom-5 right-5 z-40">
         <button
           type="button"
           onClick={() => {
@@ -1338,9 +1550,9 @@ export default function SalaryRent({ refreshTrigger }: { refreshTrigger?: number
               setIsRentPaymentModalOpen(true);
             }
           }}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-black px-4 py-3 rounded-full shadow-lg border border-indigo-500/30 flex items-center gap-2 text-xs sm:text-sm active:scale-95 transition-all duration-150 cursor-pointer"
+          className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-3.5 py-2.5 rounded-full shadow-md flex items-center gap-1.5 text-xs active:scale-95 transition-all duration-150 cursor-pointer border border-slate-700/50"
         >
-          <Plus className="w-5 h-5 stroke-[3]" />
+          <Plus className="w-4 h-4 stroke-[2.5]" />
           <span>{activeTab === 'salary' ? 'Add Employee' : 'Pay Rent'}</span>
         </button>
       </div>
